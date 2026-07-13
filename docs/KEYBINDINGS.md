@@ -14,10 +14,17 @@ on the focused pane or the active view (noted below where relevant).
 |-----|--------|
 | <kbd>q</kbd> / <kbd>Ctrl</kbd>+<kbd>C</kbd> | Quit |
 | <kbd>?</kbd> | Toggle the help / info overlay |
-| <kbd>:</kbd> | Command palette |
+| <kbd>:</kbd> | Command palette — fuzzy-find any action or setting, then pick its value from a list |
 | <kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd> | Focus next / previous pane |
 | <kbd>Esc</kbd> | Back / up one level / close overlay |
 | <kbd>Ctrl</kbd>+<kbd>O</kbd> | Back (up one level) |
+
+> **Focus scoping.** While a side-pane holds the focus it owns the keyboard: its own
+> keys (e.g. Queue reorder, Lyrics format) plus the universal keys — navigation,
+> playback transport, and app chrome (<kbd>:</kbd> <kbd>?</kbd> <kbd>/</kbd> quit,
+> view-switch <kbd>1</kbd>–<kbd>7</kbd>) — always work. Other view-content shortcuts
+> (theme, EQ, panel toggles…) are reachable from the main area — press <kbd>Tab</kbd>
+> to return there.
 
 ## Layouts
 
@@ -71,7 +78,7 @@ on the focused pane or the active view (noted below where relevant).
 | <kbd>Shift</kbd>+<kbd>L</kbd> | Toggle lyrics pane |
 | <kbd>Shift</kbd>+<kbd>V</kbd> | Toggle visualizer pane |
 | <kbd>v</kbd> | Cycle visualizer mode |
-| <kbd>Shift</kbd>+<kbd>F</kbd> | Cycle lyrics format (plain → karaoke → teleprompter) |
+| <kbd>Shift</kbd>+<kbd>F</kbd> | Cycle lyrics format (plain → karaoke → teleprompter) — Lyrics view / pane |
 | <kbd>t</kbd> | Cycle theme |
 | <kbd>;</kbd> | Per-view settings popup |
 | <kbd>Shift</kbd>+<kbd>I</kbd> | Stats & metadata overlay |
