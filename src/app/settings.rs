@@ -27,6 +27,7 @@ impl AppState {
             ReducedMotion,
             Fps,
             RadioRefresh,
+            ArabicShaping,
         ];
 
         // Panes — the current view's movable panels (show / dock / size), then the
@@ -72,6 +73,7 @@ impl AppState {
         v.push(Crossfade);
         v.push(SilenceSkip);
         v.push(ReplayGain);
+        v.push(RadioDvr);
 
         // Visualizer — the playback-bar spectrum + big-view peak caps
         v.push(PlayerViz);
@@ -464,6 +466,8 @@ impl AppState {
             Some(Setting::OverlaySize) => self.cycle_overlay_size(1),
             Some(Setting::ReducedMotion) => self.toggle_setting(|c| &mut c.reduced_motion),
             Some(Setting::PeakCaps) => self.toggle_setting(|c| &mut c.peak_caps),
+            Some(Setting::ArabicShaping) => self.toggle_setting(|c| &mut c.arabic_shaping),
+            Some(Setting::RadioDvr) => self.toggle_setting(|c| &mut c.radio_dvr),
             Some(Setting::Gapless) => {
                 self.toggle_setting(|c| &mut c.gapless);
                 self.update_gapless_next();
@@ -608,6 +612,8 @@ impl AppState {
             Some(Setting::OverlaySize) => self.cycle_overlay_size(dir.signum()),
             Some(Setting::ReducedMotion) => self.set_setting(|c| &mut c.reduced_motion, dir > 0),
             Some(Setting::PeakCaps) => self.set_setting(|c| &mut c.peak_caps, dir > 0),
+            Some(Setting::ArabicShaping) => self.set_setting(|c| &mut c.arabic_shaping, dir > 0),
+            Some(Setting::RadioDvr) => self.set_setting(|c| &mut c.radio_dvr, dir > 0),
             Some(Setting::Gapless) => {
                 self.set_setting(|c| &mut c.gapless, dir > 0);
                 self.update_gapless_next();

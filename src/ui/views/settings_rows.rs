@@ -165,6 +165,11 @@ pub(crate) fn setting_label_value(app: &AppState, item: &Setting) -> (String, Se
                 n => format!("every {n} days"),
             }),
         ),
+        Setting::ArabicShaping => (
+            "Arabic text shaping".into(),
+            Toggle(app.config.arabic_shaping),
+        ),
+        Setting::RadioDvr => ("Radio timeshift (DVR)".into(), Toggle(app.config.radio_dvr)),
         Setting::Gapless => ("Gapless playback".into(), Toggle(app.config.gapless)),
         Setting::SilenceSkip => (
             "Skip silence between tracks".into(),

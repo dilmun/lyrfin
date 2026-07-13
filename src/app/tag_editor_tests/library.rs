@@ -186,6 +186,27 @@ fn palette_lists_settings_with_values_and_drills_to_apply() {
 }
 
 #[test]
+fn formerly_config_only_setting_is_reachable_and_toggles() {
+    let mut a = app();
+    a.config.dir = std::env::temp_dir().join("lyrfin_gap_settings");
+    let _ = std::fs::remove_dir_all(&a.config.dir);
+
+    // Arabic shaping used to be config.toml-only; it's now a reachable General setting
+    let entries = a.palette_entries();
+    assert!(entries.iter().any(|e| e.label == "Arabic text shaping"
+        && matches!(e.action, Action::PaletteOpenSetting(Setting::ArabicShaping))));
+
+    // and it flips in place from the palette (a plain toggle) + persists
+    let before = a.config.arabic_shaping;
+    a.update(Action::OpenPalette);
+    a.update(Action::PaletteOpenSetting(Setting::ArabicShaping));
+    assert!(a.palette.is_none());
+    assert_eq!(a.config.arabic_shaping, !before);
+
+    let _ = std::fs::remove_dir_all(&a.config.dir);
+}
+
+#[test]
 fn palette_esc_pops_drill_to_root_then_closes() {
     let mut a = app();
     a.update(Action::OpenPalette);
