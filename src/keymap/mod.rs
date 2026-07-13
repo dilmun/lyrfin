@@ -11,7 +11,7 @@
 
 use crate::action::{Action, Caret, Motion};
 use crate::app::{AppState, Focus, InfoTab, Layout, LocalSection, Panel};
-use crate::event::{Key, KeyCode};
+use crate::event::{Key, KeyCode, Mods};
 
 mod catalog;
 pub use catalog::*;
@@ -19,6 +19,11 @@ pub use catalog::*;
 /// Translate a key press into an [`Action`] given current app context. Handlers
 /// are tried in priority order; the first to return `Some` wins.
 pub fn map(app: &AppState, key: Key) -> Action {
+    // Fold Shift into the char case up front so every downstream handler (the
+    // direct `Char('F')` matches AND the global-table `key_label`) sees one
+    // encoding regardless of the terminal's keyboard protocol (see
+    // [`normalize_shift`]).
+    let key = normalize_shift(key);
     capture_rebinding(app, key)
         .or_else(|| capture_confirm_logout(app, key))
         .or_else(|| eq_overlay(app, key))
@@ -45,6 +50,32 @@ pub fn map(app: &AppState, key: Key) -> Action {
         .or_else(|| library_view(app, key))
         .or_else(|| visual_select(app, key))
         .unwrap_or_else(|| global_binding(app, key))
+}
+
+/// Fold a held Shift into the character's case so key handling is identical across
+/// terminal keyboard protocols. Legacy terminals deliver `Shift+f` as the uppercase
+/// char `'F'` (Shift consumed into the case); the kitty keyboard protocol (Ghostty,
+/// Kitty) instead delivers the base char `'f'` with the SHIFT modifier set. Without
+/// normalisation the two encodings disagree and every uppercase binding (`F`, `G`,
+/// `Q`, …) silently degrades to its lowercase meaning under the kitty protocol — e.g.
+/// `F` (cycle lyrics format) would fire `f` (toggle favourite). We converge on the
+/// legacy form: uppercase an ASCII letter when Shift is held and clear the now-
+/// redundant bit. Symbols and digits are left untouched — their shifted glyph is
+/// keyboard-layout dependent, so we don't synthesise it here.
+fn normalize_shift(key: Key) -> Key {
+    if let KeyCode::Char(c) = key.code
+        && key.mods.shift
+        && c.is_ascii_lowercase()
+    {
+        return Key {
+            code: KeyCode::Char(c.to_ascii_uppercase()),
+            mods: Mods {
+                shift: false,
+                ..key.mods
+            },
+        };
+    }
+    key
 }
 
 /// Library (#2) 3-column browser: while a column is focused, h/l/←/→ switch the
@@ -870,6 +901,12 @@ fn global_binding(app: &AppState, key: Key) -> Action {
 pub fn key_label(key: Key) -> String {
     let base = match key.code {
         KeyCode::Char(' ') => "space".to_string(),
+        // Defensive twin of `normalize_shift`: bindings are stored uppercase, so a
+        // `Shift+f` that reached here un-normalised (any caller outside `map`) still
+        // resolves to `"F"`. Idempotent — an already-uppercase char skips this arm.
+        KeyCode::Char(c) if key.mods.shift && c.is_ascii_lowercase() => {
+            c.to_ascii_uppercase().to_string()
+        }
         KeyCode::Char(c) => c.to_string(),
         KeyCode::Enter => "enter".into(),
         KeyCode::Esc => "esc".into(),
@@ -1002,5 +1039,61 @@ fn parse_action(s: &str, app: &AppState) -> Action {
         "toggle_mark" => ToggleMark,
         "add_to_playlist" => AddToPlaylistPrompt,
         _ => Noop,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ch(c: char, shift: bool) -> Key {
+        Key {
+            code: KeyCode::Char(c),
+            mods: Mods {
+                shift,
+                ..Mods::default()
+            },
+        }
+    }
+
+    #[test]
+    fn normalize_shift_uppercases_shifted_letters() {
+        // kitty-protocol delivery: base char + SHIFT → the legacy uppercase form,
+        // and the redundant shift bit is cleared.
+        let k = normalize_shift(ch('f', true));
+        assert_eq!(k.code, KeyCode::Char('F'));
+        assert!(!k.mods.shift);
+    }
+
+    #[test]
+    fn normalize_shift_is_idempotent_on_uppercase() {
+        // legacy delivery already folds Shift into the case; don't double-transform.
+        let k = normalize_shift(ch('F', true));
+        assert_eq!(k.code, KeyCode::Char('F'));
+    }
+
+    #[test]
+    fn normalize_shift_leaves_plain_and_symbol_keys() {
+        assert_eq!(normalize_shift(ch('f', false)).code, KeyCode::Char('f'));
+        // symbols/digits keep their shifted glyph as delivered (layout-dependent).
+        let sym = normalize_shift(ch('=', true));
+        assert_eq!(sym.code, KeyCode::Char('='));
+    }
+
+    #[test]
+    fn key_label_folds_shift_and_keeps_modifiers() {
+        // `F` and a shifted `f` must produce the same binding label…
+        assert_eq!(key_label(ch('F', false)), "F");
+        assert_eq!(key_label(ch('f', true)), "F");
+        assert_eq!(key_label(ch('f', false)), "f");
+        // …and ctrl is still prefixed.
+        let ctrl_c = Key {
+            code: KeyCode::Char('c'),
+            mods: Mods {
+                ctrl: true,
+                ..Mods::default()
+            },
+        };
+        assert_eq!(key_label(ctrl_c), "ctrl-c");
     }
 }

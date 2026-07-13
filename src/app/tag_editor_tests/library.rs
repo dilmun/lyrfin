@@ -18,6 +18,33 @@ fn command_palette_filters_and_runs() {
 }
 
 #[test]
+fn shift_f_cycles_lyrics_format_not_favorite() {
+    // Regression: on kitty-keyboard-protocol terminals (Ghostty/Kitty) Shift+f
+    // arrives as the base char 'f' + SHIFT, not the uppercase 'F'. With the Lyrics
+    // pane focused it must resolve to F = cycle-lyrics-format, never f = favourite.
+    let mut a = app();
+    a.focus = Focus::Pane(Panel::Lyrics);
+    let shift_f = Key {
+        code: KeyCode::Char('f'),
+        mods: Mods {
+            shift: true,
+            ..Mods::default()
+        },
+    };
+    assert_eq!(crate::keymap::map(&a, shift_f), Action::CycleLyricsFormat);
+
+    // plain 'f' is still favourite (targets the current track, or no-ops if none)
+    let plain_f = Key {
+        code: KeyCode::Char('f'),
+        mods: Mods::default(),
+    };
+    assert!(matches!(
+        crate::keymap::map(&a, plain_f),
+        Action::ToggleFavorite(_) | Action::Noop
+    ));
+}
+
+#[test]
 fn sort_parse_directions() {
     use SortField::*;
     assert_eq!(
