@@ -98,6 +98,44 @@ Config lives in **`release-please-config.json`** (`release-type: rust`; tags as
 `vX.Y.Z` via `include-component-in-tag: false`; `feat`→minor pre-1.0) and
 **`.release-please-manifest.json`** (the current released version).
 
+## Repository settings (one-time, reproducible)
+
+The automation assumes GitHub is configured a specific way. A repo created from
+scratch (or re-created after a rename) starts with GitHub's permissive defaults,
+so these must be applied once — kept here as the reproducible source of truth,
+because they otherwise drift silently.
+
+**Merge method — squash only, PR title as the commit subject:**
+
+```sh
+gh api -X PATCH repos/dilmun/lyrfin \
+  -F allow_merge_commit=false -F allow_rebase_merge=false -F allow_squash_merge=true \
+  -F allow_auto_merge=true -F delete_branch_on_merge=true \
+  -f squash_merge_commit_title=PR_TITLE -f squash_merge_commit_message=PR_BODY
+```
+
+`squash_merge_commit_title=PR_TITLE` is the one that matters: GitHub's default
+`COMMIT_OR_PR_TITLE` uses the *commit* subject when a PR has a single commit,
+which silently breaks the "the PR title is what release-please reads" guarantee.
+
+**Branch protection on `main` — PR-only, green checks required, no admin bypass:**
+
+```sh
+gh api -X PUT repos/dilmun/lyrfin/branches/main/protection --input - <<'JSON'
+{
+  "required_status_checks": { "strict": true,
+    "contexts": ["lint", "test (ubuntu-latest)", "test (macos-latest)", "test (windows-latest)", "Validate PR title"] },
+  "enforce_admins": true,
+  "required_pull_request_reviews": { "required_approving_review_count": 0 },
+  "restrictions": null
+}
+JSON
+```
+
+`required_approving_review_count: 0` requires a PR (blocking direct pushes) without
+demanding a second reviewer — right for a solo maintainer; `enforce_admins` applies
+the rules to the owner too.
+
 ## Why release-please (not release-plz)
 
 lyrfin is a **GitHub-only application**, never published to crates.io. release-plz is
