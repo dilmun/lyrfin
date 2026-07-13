@@ -41,10 +41,9 @@ pub fn map(app: &AppState, key: Key) -> Action {
         .or_else(|| naming_input(app, key))
         .or_else(|| confirm_input(app, key))
         .or_else(|| modal_overlay(app, key))
-        .or_else(|| lyrics_offset(app, key))
+        .or_else(|| pane_context(app, key))
         .or_else(|| spotify_view(app, key))
         .or_else(|| radio_view(app, key))
-        .or_else(|| queue_context(app, key))
         .or_else(|| sidebar_playlists_context(app, key))
         .or_else(|| grid_context(app, key))
         .or_else(|| library_view(app, key))
@@ -789,21 +788,6 @@ fn radio_view(app: &AppState, key: Key) -> Option<Action> {
     Some(global_binding(app, key))
 }
 
-/// Context keys: the play queue (the QUEUE pane) supports reorder + removal. Only
-/// claims its own keys; everything else falls through to the global bindings.
-fn queue_context(app: &AppState, key: Key) -> Option<Action> {
-    if app.focus != Focus::Pane(Panel::Queue) {
-        return None;
-    }
-    match key.code {
-        KeyCode::Char('K') => Some(Action::QueueMove(Motion::Up)),
-        KeyCode::Char('J') => Some(Action::QueueMove(Motion::Down)),
-        KeyCode::Char('d') | KeyCode::Char('x') => Some(Action::QueueRemove),
-        KeyCode::Char('D') => Some(Action::QueueClearUpcoming),
-        _ => None,
-    }
-}
-
 /// Context keys: browsing the Playlists section (Dashboard, main pane) exposes
 /// playlist-management actions. Only claims its own keys; everything else falls
 /// through to the global bindings.
@@ -859,20 +843,52 @@ fn grid_context(app: &AppState, key: Key) -> Option<Action> {
     })
 }
 
-/// Lyric-sync nudge: while the Lyrics pane (or the dedicated Lyrics view) holds
-/// focus, `,` / `.` shift the synced-lyric offset earlier / later — they're the
-/// unshifted `<` / `>`, so the direction reads naturally. Scoped here (like the
-/// Library view's `h/l` column remap) so the global `,` / `.` rating keys are
-/// untouched everywhere else, and to dodge macOS reserving ctrl+arrows for Spaces.
-fn lyrics_offset(app: &AppState, key: Key) -> Option<Action> {
-    let lyrics_focused =
-        app.layout == Layout::LyricsFocus || app.focus == Focus::Pane(Panel::Lyrics);
-    if !lyrics_focused {
-        return None;
+/// Focus-scoped pane keys — a single place that gives the focused pane first crack
+/// at a press, with anything it doesn't claim falling through to the global table.
+/// Each pane's vocabulary lives in one `*_keys` helper, so "what does this pane do"
+/// is answerable in one spot. (Layout-scoped remaps — the Library columns, the
+/// cover grid, the Playlists section — stay in their own handlers below: they key
+/// off the *main* focus + layout, not a focused side-pane.)
+///
+/// Ordering: the lyrics view/pane gets first refusal (so `F`/`,`/`.` work whether
+/// the dedicated Lyrics view is up or the Lyrics side-pane is focused), then the
+/// specifically-focused pane. This preserves the old two-handler behaviour — e.g. in
+/// the Lyrics view with the Queue pane focused, `F` cycles the format AND `K`/`J`
+/// reorder the queue.
+fn pane_context(app: &AppState, key: Key) -> Option<Action> {
+    if (app.layout == Layout::LyricsFocus || app.focus == Focus::Pane(Panel::Lyrics))
+        && let Some(a) = lyrics_keys(key)
+    {
+        return Some(a);
     }
+    match app.focus {
+        Focus::Pane(Panel::Queue) => queue_keys(key),
+        _ => None,
+    }
+}
+
+/// Lyrics pane keys: `F` cycles the lyric format (plain → karaoke → teleprompter);
+/// `,` / `.` nudge the synced-lyric offset earlier / later (the unshifted `<` / `>`,
+/// so the direction reads naturally — and it dodges macOS reserving ctrl+arrows for
+/// Spaces). Everything else falls through, leaving the global `,` / `.` rating keys
+/// untouched outside the lyrics view.
+fn lyrics_keys(key: Key) -> Option<Action> {
     match key.code {
+        KeyCode::Char('F') => Some(Action::CycleLyricsFormat),
         KeyCode::Char(',') => Some(Action::LyricsOffset(-50)), // earlier
         KeyCode::Char('.') => Some(Action::LyricsOffset(50)),  // later
+        _ => None,
+    }
+}
+
+/// Queue pane keys: reorder (`K` up / `J` down) and remove (`d` / `x` the selected
+/// track, `D` clears everything upcoming). Only claims its own keys.
+fn queue_keys(key: Key) -> Option<Action> {
+    match key.code {
+        KeyCode::Char('K') => Some(Action::QueueMove(Motion::Up)),
+        KeyCode::Char('J') => Some(Action::QueueMove(Motion::Down)),
+        KeyCode::Char('d') | KeyCode::Char('x') => Some(Action::QueueRemove),
+        KeyCode::Char('D') => Some(Action::QueueClearUpcoming),
         _ => None,
     }
 }

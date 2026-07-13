@@ -45,6 +45,54 @@ fn shift_f_cycles_lyrics_format_not_favorite() {
 }
 
 #[test]
+fn lyrics_format_key_is_pane_scoped() {
+    let mut a = app();
+    let shift_f = Key {
+        code: KeyCode::Char('F'),
+        mods: Mods::default(),
+    };
+
+    // Outside the lyrics view/pane, `F` is not a global binding any more — it does
+    // nothing (and certainly never toggles favourite).
+    a.layout = Layout::Dashboard;
+    a.focus = Focus::Main;
+    assert_eq!(crate::keymap::map(&a, shift_f), Action::Noop);
+
+    // The Lyrics side-pane focused → format cycles.
+    a.focus = Focus::Pane(Panel::Lyrics);
+    assert_eq!(crate::keymap::map(&a, shift_f), Action::CycleLyricsFormat);
+
+    // The dedicated Lyrics view (whose content is the main area) → also cycles.
+    a.layout = Layout::LyricsFocus;
+    a.focus = Focus::Main;
+    assert_eq!(crate::keymap::map(&a, shift_f), Action::CycleLyricsFormat);
+}
+
+#[test]
+fn queue_pane_owns_reorder_keys_but_nav_falls_through() {
+    use crate::action::Motion;
+    let mut a = app();
+    a.layout = Layout::Dashboard;
+    a.focus = Focus::Pane(Panel::Queue);
+    let k = |c| Key {
+        code: KeyCode::Char(c),
+        mods: Mods::default(),
+    };
+    assert_eq!(
+        crate::keymap::map(&a, k('K')),
+        Action::QueueMove(Motion::Up)
+    );
+    assert_eq!(
+        crate::keymap::map(&a, k('J')),
+        Action::QueueMove(Motion::Down)
+    );
+    assert_eq!(crate::keymap::map(&a, k('x')), Action::QueueRemove);
+    assert_eq!(crate::keymap::map(&a, k('D')), Action::QueueClearUpcoming);
+    // list navigation is universal — it still reaches the global table.
+    assert_eq!(crate::keymap::map(&a, k('j')), Action::Move(Motion::Down));
+}
+
+#[test]
 fn sort_parse_directions() {
     use SortField::*;
     assert_eq!(
