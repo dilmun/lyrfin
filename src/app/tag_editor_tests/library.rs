@@ -12,7 +12,7 @@ fn command_palette_filters_and_runs() {
     let matches = a.palette_matches();
     assert!(!matches.is_empty(), "'theme' matches a command");
     let entries = a.palette_entries();
-    assert!(matches.iter().any(|&i| entries[i].1.contains("theme")));
+    assert!(matches.iter().any(|&i| entries[i].label.contains("theme")));
     a.update(Action::PaletteActivate); // runs top match + closes
     assert!(a.palette.is_none());
 }
@@ -143,6 +143,95 @@ fn focused_pane_shadows_stray_globals_but_keeps_universal_keys() {
     a.layout = Layout::LyricsFocus;
     a.focus = Focus::Main;
     assert_ne!(crate::keymap::map(&a, k('t')), Action::Noop);
+}
+
+#[test]
+fn palette_lists_settings_with_values_and_drills_to_apply() {
+    let mut a = app();
+    a.config.dir = std::env::temp_dir().join("lyrfin_palette_guided");
+    let _ = std::fs::remove_dir_all(&a.config.dir);
+
+    // the root list surfaces settings, each with its current value
+    let entries = a.palette_entries();
+    let theme_row = entries
+        .iter()
+        .find(|e| e.label == "Theme")
+        .expect("a Theme setting row is reachable from the palette");
+    assert_eq!(theme_row.value.as_deref(), Some(a.config.theme.as_str()));
+    assert!(matches!(
+        theme_row.action,
+        Action::PaletteOpenSetting(Setting::Theme)
+    ));
+
+    // its choices enumerate the themes, with exactly one marked current
+    let SettingChoices::Discrete(choices) = a.setting_choices(Setting::Theme) else {
+        panic!("theme is a discrete picker");
+    };
+    assert_eq!(choices.iter().filter(|c| c.current).count(), 1);
+    assert!(choices.iter().any(|c| c.label == "cyberpunk"));
+
+    // open → drill into Theme → filter → apply: it sets + persists + closes
+    a.update(Action::OpenPalette);
+    a.update(Action::PaletteOpenSetting(Setting::Theme));
+    assert!(matches!(
+        a.palette.as_ref().unwrap().ctx,
+        PaletteCtx::Setting(Setting::Theme)
+    ));
+    a.update(Action::PaletteInput("cyberpunk".into()));
+    a.update(Action::PaletteActivate);
+    assert!(a.palette.is_none());
+    assert_eq!(a.theme.name, "cyberpunk");
+
+    let _ = std::fs::remove_dir_all(&a.config.dir);
+}
+
+#[test]
+fn palette_esc_pops_drill_to_root_then_closes() {
+    let mut a = app();
+    a.update(Action::OpenPalette);
+    a.update(Action::PaletteOpenSetting(Setting::GridSize));
+    assert!(matches!(
+        a.palette.as_ref().unwrap().ctx,
+        PaletteCtx::Setting(_)
+    ));
+    a.update(Action::Back); // pops the value picker back to the root list
+    assert!(matches!(a.palette.as_ref().unwrap().ctx, PaletteCtx::Root));
+    a.update(Action::Back); // closes the palette
+    assert!(a.palette.is_none());
+}
+
+#[test]
+fn palette_toggle_setting_flips_in_place_without_drilling() {
+    let mut a = app();
+    a.config.dir = std::env::temp_dir().join("lyrfin_palette_toggle");
+    let _ = std::fs::remove_dir_all(&a.config.dir);
+    let before = a.config.gapless;
+    a.update(Action::OpenPalette);
+    a.update(Action::PaletteOpenSetting(Setting::Gapless));
+    // a plain toggle doesn't open a picker — it flips and the palette closes
+    assert!(a.palette.is_none());
+    assert_eq!(a.config.gapless, !before);
+    let _ = std::fs::remove_dir_all(&a.config.dir);
+}
+
+#[test]
+fn apply_setting_value_sets_exact_value_and_persists() {
+    let mut a = app();
+    a.config.dir = std::env::temp_dir().join("lyrfin_apply_value");
+    let _ = std::fs::remove_dir_all(&a.config.dir);
+
+    // crossfade is bounded — a chosen value applies exactly
+    a.apply_setting_value(Setting::Crossfade, &ChoiceValue::Int(4000));
+    assert_eq!(a.config.crossfade_ms, 4000);
+    // replaygain is indexed discrete (0 off / 1 track / 2 album)
+    a.apply_setting_value(Setting::ReplayGain, &ChoiceValue::Int(2));
+    assert_eq!(a.config.replaygain, 2);
+
+    // it hit config.toml (in the temp dir, never the real config)
+    let text = std::fs::read_to_string(a.config.dir.join("config.toml")).expect("config written");
+    assert!(text.contains("crossfade_ms = 4000"));
+
+    let _ = std::fs::remove_dir_all(&a.config.dir);
 }
 
 #[test]

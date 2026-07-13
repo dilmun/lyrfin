@@ -1,6 +1,7 @@
 //! Command palette methods on `AppState` (extracted from app/mod.rs).
 
 use super::*;
+use crate::ui::views::settings_rows::{SettingValue, setting_label_value};
 
 impl AppState {
     /// `sort` command: set the tracklist sort (e.g. `sort:artist,album,year,track`,
@@ -30,79 +31,127 @@ impl AppState {
         format!("Sorted by {}", self.sort_describe())
     }
 
-    /// Command indices matching the palette query (best first).
-    /// All palette entries: the static commands, a "bookmark this search" entry
-    /// when a search is active, and one quick-jump entry per saved bookmark.
-    pub fn palette_entries(&self) -> Vec<(String, String, Action)> {
-        let mut v: Vec<(String, String, Action)> = palette_commands()
+    /// Every root-level palette row: the static action commands, then every reachable
+    /// setting (each shown with its current value), a "bookmark this search" entry
+    /// when a search is active, and one quick-jump entry per saved bookmark. This is
+    /// the guided entry point — you fuzzy-find a setting and drill into its values,
+    /// rather than remembering a command syntax.
+    pub fn palette_entries(&self) -> Vec<PaletteEntry> {
+        let mut v: Vec<PaletteEntry> = palette_commands()
             .into_iter()
-            .map(|(cat, l, a)| (cat.to_string(), l.to_string(), a))
+            .map(|(cat, l, a)| PaletteEntry {
+                category: cat.to_string(),
+                label: l.to_string(),
+                value: None,
+                action: a,
+            })
             .collect();
+        // every reachable setting, shown with its current value. The per-index
+        // Keybind / MusicDir rows are dropped — rebinding and dir removal belong in
+        // the settings overlay, and would flood this list.
+        for s in self.settings_items() {
+            if matches!(s, Setting::Keybind(_) | Setting::MusicDir(_)) {
+                continue;
+            }
+            let (label, val) = setting_label_value(self, &s);
+            let value = match val {
+                SettingValue::Toggle(b) => Some(onoff(b).to_string()),
+                SettingValue::Text(t) if t.is_empty() => None,
+                SettingValue::Text(t) => Some(t),
+            };
+            v.push(PaletteEntry {
+                category: s.group().to_string(),
+                label,
+                value,
+                action: Action::PaletteOpenSetting(s),
+            });
+        }
         if !self.search.query.trim().is_empty() {
-            v.push((
-                "Library".into(),
-                "Bookmark current search".into(),
-                Action::BookmarkSearch,
-            ));
+            v.push(PaletteEntry {
+                category: "Library".into(),
+                label: "Bookmark current search".into(),
+                value: None,
+                action: Action::BookmarkSearch,
+            });
         }
         for b in &self.bookmarks {
-            v.push((
-                "Library".into(),
-                format!("★ {}", b.name),
-                Action::RunSearch(b.query.clone()),
-            ));
-        }
-        // command-line templates: selecting one pre-fills the input so you can
-        // type the argument (then Enter runs the typed command).
-        for (cat, label, prefix) in [
-            ("Settings", "» theme <name>", "theme "),
-            (
-                "Settings",
-                "» set <param> <value>  (volume/speed/fps/crossfade…)",
-                "set ",
-            ),
-            (
-                "Settings",
-                "» toggle <param>  (gapless/mouse/shuffle/lyrics…)",
-                "toggle ",
-            ),
-            ("Audio", "» replaygain <off|track|album>", "replaygain "),
-            ("Audio", "» sleep <minutes|off>", "sleep "),
-            ("Playback", "» repeat <off|one|all|album|artist>", "repeat "),
-            ("View", "» layout <name>", "layout "),
-            ("Library", "» sort:artist,year,album", "sort:"),
-        ] {
-            v.push((
-                cat.into(),
-                label.into(),
-                Action::PalettePrefill(prefix.into()),
-            ));
+            v.push(PaletteEntry {
+                category: "Library".into(),
+                label: format!("★ {}", b.name),
+                value: None,
+                action: Action::RunSearch(b.query.clone()),
+            });
         }
         v
     }
 
-    pub fn palette_matches(&self) -> Vec<usize> {
-        let q = self
-            .palette
-            .as_ref()
-            .map(|p| p.query.as_str())
-            .unwrap_or("");
-        let entries = self.palette_entries();
-        let labels: Vec<&str> = entries.iter().map(|(_, l, _)| l.as_str()).collect();
-        crate::library::search::rank_labels(&labels, q)
+    /// The selectable value rows for a setting's drill-in picker: its discrete choices
+    /// or its bounded presets. Empty for value-less settings (they never drill).
+    pub(crate) fn drill_choices(&self, s: Setting) -> Vec<Choice> {
+        match self.setting_choices(s) {
+            SettingChoices::Discrete(v) => v,
+            SettingChoices::Bounded { presets, .. } => presets,
+            SettingChoices::Toggle | SettingChoices::FreeText | SettingChoices::None => Vec::new(),
+        }
     }
 
-    /// Activate the palette: a typed `verb args` line runs as a command; a bare
-    /// query runs the fuzzy-selected entry (which may pre-fill a command template).
+    /// Row indices matching the palette query (best first) at the current level —
+    /// the root entry list, or a setting's value list.
+    pub fn palette_matches(&self) -> Vec<usize> {
+        let Some(p) = self.palette.as_ref() else {
+            return Vec::new();
+        };
+        let labels: Vec<String> = match p.ctx {
+            PaletteCtx::Root => self
+                .palette_entries()
+                .into_iter()
+                .map(|e| e.label)
+                .collect(),
+            PaletteCtx::Setting(s) => self.drill_choices(s).into_iter().map(|c| c.label).collect(),
+        };
+        let refs: Vec<&str> = labels.iter().map(|l| l.as_str()).collect();
+        crate::library::search::rank_labels(&refs, &p.query)
+    }
+
+    /// Open a setting from the root list: drill into its value picker, or — for a
+    /// plain toggle / value-less action — run it immediately and close.
+    pub(crate) fn palette_open_setting(&mut self, s: Setting) {
+        match self.setting_choices(s) {
+            SettingChoices::Discrete(_) | SettingChoices::Bounded { .. } => {
+                if let Some(p) = self.palette.as_mut() {
+                    p.ctx = PaletteCtx::Setting(s);
+                    p.query.clear();
+                    p.sel = 0;
+                }
+            }
+            // a toggle flips in place; a value-less setting runs its own action
+            // (Rescan, the Spotify prompts, a dock / size step) — either way, done.
+            SettingChoices::Toggle | SettingChoices::None | SettingChoices::FreeText => {
+                self.activate_setting(s);
+                self.palette = None;
+            }
+        }
+    }
+
+    /// Activate the current palette row: at the root, run the fuzzy-selected entry (or
+    /// a typed `verb args` command); in a value picker, apply the chosen value.
     pub(crate) fn palette_activate(&mut self) {
         let Some(p) = self.palette.as_ref() else {
             return;
         };
-        let query = p.query.trim().to_string();
-        // a command line is "verb arg…" (interior whitespace) or the colon form
-        // "verb:args" (e.g. sort:artist,album) — but only when the first word is
-        // an actual command verb, so multi-word entry *labels* ("Search Tags",
-        // "Play random album") still pick their palette entry.
+        let (sel, query) = (p.sel, p.query.trim().to_string());
+        match p.ctx {
+            PaletteCtx::Root => self.palette_activate_root(sel, query),
+            PaletteCtx::Setting(s) => self.palette_apply_choice(s, sel, query),
+        }
+    }
+
+    fn palette_activate_root(&mut self, sel: usize, query: String) {
+        // a typed command line is "verb arg…" (interior whitespace) or the colon form
+        // "verb:args" (e.g. sort:artist,album) — but only when the first word is an
+        // actual command verb, so multi-word entry *labels* ("Search Tags", "Play
+        // random album") still pick their palette entry. This is the power-user fast
+        // path; the guided setting rows are the primary way in.
         let first = query
             .split(|c: char| c.is_whitespace() || c == ':')
             .next()
@@ -134,21 +183,41 @@ impl AppState {
             return;
         }
         let entries = self.palette_entries();
-        let labels: Vec<&str> = entries.iter().map(|(_, l, _)| l.as_str()).collect();
-        let matches = crate::library::search::rank_labels(&labels, &p.query);
-        let Some(&idx) = matches.get(p.sel) else {
+        let labels: Vec<&str> = entries.iter().map(|e| e.label.as_str()).collect();
+        let matches = crate::library::search::rank_labels(&labels, &query);
+        let Some(&idx) = matches.get(sel) else {
             self.palette = None;
             return;
         };
-        let action = entries[idx].2.clone();
-        match action {
+        match entries[idx].action.clone() {
+            // opening a setting manages the palette itself (drill in, or run + close)
+            a @ Action::PaletteOpenSetting(_) => self.update(a),
             // a template pre-fills the input and keeps the palette open
-            Action::PalettePrefill(_) => self.update(action),
-            _ => {
+            a @ Action::PalettePrefill(_) => self.update(a),
+            a => {
                 self.palette = None;
-                self.update(action);
+                self.update(a);
             }
         }
+    }
+
+    fn palette_apply_choice(&mut self, s: Setting, sel: usize, query: String) {
+        // a bounded numeric setting also accepts a typed value (clamped to range)
+        if let SettingChoices::Bounded { min, max, .. } = self.setting_choices(s)
+            && let Ok(n) = query.parse::<i64>()
+        {
+            self.apply_setting_value(s, &ChoiceValue::Int(n.clamp(min, max)));
+            self.palette = None;
+            return;
+        }
+        let choices = self.drill_choices(s);
+        let labels: Vec<&str> = choices.iter().map(|c| c.label.as_str()).collect();
+        let matches = crate::library::search::rank_labels(&labels, &query);
+        if let Some(&idx) = matches.get(sel) {
+            let value = choices[idx].value.clone();
+            self.apply_setting_value(s, &value);
+        }
+        self.palette = None;
     }
 
     pub(crate) fn cmd_theme(&mut self, name: &str) -> String {
@@ -441,8 +510,27 @@ impl AppState {
     }
 }
 
-/// Command-palette state (fuzzy-runnable actions).
+/// Command-palette state. `ctx` is the current level: the root action + settings
+/// list, or a specific setting's value picker (drill-in).
 pub struct Palette {
     pub query: String,
     pub sel: usize,
+    pub ctx: PaletteCtx,
+}
+
+/// The palette's current level.
+#[derive(Clone, Copy)]
+pub enum PaletteCtx {
+    /// The flat list of actions + every reachable setting (the entry point).
+    Root,
+    /// A value picker for one setting (its `setting_choices`).
+    Setting(Setting),
+}
+
+/// One root-level palette row: an action, or a setting shown with its current value.
+pub struct PaletteEntry {
+    pub category: String,
+    pub label: String,
+    pub value: Option<String>,
+    pub action: Action,
 }

@@ -12,7 +12,7 @@ use crate::ui::theme::Rgb;
 
 mod equalizer_view;
 pub use equalizer_view::*;
-mod settings_rows;
+pub(crate) mod settings_rows;
 mod settings_view;
 pub use settings_view::*;
 mod radio_view;

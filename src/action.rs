@@ -5,7 +5,7 @@
 //! that mutates state in response to an `Action`. This keeps the core logic
 //! pure, testable, and decoupled from crossterm/ratatui.
 
-use crate::app::{Focus, Layout, View};
+use crate::app::{Focus, Layout, Setting, View};
 use crate::core::model::{AlbumId, ArtistId, PlaylistId, TrackId};
 
 /// In-field text cursor movement (tag editor).
@@ -258,6 +258,7 @@ pub enum Action {
     PaletteMove(Motion),
     PaletteActivate,
     PalettePrefill(String), // replace the palette query (command template), stay open
+    PaletteOpenSetting(Setting), // drill into a setting's value picker (or run it if value-less)
     RunCommand(String),     // execute a typed `verb args` command line
 }
 

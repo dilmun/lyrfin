@@ -409,7 +409,20 @@ impl AppState {
     /// group tab) and the `;` popup always have an active group, so Enter always
     /// acts on the selected row.
     pub(crate) fn settings_activate(&mut self) {
-        match self.settings_item() {
+        if let Some(item) = self.settings_item() {
+            self.activate_setting(item);
+        }
+    }
+
+    /// Enter/Space on a specific settings row: cycle / toggle / open its prompt. The
+    /// explicit-`Setting` core of [`Self::settings_activate`], so the command palette
+    /// can activate a value-less setting (Rescan, Add dir, a rebind, Spotify re-auth…)
+    /// without it being the overlay's current selection. The `self.settings_adjust(1)`
+    /// arms below still read the overlay selection, but those are only reached via
+    /// `settings_activate` (where the selection *is* `item`); the palette drives
+    /// value-bearing settings through `apply_setting_value` instead.
+    pub(crate) fn activate_setting(&mut self, item: Setting) {
+        match Some(item) {
             // a music dir is removed with Del / ^d (not Enter — too easy to hit)
             Some(Setting::MusicDir(_)) => {}
             Some(Setting::AddDir) => {
