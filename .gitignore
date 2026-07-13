@@ -1,0 +1,13 @@
+/target
+**/*.rs.bk
+*.pdb
+.DS_Store
+
+# local runtime state / caches
+/.lyrfin
+*.sqlite
+*.sqlite-*
+
+# local-only working notes & design assets — never shipped
+/TODO.md
+/design/

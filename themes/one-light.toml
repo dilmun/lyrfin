@@ -1,0 +1,19 @@
+# One — Light. Atom's One Light syntax palette.
+name = "one-light"
+
+bg           = "#fafafa"
+panel        = "#f0f0f0"
+border       = "#dcdcdc"
+border_focus = "#4078f2"
+text         = "#383a42"
+text_dim     = "#696c77"
+text_faint   = "#a0a1a7"
+selection    = "#e6e6e6"
+warning      = "#c18401"
+good         = "#50a14f"
+
+accent = ["#0184bc", "#4078f2", "#a626a4"]
+
+now_playing = "#4078f2"
+special     = "#a626a4"
+marked      = "#e45649"

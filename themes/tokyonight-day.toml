@@ -1,0 +1,23 @@
+# TokyoNight — Day. The light variant. The text ramp runs darker than upstream
+# TokyoNight Day on purpose: title and metadata share one hue on the light bg, so
+# upstream's fg/fg_dark/dark3 washed into a single low-contrast blue. These keep a
+# clear step from the title tier (text/text_dim) down to the faint metadata
+# (text_faint), so a title reads above its metadata in every view.
+name = "tokyonight-day"
+
+bg           = "#e1e2e7"
+panel        = "#d4d6e0"
+border       = "#a8aecb"
+border_focus = "#2e7de9"
+text         = "#26489a"
+text_dim     = "#4f62a2"
+text_faint   = "#6c78a6"
+selection    = "#c4c8da"
+warning      = "#8c6c3e"
+good         = "#587539"
+
+accent = ["#007197", "#2e7de9", "#9854f1"]
+
+now_playing = "#2e7de9"
+special     = "#9854f1"
+marked      = "#f52a65"

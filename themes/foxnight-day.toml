@@ -1,0 +1,19 @@
+# FoxNight — Day. The warm light variant (dayfox-inspired).
+name = "foxnight-day"
+
+bg           = "#f6f2ee"
+panel        = "#e4dcd4"
+border       = "#aab0ad"
+border_focus = "#2848a9"
+text         = "#3d2b5a"
+text_dim     = "#643f61"
+text_faint   = "#837a72"
+selection    = "#e7d2be"
+warning      = "#ac5402"
+good         = "#396847"
+
+accent = ["#287980", "#2848a9", "#6e33ce"]
+
+now_playing = "#2848a9"
+special     = "#6e33ce"
+marked      = "#a5222f"

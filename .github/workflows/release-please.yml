@@ -1,0 +1,43 @@
+name: release-please
+
+# Automated release path. On every push to main, release-please maintains a
+# standing "release PR" that bumps the version (Cargo.toml + Cargo.lock) and
+# rewrites CHANGELOG.md from the Conventional Commits since the last release.
+# Merging that PR tags vX.Y.Z and creates the GitHub Release with generated notes.
+#
+# It authenticates with the "dilmun-release-bot" GitHub App token, NOT the
+# default GITHUB_TOKEN, for two reasons:
+#   1. The release PR it opens then triggers CI + the PR-title check like any
+#      human PR. With GITHUB_TOKEN those required checks never run, and branch
+#      protection (enforce_admins) makes the release PR permanently un-mergeable.
+#   2. The vX.Y.Z tag it creates likewise triggers workflows, so `release.yml`
+#      builds + attaches the binaries. The build lives THERE, keyed off the tag —
+#      one build path for both the automated tag and a manual hotfix tag — so
+#      there is deliberately no build job here (that would double-build).
+# See docs/RELEASING.md.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      # Short-lived token from the release-bot App (unlike GITHUB_TOKEN, its
+      # actions trigger further workflows — the whole point; see the header).
+      - uses: actions/create-github-app-token@v3
+        id: app-token
+        with:
+          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+      - uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

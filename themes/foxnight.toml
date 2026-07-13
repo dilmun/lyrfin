@@ -1,0 +1,19 @@
+# FoxNight. Muted blue-grey night (nightfox-inspired).
+name = "foxnight"
+
+bg           = "#192330"
+panel        = "#131a24"
+border       = "#29394f"
+border_focus = "#719cd6"
+text         = "#cdcecf"
+text_dim     = "#aeafb0"
+text_faint   = "#738091"
+selection    = "#2b3b51"
+warning      = "#f4a261"
+good         = "#81b29a"
+
+accent = ["#63cdcf", "#719cd6", "#9d79d6"]
+
+now_playing = "#719cd6"
+special     = "#9d79d6"
+marked      = "#c94f6d"

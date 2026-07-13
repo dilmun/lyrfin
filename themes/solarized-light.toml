@@ -1,0 +1,19 @@
+# Solarized — Light. Ethan Schoonover's precision palette on base3.
+name = "solarized-light"
+
+bg           = "#fdf6e3"
+panel        = "#eee8d5"
+border       = "#e3dcc6"
+border_focus = "#268bd2"
+text         = "#586e75"
+text_dim     = "#657b83"
+text_faint   = "#93a1a1"
+selection    = "#eee8d5"
+warning      = "#b58900"
+good         = "#859900"
+
+accent = ["#2aa198", "#268bd2", "#6c71c4"]
+
+now_playing = "#268bd2"
+special     = "#6c71c4"
+marked      = "#dc322f"

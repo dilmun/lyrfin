@@ -1,0 +1,19 @@
+# FoxNight — Dusk. Violet, low-key evening (duskfox-inspired).
+name = "foxnight-dusk"
+
+bg           = "#232136"
+panel        = "#191726"
+border       = "#433c59"
+border_focus = "#569fba"
+text         = "#e0def4"
+text_dim     = "#b6b3cd"
+text_faint   = "#817c9c"
+selection    = "#433c59"
+warning      = "#f6c177"
+good         = "#a3be8c"
+
+accent = ["#9ccfd8", "#569fba", "#c4a7e7"]
+
+now_playing = "#569fba"
+special     = "#c4a7e7"
+marked      = "#eb6f92"

@@ -1,0 +1,19 @@
+# Dracula — Dark. The famous dark theme (draculatheme.com).
+name = "dracula-dark"
+
+bg           = "#282a36"
+panel        = "#21222c"
+border       = "#343746"
+border_focus = "#bd93f9"
+text         = "#f8f8f2"
+text_dim     = "#c1c4d6"
+text_faint   = "#6272a4"
+selection    = "#44475a"
+warning      = "#f1fa8c"
+good         = "#50fa7b"
+
+accent = ["#8be9fd", "#bd93f9", "#ff79c6"]
+
+now_playing = "#8be9fd"
+special     = "#bd93f9"
+marked      = "#ff5555"

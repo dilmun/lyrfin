@@ -1,0 +1,19 @@
+# GitHub — Dark. The classic GitHub Dark Default (Primer).
+name = "github-dark"
+
+bg           = "#0d1117"
+panel        = "#161b22"
+border       = "#30363d"
+border_focus = "#58a6ff"
+text         = "#e6edf3"
+text_dim     = "#7d8590"
+text_faint   = "#6e7681"
+selection    = "#21262d"
+warning      = "#d29922"
+good         = "#3fb950"
+
+accent = ["#39c5cf", "#58a6ff", "#a371f7"]
+
+now_playing = "#58a6ff"
+special     = "#a371f7"
+marked      = "#f85149"

@@ -1,0 +1,19 @@
+# Dracula — Light. Alucard, Dracula's official light counterpart (draculatheme.com).
+name = "dracula-light"
+
+bg           = "#fffbeb"
+panel        = "#efeddc"
+border       = "#dedccf"
+border_focus = "#644ac9"
+text         = "#1f1f1f"
+text_dim     = "#6c664b"
+text_faint   = "#8f8968"
+selection    = "#e2deca"
+warning      = "#846e15"
+good         = "#14710a"
+
+accent = ["#036a96", "#644ac9", "#a3144d"]
+
+now_playing = "#036a96"
+special     = "#644ac9"
+marked      = "#cb3a2a"

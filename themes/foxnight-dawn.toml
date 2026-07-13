@@ -1,0 +1,19 @@
+# FoxNight — Dawn. The light variant (dawnfox-inspired).
+name = "foxnight-dawn"
+
+bg           = "#faf4ed"
+panel        = "#f2e9e1"
+border       = "#dfdad9"
+border_focus = "#286983"
+text         = "#575279"
+text_dim     = "#6e6a86"
+text_faint   = "#9893a5"
+selection    = "#e4dfde"
+warning      = "#b4637a"
+good         = "#56949f"
+
+accent = ["#56949f", "#286983", "#907aa9"]
+
+now_playing = "#286983"
+special     = "#907aa9"
+marked      = "#d7827e"

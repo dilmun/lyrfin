@@ -1,0 +1,19 @@
+# Gruvbox — Dark (medium). Retro warm, low-contrast (morhetz/gruvbox).
+name = "gruvbox-dark"
+
+bg           = "#282828"
+panel        = "#32302f"
+border       = "#3c3836"
+border_focus = "#83a598"
+text         = "#ebdbb2"
+text_dim     = "#d5c4a1"
+text_faint   = "#928374"
+selection    = "#504945"
+warning      = "#fabd2f"
+good         = "#b8bb26"
+
+accent = ["#8ec07c", "#83a598", "#d3869b"]
+
+now_playing = "#83a598"
+special     = "#d3869b"
+marked      = "#fb4934"

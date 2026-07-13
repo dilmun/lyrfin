@@ -1,0 +1,19 @@
+# Nord — Light. Snow-Storm background with Polar-Night text (community light Nord).
+name = "nord-light"
+
+bg           = "#eceff4"
+panel        = "#e5e9f0"
+border       = "#d8dee9"
+border_focus = "#5e81ac"
+text         = "#2e3440"
+text_dim     = "#434c5e"
+text_faint   = "#7b88a1"
+selection    = "#dde3ec"
+warning      = "#d08770"
+good         = "#a3be8c"
+
+accent = ["#5e81ac", "#81a1c1", "#b48ead"]
+
+now_playing = "#5e81ac"
+special     = "#b48ead"
+marked      = "#bf616a"

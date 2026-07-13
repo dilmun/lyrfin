@@ -1,0 +1,98 @@
+name: release
+
+# Builds + publishes the binaries for every vX.Y.Z tag — whether release-please
+# created it (its GitHub App token makes the tag trigger workflows) or a human
+# pushed it for an out-of-band hotfix. release-please.yml has no build of its own,
+# so this is the single build path.
+#
+# It first waits for CI to be green on the tagged commit, then ensures a GitHub
+# Release exists (release-please already made one with generated notes on the
+# automated path — those are kept; a manual tag gets one from the matching
+# CHANGELOG.md section), then builds + attaches the binaries. See docs/RELEASING.md.
+#
+# Manual re-run: `workflow_dispatch` with a `tag` input rebuilds + re-attaches the
+# binaries for an existing release — the recovery path when a single target flakes
+# (e.g. a runner-specific packaging failure) after the release is already cut, so
+# no tag surgery is needed. Uploads use `--clobber`, so re-attaching is idempotent.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing vX.Y.Z tag to (re)build and attach binaries to"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  create-release:
+    name: require-green-ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+
+      - name: Require CI success on the tagged commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Resolve the commit from the checked-out tag rather than github.sha, so a
+          # workflow_dispatch re-run (which runs on the default branch) still gates on
+          # the tagged commit's CI, not the branch head's.
+          sha="$(git rev-parse HEAD)"
+          echo "Waiting for CI to conclude on $sha ..."
+          for i in $(seq 1 30); do
+            run=$(gh api "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?head_sha=$sha&per_page=1" \
+              --jq '.workflow_runs[0] | {status: (.status // "missing"), conclusion: (.conclusion // "")}')
+            status=$(echo "$run" | jq -r '.status')
+            conclusion=$(echo "$run" | jq -r '.conclusion')
+            echo "attempt $i: status=$status conclusion=$conclusion"
+            if [ "$status" = "completed" ]; then
+              [ "$conclusion" = "success" ] && { echo "CI green — proceeding."; exit 0; }
+              echo "::error::CI concluded '$conclusion' (not success) on $sha — refusing to release."
+              exit 1
+            fi
+            sleep 20
+          done
+          echo "::error::CI did not complete for $sha within the polling window — refusing to release."
+          exit 1
+
+      - name: Create GitHub Release from CHANGELOG
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.tag || github.ref_name }}"
+          ver="${tag#v}"
+          if gh release view "$tag" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release $tag already exists — skipping creation."
+            exit 0
+          fi
+          # Extract this version's section from CHANGELOG.md (stop at the next '## ' heading).
+          notes="$(awk -v ver="$ver" '
+            /^## / { if (found) exit;
+                     if (index($0, "[" ver "]") || index($0, "[v" ver "]")) { found=1; next } }
+            found { print }
+          ' CHANGELOG.md || true)"
+          if [ -n "$(printf "%s" "$notes" | tr -d '[:space:]')" ]; then
+            printf "%s\n" "$notes" > /tmp/notes.md
+            gh release create "$tag" --verify-tag --title "$tag" --notes-file /tmp/notes.md
+          else
+            echo "No CHANGELOG section for $ver — generating notes from commits."
+            gh release create "$tag" --verify-tag --title "$tag" --generate-notes
+          fi
+
+  build:
+    name: build
+    needs: create-release
+    uses: ./.github/workflows/release-build.yml
+    with:
+      tag: ${{ inputs.tag || github.ref_name }}
+    permissions:
+      contents: write

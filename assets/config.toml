@@ -1,0 +1,30 @@
+# lyrfin configuration — copied to ~/.config/lyrfin/config.toml on first run (M2).
+
+# Folders scanned for music (defaults to your OS audio dir if empty).
+music_dirs = []
+
+theme        = "aurora"      # aurora | cyberpunk | glacier | monolith | <custom>
+volume       = 72            # 0..=100
+gapless      = true
+crossfade_ms = 0             # 0 = off
+album_art    = true          # inline sixel/kitty/iterm art when supported
+mouse        = true
+touchpad_speed   = "normal"  # touchpad grid/carousel scroll: slow | normal | fast
+grid_scroll_lock = true      # lock sideways grid scroll to the current row/carousel
+fps          = 60            # UI tick / animation rate
+reduced_motion = false       # accessibility: freeze the idle visualizer
+
+[visualizer]
+frame_rate = 60      # animation frame rate (also the global UI tick rate)
+peak_caps  = true    # show the falling peak-cap above each bar (Bars mode)
+gravity    = 0.004   # how fast a cap falls once it starts (higher = faster)
+peak_hang  = 10      # frames the cap hangs at its peak before sliding down
+
+[startup]
+view   = "dashboard"         # dashboard | library | nowplaying | visualizer
+layout = "dashboard"
+restore_queue = true
+
+[library]
+watch        = true          # auto-rescan on filesystem changes
+follow_links = false

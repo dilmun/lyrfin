@@ -1,0 +1,15 @@
+# Aurora — the default theme. Colors are #RRGGBB (truecolor).
+# `accent` is a 3-stop gradient sampled across progress bars / visualizer / highlights.
+name = "aurora"
+
+bg           = "#0A0C14"
+panel        = "#0E111B"
+border       = "#222838"
+border_focus = "#33405E"
+text         = "#E7EAF4"
+text_dim     = "#9AA3B8"
+text_faint   = "#646D83"
+selection    = "#182032"
+accent       = ["#48E6D6", "#7E8CF7", "#F47CC0"]
+warning      = "#F7C45A"
+good         = "#54DDA0"

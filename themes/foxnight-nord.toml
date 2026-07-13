@@ -1,0 +1,19 @@
+# FoxNight — Nord. Arctic blue, low-contrast (nordfox-inspired).
+name = "foxnight-nord"
+
+bg           = "#2e3440"
+panel        = "#232831"
+border       = "#3b4252"
+border_focus = "#81a1c1"
+text         = "#e5e9f0"
+text_dim     = "#abb1bb"
+text_faint   = "#60728a"
+selection    = "#434c5e"
+warning      = "#ebcb8b"
+good         = "#a3be8c"
+
+accent = ["#88c0d0", "#81a1c1", "#b48ead"]
+
+now_playing = "#81a1c1"
+special     = "#b48ead"
+marked      = "#bf616a"

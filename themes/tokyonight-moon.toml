@@ -1,0 +1,19 @@
+# TokyoNight — Moon. Softer, slightly violet take.
+name = "tokyonight-moon"
+
+bg           = "#222436"
+panel        = "#1e2030"
+border       = "#2f334d"
+border_focus = "#3e68d7"
+text         = "#c8d3f5"
+text_dim     = "#a9b8e8"
+text_faint   = "#636da6"
+selection    = "#2d3f76"
+warning      = "#ffc777"
+good         = "#c3e88d"
+
+accent = ["#86e1fc", "#82aaff", "#c099ff"]
+
+now_playing = "#82aaff"
+special     = "#c099ff"
+marked      = "#ff757f"

@@ -1,0 +1,19 @@
+# Catppuccin — Mocha. The soothing dark pastel (catppuccin.com).
+name = "catppuccin-mocha"
+
+bg           = "#1e1e2e"
+panel        = "#181825"
+border       = "#313244"
+border_focus = "#89b4fa"
+text         = "#cdd6f4"
+text_dim     = "#a6adc8"
+text_faint   = "#6c7086"
+selection    = "#313244"
+warning      = "#f9e2af"
+good         = "#a6e3a1"
+
+accent = ["#94e2d5", "#89b4fa", "#cba6f7"]
+
+now_playing = "#89b4fa"
+special     = "#cba6f7"
+marked      = "#f38ba8"

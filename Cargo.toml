@@ -1,0 +1,126 @@
+[package]
+name = "lyrfin"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+description = "A modern, futuristic terminal music player (TUI) with local library, Spotify, radio, podcasts, synced lyrics and a live visualizer."
+license = "MIT"
+authors = ["dilmun"]
+repository = "https://github.com/dilmun/lyrfin"
+homepage = "https://github.com/dilmun/lyrfin"
+documentation = "https://github.com/dilmun/lyrfin/tree/main/docs"
+readme = "README.md"
+keywords = ["music", "player", "tui", "terminal", "spotify"]
+categories = ["multimedia::audio", "command-line-utilities"]
+default-run = "lyrfin"
+
+[[bin]]
+name = "lyrfin"
+path = "src/main.rs"
+
+# Dependencies are introduced milestone-by-milestone (see docs/ROADMAP.md).
+[dependencies]
+# --- M1 terminal/runtime (crossterm is used via `ratatui::crossterm`) ---
+ratatui           = "0.30"
+unicode-width     = "0.2"   # display width of CJK/wide glyphs (column-accurate truncation/padding); already in-tree via ratatui
+anyhow            = "1"
+crossbeam-channel = "0.5"
+# --- M2 config / themes / keybindings ---
+serde             = { version = "1", features = ["derive"] }
+toml              = { version = "1.1", default-features = false, features = ["parse", "serde"] }  # read-only (parse + serde de); drops the display/edit half
+directories       = "6"
+# --- M3 library: scan / tags / search / persistence ---
+lofty             = "0.24"
+walkdir           = "2"
+nucleo-matcher    = "0.3"
+roaring           = "0.11"  # compressed bitmaps for the prefix-token search index
+serde_json        = "1"
+bincode           = { version = "2", features = ["serde"] }   # 3.0.0 is a squatted compile_error stub; 2.x is the real latest
+# --- M4 audio: decode + output ---
+# only the formats we actually play (drops adpcm/alac/caf/mkv from "all")
+symphonia         = { version = "0.6", default-features = false, features = ["mp3", "flac", "vorbis", "ogg", "aac", "isomp4", "pcm", "wav"] }
+cpal              = "0.18"
+ringbuf           = "0.5"   # lock-free SPSC sample ring (controller → audio callback)
+# --- M6 visualizer ---
+rustfft           = "6"
+# --- M7 album art (inline image w/ halfblock fallback) ---
+# default-features=false drops ratatui-image's `image-defaults` (= image/default),
+# which otherwise drags in a full AVIF encoder (rav1e), OpenEXR, TIFF, GIF, etc.
+ratatui-image     = { version = "11", default-features = false, features = ["crossterm"] }
+image             = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+# --- artist/album info (online metadata) ---
+ureq              = { version = "3", features = ["json"] }
+# --- podcasts: match a Spotify episode to its public RSS feed (librespot/Spotify
+# won't grant podcast decryption keys to third-party clients), then stream the
+# open MP3. `rss` parses the feed; no extra HTTP (ureq) deps.
+rss               = { version = "2", default-features = false }
+# --- Spotify (librespot audio + tokio runtime for it) ---
+# default-features=false: we provide a custom Sink (no built-in audio backend),
+# routing librespot's PCM through lyrfin's own engine/ring.
+# NB: needs a rev >= db1ef7a (Jun 2026) for the CDN URL failover fix — Spotify's
+# storage-resolve returns several CDN URLs and some nodes 500/530; older librespot
+# only tried the first → every track "Unable to load encrypted file". Don't pin older.
+librespot         = { git = "https://github.com/librespot-org/librespot", branch = "dev", default-features = false, features = ["rustls-tls-native-roots"] }
+tokio             = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
+# Spotify pathfinder GraphQL client (src/spotify/pathfinder.rs) calls librespot's
+# http_client directly, so it names http::Request/Method + bytes::Bytes and collects
+# the response body via http-body-util. All already in the tree transitively (librespot/hyper).
+http              = "1"
+bytes             = "1"
+http-body-util    = "0.1"
+webbrowser        = "1"     # open the Spotify OAuth URL
+env_logger        = "0.11"  # opt-in librespot logging (RUST_LOG, to stderr)
+log               = "0.4"   # log facade — the audio-key-denial probe (logprobe.rs)
+rustls            = { version = "0.23", default-features = false, features = ["ring"] }  # install a CryptoProvider for librespot's TLS
+sha2              = "0.11"  # PKCE S256 code challenge
+base64            = "0.22"  # PKCE / url-safe encoding
+getrandom         = "0.4"   # PKCE code verifier + CSRF state randomness
+
+# `auto` theme: poll(2)/read(2) the tty to read the terminal's OSC colour replies
+# with a timeout (src/termquery.rs). Unix only — the target (Ghostty on macOS/Linux).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# OS "Now Playing" / media-key integration (src/media/): report the current track
+# to the system and receive transport commands (media keys, AirPods, Control Center
+# / MPRIS). souvlaki wraps the platform frameworks; lyrfin drives its callbacks from
+# the event loop (macOS also needs the main run loop pumped — see src/media/mod.rs).
+#   • macOS  — MediaPlayer framework; no cargo features needed (backend is target-gated).
+#   • Linux  — the pure-Rust `use_zbus` MPRIS backend, so we avoid the C libdbus build
+#     dep that the default `use_dbus` backend would require in CI.
+# Windows (SMTC) is intentionally omitted for now: it needs a hidden message-pump
+# window a console TUI doesn't own, so that build pulls no new dependency.
+[target.'cfg(target_os = "macos")'.dependencies]
+souvlaki = { version = "0.8", default-features = false }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+souvlaki = { version = "0.8", default-features = false, features = ["use_zbus"] }
+# System light/dark detection via the XDG Desktop Portal (src/appearance.rs). Pure
+# Rust, and already compiled here (souvlaki's use_zbus backend pulls the same 3.15),
+# so it adds no new transitive weight — the Linux analogue of the CoreFoundation read.
+zbus = "3.15"
+
+# Shipping build: smallest/fastest binary. Slow to compile (fat LTO + a single
+# codegen unit), so reserve it for releases — for day-to-day testing prefer the
+# `fast` profile or a plain `cargo build` (both incremental → near-instant rebuilds).
+[profile.release]
+opt-level = 3
+lto = "fat"           # max cross-crate inlining/dead-code elim (smaller binary)
+codegen-units = 1
+strip = true
+panic = "abort"       # no unwind tables; a panic in any thread aborts (fine for a player)
+
+# Fast iteration at near-release performance: optimized, but skips fat LTO and
+# keeps codegen parallel + incremental, so a rebuild recompiles only what changed
+# (like reusing C++ .o files) instead of re-optimizing the whole binary. Use via
+# `cargo run --profile fast -- /path/to/music`. The first build is slow (deps
+# compile once); after that, edits relink in seconds.
+[profile.fast]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true
+strip = false
+
+[profile.dev]
+opt-level = 1            # keep the TUI responsive in debug

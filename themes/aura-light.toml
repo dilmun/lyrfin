@@ -1,0 +1,20 @@
+# Aura — Light. A derived light variant (Aura ships no official light theme);
+# Aura's signature purple/green/pink accents darkened for a light background.
+name = "aura-light"
+
+bg           = "#f7f6fb"
+panel        = "#efedf6"
+border       = "#ddd9ea"
+border_focus = "#7c4dd6"
+text         = "#1c1a26"
+text_dim     = "#4c4960"
+text_faint   = "#807c93"
+selection    = "#e7e2f4"
+warning      = "#b3701f"
+good         = "#16a06b"
+
+accent = ["#2a86b8", "#7c4dd6", "#b64fc4"]
+
+now_playing = "#2a86b8"
+special     = "#7c4dd6"
+marked      = "#d13b3b"

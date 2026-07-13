@@ -1,0 +1,19 @@
+# GitHub — Light. The classic GitHub Light Default (Primer).
+name = "github-light"
+
+bg           = "#ffffff"
+panel        = "#f6f8fa"
+border       = "#d0d7de"
+border_focus = "#0969da"
+text         = "#1f2328"
+text_dim     = "#656d76"
+text_faint   = "#6e7781"
+selection    = "#ddf4ff"
+warning      = "#9a6700"
+good         = "#1a7f37"
+
+accent = ["#1b7c83", "#0969da", "#8250df"]
+
+now_playing = "#0969da"
+special     = "#8250df"
+marked      = "#cf222e"

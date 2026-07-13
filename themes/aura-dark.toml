@@ -1,0 +1,19 @@
+# Aura — Dark. The vivid purple/green palette (daltonmenezes/aura-theme).
+name = "aura-dark"
+
+bg           = "#15141b"
+panel        = "#110f18"
+border       = "#2e2b38"
+border_focus = "#a277ff"
+text         = "#edecee"
+text_dim     = "#bdbdbd"
+text_faint   = "#6d6d6d"
+selection    = "#2e2b38"
+warning      = "#ffca85"
+good         = "#61ffca"
+
+accent = ["#82e2ff", "#a277ff", "#f694ff"]
+
+now_playing = "#82e2ff"
+special     = "#a277ff"
+marked      = "#ff6767"

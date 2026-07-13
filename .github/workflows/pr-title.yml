@@ -1,0 +1,50 @@
+name: PR Title
+
+# The repo squash-merges with the PR title as the commit subject
+# (squash_merge_commit_title = PR_TITLE), so the PR title becomes the single
+# Conventional Commit that release-please reads to compute the next version and
+# the changelog entry. A malformed title is a silent failure: release-please
+# would drop it from the changelog and skip the version bump. This job rejects
+# non-conforming titles, closing the one unenforced link in the release chain.
+# See docs/RELEASING.md.
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  validate:
+    name: Validate PR title
+    runs-on: ubuntu-latest
+    steps:
+      - uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Conventional Commit types lyrfin uses. feat/fix/perf drive releases;
+          # the rest are non-releasable but still valid subjects (release-please
+          # keeps the changelog user-facing regardless).
+          types: |
+            feat
+            fix
+            perf
+            refactor
+            docs
+            test
+            build
+            ci
+            chore
+            style
+            revert
+          # Scopes are optional (e.g. `docs:` and `chore(main): release` both
+          # occur), so don't require one — but when present it must be lowercase.
+          requireScope: false
+          # Keep subjects imperative and lowercase-initial to match the existing
+          # history and the generated changelog.
+          subjectPattern: ^(?![A-Z]).+$
+          subjectPatternError: |
+            The PR title subject "{subject}" must start with a lowercase letter.
+            Example: "fix(player): resolve gapless underrun".

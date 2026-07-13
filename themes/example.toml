@@ -1,0 +1,46 @@
+# lyrfin theme — copy to ~/.config/lyrfin/themes/<name>.toml and run `:theme <name>`.
+#
+# Every field is OPTIONAL. Anything you omit falls back to a sensible default
+# derived from the base palette (shown below), so you can override just one
+# colour. All values are "#RRGGBB".
+
+name = "example"
+
+# ---- base palette ----------------------------------------------------------
+bg            = "#0A0C14"   # window background
+panel         = "#0E111B"   # panel / box background
+border        = "#222838"   # unfocused panel border
+border_focus  = "#33405E"   # focused panel border
+text          = "#E7EAF4"   # brightest foreground text
+text_dim      = "#9AA3B8"   # secondary text
+text_faint    = "#646D83"   # tertiary / disabled text
+selection     = "#182032"   # selected-row background
+warning        = "#F7C45A"
+good           = "#54DDA0"
+
+# accent GRADIENT (3 stops) — drives progress bars, the visualizer and any
+# element that doesn't have its own role below.
+accent = ["#48E6D6", "#7E8CF7", "#F47CC0"]
+
+# ---- semantic roles (what each kind of element uses) -----------------------
+# Defaults shown in the comments; uncomment to override.
+#
+# track_title / track_meta are the ONE title-vs-metadata distinction shared by
+# every view — the rows list, the column table, grid cards, the browse list, and
+# radio all read from these, so a title looks the same everywhere and you tune it
+# in one place.
+#
+# NOTE: with "color from album art" on, the accent-family roles (now_playing,
+# toggle_on, slider, special, marked) + accent[] + the visualizer are driven by
+# the cover, overriding whatever you set here. The neutral roles (title,
+# track_title, track_meta, selection_fg, toggle_off) are always honoured.
+# title        = "#B6BDD0"  # panel/box titles                     (default: text_dim→text @0.6)
+# track_title  = "#C0C6DA"  # track/album/artist TITLE, every view (default: text_dim→text @0.6)
+# track_meta   = "#646D83"  # artist · album · year · time + cols  (default: text_faint)
+# now_playing  = "#48E6D6"  # the whole current-playing row        (default: accent[0])
+# selection_fg = "#E7EAF4"  # selected-row text                    (default: text)
+# toggle_on    = "#7E8CF7"  # active toggles / sliders-on          (default: accent[1])
+# toggle_off   = "#6B6F78"  # inactive toggles                     (default: grey of text_faint)
+# slider       = "#48E6D6"  # single-colour meters (volume)        (default: accent[0])
+# special      = "#7E8CF7"  # sidebar smart-lists / facets         (default: accent[1])
+# marked       = "#F47CC0"  # marked rows                          (default: accent[2])

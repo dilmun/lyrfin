@@ -1,0 +1,19 @@
+# Solarized — Dark. Ethan Schoonover's precision palette on base03.
+name = "solarized-dark"
+
+bg           = "#002b36"
+panel        = "#073642"
+border       = "#0d4a56"
+border_focus = "#268bd2"
+text         = "#93a1a1"
+text_dim     = "#839496"
+text_faint   = "#586e75"
+selection    = "#073642"
+warning      = "#b58900"
+good         = "#859900"
+
+accent = ["#2aa198", "#268bd2", "#6c71c4"]
+
+now_playing = "#268bd2"
+special     = "#6c71c4"
+marked      = "#dc322f"

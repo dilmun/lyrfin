@@ -1,0 +1,19 @@
+# Nord — Dark. The arctic, north-bluish classic (nordtheme.com).
+name = "nord-dark"
+
+bg           = "#2e3440"
+panel        = "#3b4252"
+border       = "#434c5e"
+border_focus = "#5e81ac"
+text         = "#eceff4"
+text_dim     = "#d8dee9"
+text_faint   = "#616e88"
+selection    = "#434c5e"
+warning      = "#ebcb8b"
+good         = "#a3be8c"
+
+accent = ["#88c0d0", "#81a1c1", "#b48ead"]
+
+now_playing = "#81a1c1"
+special     = "#b48ead"
+marked      = "#bf616a"

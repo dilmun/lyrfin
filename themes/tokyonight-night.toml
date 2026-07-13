@@ -1,0 +1,19 @@
+# TokyoNight — Night. A dark, deep-blue classic.
+name = "tokyonight-night"
+
+bg           = "#1a1b26"
+panel        = "#16161e"
+border       = "#292e42"
+border_focus = "#3d59a1"
+text         = "#c0caf5"
+text_dim     = "#a9b1d6"
+text_faint   = "#565f89"
+selection    = "#283457"
+warning      = "#e0af68"
+good         = "#9ece6a"
+
+accent = ["#7dcfff", "#7aa2f7", "#bb9af7"]
+
+now_playing = "#7aa2f7"
+special     = "#bb9af7"
+marked      = "#f7768e"

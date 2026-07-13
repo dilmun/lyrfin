@@ -1,0 +1,19 @@
+# FoxNight — Tera. Deep teal night (terafox-inspired).
+name = "foxnight-tera"
+
+bg           = "#152528"
+panel        = "#0f1c1e"
+border       = "#254147"
+border_focus = "#5a93aa"
+text         = "#e6eaea"
+text_dim     = "#cbd9d8"
+text_faint   = "#587b7b"
+selection    = "#243c44"
+warning      = "#ff8349"
+good         = "#7aa4a1"
+
+accent = ["#7aa4a1", "#5a93aa", "#ad5c7c"]
+
+now_playing = "#5a93aa"
+special     = "#ad5c7c"
+marked      = "#e85c51"

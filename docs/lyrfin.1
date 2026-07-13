@@ -1,0 +1,80 @@
+.TH LYRFIN 1 "2026" "lyrfin 0.1.0" "User Commands"
+.SH NAME
+lyrfin \- a modern, futuristic terminal music player (TUI)
+.SH SYNOPSIS
+.B lyrfin
+[\fIOPTIONS\fR] [\fIPATH\fR...]
+.SH DESCRIPTION
+.B lyrfin
+is a keyboard-first terminal music player with a modern, GPU-free interface:
+seven switchable layouts, a library browser, fuzzy search, gapless playback, an
+FFT visualizer, synced lyrics, inline album art, a tag editor, Spotify, internet
+radio, podcasts, themes and configurable keybindings.
+.PP
+PATH arguments are files or directories added to the library for the session.
+.SH OPTIONS
+.TP
+.BR \-\-theme " " \fINAME\fR
+Override the theme (aurora, cyberpunk, glacier, monolith, highcontrast, or a custom theme).
+.TP
+.B \-\-snapshot
+Render every layout headlessly (no TTY) and exit. Useful for testing.
+.TP
+.BR \-\-size " " \fIWxH\fR
+Terminal size for \fB\-\-snapshot\fR (default 120x40).
+.TP
+.BR \-h ", " \-\-help
+Print help.
+.TP
+.BR \-V ", " \-\-version
+Print version.
+.SH KEYS
+.TP
+.B space
+play / pause
+.TP
+.B n / p
+next / previous
+.TP
+.B j / k
+move down / up
+.TP
+.B h / l
+seek
+.TP
+.B 1..7
+switch layout
+.TP
+.B /
+search
+.TP
+.B f
+favorite, \fB. ,\fR rate
+.TP
+.B t
+cycle theme, \fBL\fR lyrics, \fBv\fR visualizer mode
+.TP
+.B ?
+help, \fBq\fR quit
+.SH FILES
+.TP
+.I ~/.config/lyrfin/config.toml
+Main configuration.
+.TP
+.I ~/.config/lyrfin/keybindings.toml
+Key bindings.
+.TP
+.I ~/.config/lyrfin/themes/*.toml
+Custom themes.
+.SH TERMINAL SUPPORT
+lyrfin is currently developed and tested on the
+.B Ghostty
+terminal. It should work on any modern terminal, but other terminals are not yet
+officially verified; broader terminal support is planned. Inline album art
+requires a terminal with an image protocol (Kitty, sixel, or iTerm2) and falls
+back to half-blocks elsewhere.
+.SH SEE ALSO
+Project documentation at
+.I https://github.com/dilmun/lyrfin
+.SH AUTHOR
+dilmun

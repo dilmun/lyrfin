@@ -1,0 +1,65 @@
+# lyrfin keybindings — OVERRIDES ONLY.
+#
+# All default bindings live in the app. This file is for *overriding* them:
+# uncomment a line (or add your own) to change a key. Anything you don't set
+# here keeps the built-in default, so new defaults in future versions apply
+# automatically.
+#
+# Format: "key" = "action"  (sections are cosmetic; all keys are flattened).
+#   Keys:    a char ("q", "G", "+"), or: space enter esc tab backtab backspace
+#            left right up down home end pageup pagedown f1..f12.
+#            Prefix modifiers with "ctrl-" / "alt-" (e.g. "ctrl-c").
+#   Actions: a bare verb ("toggle_play") or "verb:arg":
+#            move:up|down|left|right|top|bottom|pageup|pagedown
+#            seek:+5 | seek:-5      volume:+5 | volume:-5      speed:+0.1 | speed:-0.1
+#            layout:dashboard|full_player|library_focus|lyrics_focus|visualizer_focus|queue_focus
+#            rate:+1 | rate:-1
+#
+# ---- Built-in defaults (shown for reference; uncomment to change) ----
+#
+# [global]
+# "q"      = "quit"
+# "ctrl-c" = "quit"
+# "?"      = "toggle_help"
+# "tab"    = "cycle_pane"
+# "/"      = "begin_search"
+# "t"      = "cycle_theme"
+#
+# [transport]
+# "space" = "toggle_play"
+# "n"     = "next"
+# "p"     = "previous"
+# "s"     = "toggle_shuffle"
+# "r"     = "cycle_repeat"
+# "right" = "seek:+5"   # in the library browser, ←/→ and h/l move between columns
+# "left"  = "seek:-5"
+# "h"     = "seek:-5"
+# "l"     = "seek:+5"
+# "+"     = "volume:+5"
+# "-"     = "volume:-5"
+# "]"     = "speed:+0.1"
+# "["     = "speed:-0.1"
+#
+# [navigation]
+# "j" = "move:down"   "k" = "move:up"
+# "g" = "move:top"    "G" = "move:bottom"
+# "enter" = "activate"   "esc" = "back"
+#
+# [layouts]  — the top-bar tabs
+# "1" = "layout:dashboard"        # Home
+# "2" = "layout:full_player"      # Now Playing
+# "3" = "layout:library_focus"    # Library
+# "4" = "layout:lyrics_focus"     # Lyrics
+# "5" = "layout:visualizer_focus" # Visualizer
+# "6" = "layout:queue_focus"      # Queue
+#
+# [track]
+# "f" = "toggle_favorite"
+# "." = "rate:+1"     "," = "rate:-1"
+# "C" = "clear_queue"
+# "L" = "toggle_lyrics"
+# "i" = "toggle_artist_info"   # show/hide the dashboard artist panel
+# "v" = "cycle_visualizer"
+# "e" = "edit_metadata"
+
+# --- your overrides below ---

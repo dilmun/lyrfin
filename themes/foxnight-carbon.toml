@@ -1,0 +1,19 @@
+# FoxNight — Carbon. Near-black, high-contrast (carbonfox-inspired).
+name = "foxnight-carbon"
+
+bg           = "#161616"
+panel        = "#0a0a0a"
+border       = "#2d2d2d"
+border_focus = "#78a9ff"
+text         = "#f2f4f8"
+text_dim     = "#8c8c8d"
+text_faint   = "#6b6f76"
+selection    = "#2d333d"
+warning      = "#ee5396"
+good         = "#25be6a"
+
+accent = ["#33b1ff", "#78a9ff", "#be95ff"]
+
+now_playing = "#78a9ff"
+special     = "#be95ff"
+marked      = "#ff7eb6"

@@ -1,0 +1,19 @@
+# Catppuccin — Latte. The warm light pastel (catppuccin.com).
+name = "catppuccin-latte"
+
+bg           = "#eff1f5"
+panel        = "#e6e9ef"
+border       = "#ccd0da"
+border_focus = "#1e66f5"
+text         = "#4c4f69"
+text_dim     = "#6c6f85"
+text_faint   = "#9ca0b0"
+selection    = "#ccd0da"
+warning      = "#df8e1d"
+good         = "#40a02b"
+
+accent = ["#179299", "#1e66f5", "#8839ef"]
+
+now_playing = "#1e66f5"
+special     = "#8839ef"
+marked      = "#d20f39"

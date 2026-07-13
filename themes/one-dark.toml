@@ -1,0 +1,19 @@
+# One — Dark. Atom's One Dark syntax palette.
+name = "one-dark"
+
+bg           = "#282c34"
+panel        = "#21252b"
+border       = "#31353f"
+border_focus = "#61afef"
+text         = "#abb2bf"
+text_dim     = "#828997"
+text_faint   = "#5c6370"
+selection    = "#3b3f4c"
+warning      = "#e5c07b"
+good         = "#98c379"
+
+accent = ["#56b6c2", "#61afef", "#c678dd"]
+
+now_playing = "#61afef"
+special     = "#c678dd"
+marked      = "#e06c75"
