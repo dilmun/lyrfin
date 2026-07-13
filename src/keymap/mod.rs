@@ -856,15 +856,55 @@ fn grid_context(app: &AppState, key: Key) -> Option<Action> {
 /// the Lyrics view with the Queue pane focused, `F` cycles the format AND `K`/`J`
 /// reorder the queue.
 fn pane_context(app: &AppState, key: Key) -> Option<Action> {
+    // The lyrics view/pane's own keys apply first (`F`, and the `,`/`.` offset nudges),
+    // in the dedicated Lyrics view or with the Lyrics side-pane focused.
     if (app.layout == Layout::LyricsFocus || app.focus == Focus::Pane(Panel::Lyrics))
         && let Some(a) = lyrics_keys(key)
     {
         return Some(a);
     }
-    match app.focus {
-        Focus::Pane(Panel::Queue) => queue_keys(key),
-        _ => None,
+    // A focused side-pane owns the keyboard: its own keys win, then every
+    // non-universal key is *shadowed* (swallowed as a no-op) so a stray global — e.g.
+    // `f` = favourite while the Lyrics pane is focused — can't leak in. Only universal
+    // keys (navigation, playback transport, app chrome, and the focused pane's own
+    // resize/move) pass through to the global table. This is what makes a focused
+    // pane expose only its own options.
+    if let Focus::Pane(panel) = app.focus {
+        let claimed = match panel {
+            Panel::Queue => queue_keys(key),
+            Panel::Visualizer => viz_keys(key),
+            // Lyrics handled above; Artist/Sidebar are navigation-only.
+            _ => None,
+        };
+        if let Some(a) = claimed {
+            return Some(a);
+        }
+        if !is_universal_key(key) {
+            return Some(Action::Noop);
+        }
     }
+    None
+}
+
+/// Keys that stay live no matter what owns the focus: navigation, playback
+/// transport, the core app chrome (quit / search / palette / help / switch view /
+/// switch focus), and the focused pane's own geometry (resize / move / fit). Every
+/// *other* key is a view-content action and is shadowed while a side-pane is focused
+/// (see [`pane_context`]), so only that pane's own options are reachable. Matched by
+/// canonical label, so a rebound key is classified by where it lands, not its glyph.
+fn is_universal_key(key: Key) -> bool {
+    const UNIVERSAL: &[&str] = &[
+        // navigation
+        "up", "down", "left", "right", "pageup", "pagedown", "home", "end", "enter", "esc", "tab",
+        "backtab", "j", "k", "g", "G",
+        // playback transport (seek / volume / speed / shuffle / repeat)
+        "space", "n", "p", "h", "l", "+", "=", "-", "[", "]", "s", "r",
+        // app chrome: quit / back / palette / help / search / copy-error / switch view
+        "q", "Q", "ctrl-c", "ctrl-o", ":", "?", "/", "y", "1", "2", "3", "4", "5", "6", "7",
+        // the focused pane's own geometry: resize (>< }{ ), move edge (m), fit/reset (zZ)
+        ">", "<", "}", "{", "m", "z", "Z",
+    ];
+    UNIVERSAL.contains(&key_label(key).as_str())
 }
 
 /// Lyrics pane keys: `F` cycles the lyric format (plain → karaoke → teleprompter);
@@ -877,6 +917,15 @@ fn lyrics_keys(key: Key) -> Option<Action> {
         KeyCode::Char('F') => Some(Action::CycleLyricsFormat),
         KeyCode::Char(',') => Some(Action::LyricsOffset(-50)), // earlier
         KeyCode::Char('.') => Some(Action::LyricsOffset(50)),  // later
+        _ => None,
+    }
+}
+
+/// Visualizer pane keys: `v` cycles the visualizer mode — the pane's own action,
+/// kept reachable so the shadow rule doesn't swallow it while the pane is focused.
+fn viz_keys(key: Key) -> Option<Action> {
+    match key.code {
+        KeyCode::Char('v') => Some(Action::CycleVisualizer),
         _ => None,
     }
 }

@@ -93,6 +93,59 @@ fn queue_pane_owns_reorder_keys_but_nav_falls_through() {
 }
 
 #[test]
+fn focused_pane_shadows_stray_globals_but_keeps_universal_keys() {
+    let mut a = app();
+    a.layout = Layout::Dashboard;
+    let k = |c| Key {
+        code: KeyCode::Char(c),
+        mods: Mods::default(),
+    };
+
+    // A focused side-pane exposes only its own options: view-content globals are
+    // swallowed rather than leaking in.
+    a.focus = Focus::Pane(Panel::Lyrics);
+    for c in ['f', 't', 'e', 'v', 'b', 'i', 'a'] {
+        assert_eq!(
+            crate::keymap::map(&a, k(c)),
+            Action::Noop,
+            "'{c}' must be shadowed while a pane is focused"
+        );
+    }
+    // …while universal keys (transport, nav, chrome) always pass through.
+    assert_ne!(
+        crate::keymap::map(&a, k('n')),
+        Action::Noop,
+        "next is transport"
+    );
+    assert_ne!(
+        crate::keymap::map(&a, k(' ')),
+        Action::Noop,
+        "play/pause is transport"
+    );
+    assert_ne!(
+        crate::keymap::map(&a, k(':')),
+        Action::Noop,
+        "the palette is always reachable"
+    );
+    assert_ne!(
+        crate::keymap::map(&a, k('1')),
+        Action::Noop,
+        "view switch is always reachable"
+    );
+
+    // The shadow is not layout-specific — the Queue pane behaves the same way.
+    a.focus = Focus::Pane(Panel::Queue);
+    assert_eq!(crate::keymap::map(&a, k('t')), Action::Noop);
+    assert_ne!(crate::keymap::map(&a, k('p')), Action::Noop);
+
+    // The dedicated Lyrics *view* (main focus, not a pane) is NOT shadowed — it's a
+    // full view, so its globals still work.
+    a.layout = Layout::LyricsFocus;
+    a.focus = Focus::Main;
+    assert_ne!(crate::keymap::map(&a, k('t')), Action::Noop);
+}
+
+#[test]
 fn sort_parse_directions() {
     use SortField::*;
     assert_eq!(
