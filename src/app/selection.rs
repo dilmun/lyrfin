@@ -40,6 +40,51 @@ impl AppState {
         }
     }
 
+    /// `f`: toggle favourite on the current selection — the marked set / visual
+    /// range, else the cursor track (falling back to the now-playing track), the
+    /// same target every bulk operator (tag edit / add-to-playlist) resolves. If
+    /// the whole selection is already favourited it un-favourites; otherwise it
+    /// favourites all of them (so a mixed selection becomes all-favourite).
+    pub(crate) fn toggle_favorite_selection(&mut self) {
+        // Favouriting is a local-library concept — the Radio/Spotify views have
+        // their own star keys (RadioStar / SpotifyLike) and their "selection" is
+        // not an editable local file.
+        if matches!(self.layout, Layout::Radio | Layout::Spotify) {
+            return;
+        }
+        let ids = self.selected_track_ids();
+        if ids.is_empty() {
+            return;
+        }
+        // favourite unless every selected track is already favourited (then clear)
+        let make_fav = !ids
+            .iter()
+            .all(|id| self.library.track(*id).is_some_and(|t| t.favorite));
+        let mut changed = 0usize;
+        for id in &ids {
+            if let Some(t) = self.library.tracks.get_mut(id)
+                && t.favorite != make_fav
+            {
+                t.favorite = make_fav;
+                changed += 1;
+            }
+        }
+        self.library.favorites = self
+            .library
+            .tracks
+            .values()
+            .filter(|t| t.favorite)
+            .map(|t| t.id)
+            .collect();
+        self.search.lib_gen += 1; // fav:/rating: searches may change
+        let noun = if changed == 1 { "track" } else { "tracks" };
+        self.notify(if make_fav {
+            format!("♥ Favorited {changed} {noun}")
+        } else {
+            format!("Removed {changed} {noun} from favorites")
+        });
+    }
+
     /// The global interaction mode ([`Mode`]). Not yet shown in the status bar.
     #[allow(dead_code)]
     pub fn mode(&self) -> Mode {

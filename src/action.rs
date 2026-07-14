@@ -103,7 +103,7 @@ pub enum Action {
     AddToPlaylistPrompt,  // open the "add to playlist" picker for the selected track
 
     // ---- library / metadata ----
-    ToggleFavorite(TrackId),
+    ToggleFavoriteSel, // `f`: favourite the selection (marks/visual/cursor, else now-playing)
     Rate(TrackId, u8), // 0..=5 stars
     BeginSearch,
     SearchInput(String),

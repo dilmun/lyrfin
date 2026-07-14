@@ -1104,7 +1104,7 @@ fn parse_action(s: &str, app: &AppState) -> Action {
         "cycle_visualizer" => CycleVisualizer,
         "open_view_settings" => OpenViewSettings,
         "reset_layout" => ResetLayout,
-        "toggle_favorite" => app.player.current.map(ToggleFavorite).unwrap_or(Noop),
+        "toggle_favorite" => ToggleFavoriteSel,
         "edit_metadata" => BeginTagEdit,
         "open_radio" => OpenRadio,
         "open_spotify" => OpenSpotify,

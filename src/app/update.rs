@@ -617,25 +617,7 @@ impl AppState {
             }
             TagEditSaveAlbum => self.tag_edit_apply(true),
             TagEditCancel => self.close_tags(),
-            ToggleFavorite(id) => {
-                if let Some(t) = self.library.tracks.get_mut(&id) {
-                    t.favorite = !t.favorite;
-                    let fav = t.favorite;
-                    self.notify(if fav {
-                        "♥ Added to favorites".into()
-                    } else {
-                        "Removed from favorites".into()
-                    });
-                }
-                self.library.favorites = self
-                    .library
-                    .tracks
-                    .values()
-                    .filter(|t| t.favorite)
-                    .map(|t| t.id)
-                    .collect();
-                self.search.lib_gen += 1; // fav:/rating: searches may change
-            }
+            ToggleFavoriteSel => self.toggle_favorite_selection(),
             Rate(id, stars) => {
                 let stars = stars.min(5);
                 if let Some(t) = self.library.tracks.get_mut(&id) {
