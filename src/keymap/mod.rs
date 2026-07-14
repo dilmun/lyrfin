@@ -794,6 +794,12 @@ fn radio_view(app: &AppState, key: Key) -> Option<Action> {
             Action::RadioCancel,
         ));
     }
+    // Modifier combos are never radio single-key commands — let the global table
+    // resolve them (ctrl-o = back, ctrl-q = queue …); ctrl-n/p are handled upstream
+    // by `universal_nav`.
+    if key.mods.ctrl || key.mods.alt {
+        return Some(global_binding(app, key));
+    }
     // Browse mode. Keys common to both panes first, then pane-specific keys; Tab
     // (cycle focus, sidebar ↔ list) and j/k (Move) fall through to the global table.
     match key.code {
@@ -812,6 +818,11 @@ fn radio_view(app: &AppState, key: Key) -> Option<Action> {
             KeyCode::Char('h') | KeyCode::Left => Action::Noop,
             _ => global_binding(app, key),
         });
+    }
+    // vim horizontal nav from the main pane: h/← jumps back to the section sidebar
+    // (its counterpart l/→ enters the main pane from the sidebar, above).
+    if matches!(key.code, KeyCode::Char('h') | KeyCode::Left) {
+        return Some(Action::FocusPane(Focus::Sidebar));
     }
     // Playlists section: the flat list (create/rename/delete, ⏎ drills in) vs a
     // drilled-in playlist (its stations: d/x removes, a adds elsewhere, f stars).

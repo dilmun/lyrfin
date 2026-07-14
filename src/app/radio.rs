@@ -309,10 +309,12 @@ impl AppState {
         }
     }
 
-    /// Esc: close the picker, leave search edit, or return to All Stations. In
-    /// plain browse it does nothing — Esc never drops you back to the local player
-    /// (switch views with 1–6 for that), so it can't be hit by accident.
-    pub(crate) fn radio_cancel(&mut self) {
+    /// Back out one level in the Radio view (Esc / Ctrl-O): close the picker, a
+    /// playlist modal, or the search box; leave a drilled-in playlist; else drop the
+    /// active section back to All Stations. Returns whether anything was backed out —
+    /// so the global `go_back` can chain it. In plain browse it does nothing (Esc
+    /// never drops you back to the local player; switch views with 1–6 for that).
+    pub(crate) fn radio_back(&mut self) -> bool {
         if self.radio.picker.is_some() {
             self.radio.picker = None;
         } else if self.radio.pl.modal_open() {
@@ -324,7 +326,10 @@ impl AppState {
         } else if self.radio.section != RadioSection::AllStations {
             self.radio.section = RadioSection::AllStations;
             self.radio.sel = 0;
+        } else {
+            return false;
         }
+        true
     }
 
     /// Open the country/genre picker, fetching its source list on first use.

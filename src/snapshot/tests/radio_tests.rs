@@ -142,6 +142,40 @@ fn radio_search_matches_across_fields_and_trending_sorts() {
 }
 
 #[test]
+fn radio_vim_nav_ctrl_o_back_and_ctrl_np() {
+    use crate::action::Action;
+    use crate::app::{Focus, RadioSection};
+    use crate::event::{Key, KeyCode, Mods};
+    let mut a = demo();
+    a.layout = Layout::Radio;
+    a.focus = Focus::Main;
+    let ctrl = |c| Key {
+        code: KeyCode::Char(c),
+        mods: Mods {
+            ctrl: true,
+            ..Mods::default()
+        },
+    };
+
+    // h from the main pane jumps back to the section sidebar (vim left)
+    let h = Key {
+        code: KeyCode::Char('h'),
+        mods: Mods::default(),
+    };
+    assert_eq!(crate::keymap::map(&a, h), Action::FocusPane(Focus::Sidebar));
+
+    // ctrl-o = back (not swallowed by `o` = cycle-sort); ctrl-n/p still navigate
+    assert_eq!(crate::keymap::map(&a, ctrl('o')), Action::Back);
+    assert_eq!(crate::keymap::map(&a, ctrl('n')), Action::NavDown);
+    assert_eq!(crate::keymap::map(&a, ctrl('p')), Action::NavUp);
+
+    // Back drops a non-default section to All Stations (via the go_back radio arm)
+    a.radio.section = RadioSection::Favorites;
+    a.update(Action::Back);
+    assert_eq!(a.radio.section, RadioSection::AllStations);
+}
+
+#[test]
 fn key_6_opens_radio_view() {
     use crate::event::{Key, KeyCode, Mods};
     let mut a = demo();

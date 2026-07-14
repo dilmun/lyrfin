@@ -79,6 +79,8 @@ impl AppState {
             self.marks.anchor = None;
         } else if !self.marks.ids.is_empty() {
             self.marks.ids.clear();
+        } else if self.layout == Layout::Radio && self.radio_back() {
+            // Radio: close a picker/modal, leave a drilled playlist, or drop the section
         } else if self.layout == Layout::Dashboard && self.local_back() {
             // Dashboard drill-in: pop one level back to the parent list
         } else if self.layout == Layout::Spotify && self.spotify_cancel() {
@@ -379,7 +381,9 @@ impl AppState {
             RadioInput(q) => self.radio_search(q),
             RadioActivate => self.radio_activate(),
             RadioFocusSearch => self.radio.editing = true,
-            RadioCancel => self.radio_cancel(),
+            RadioCancel => {
+                self.radio_back();
+            }
             RadioOpenCountry => self.radio_open_picker(PickerKind::Country),
             RadioOpenGenre => self.radio_open_picker(PickerKind::Genre),
             RadioPickerInput(q) => {
