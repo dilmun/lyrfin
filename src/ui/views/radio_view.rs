@@ -383,6 +383,7 @@ enum SCol {
     Name,
     Country,
     Genre,
+    Codec,
     Bitrate,
     Plays,
     Votes,
@@ -395,6 +396,7 @@ impl SCol {
             SCol::Name => "STATION",
             SCol::Country => "COUNTRY",
             SCol::Genre => "GENRE",
+            SCol::Codec => "CODEC",
             SCol::Bitrate => "KBPS",
             SCol::Plays => "PLAYS",
             SCol::Votes => "VOTES",
@@ -404,6 +406,7 @@ impl SCol {
         match self {
             SCol::Country => 20,
             SCol::Genre => 16,
+            SCol::Codec => 8,
             _ => usize::MAX,
         }
     }
@@ -419,6 +422,7 @@ impl SCol {
                 }
             }
             SCol::Genre => st.genre().to_string(),
+            SCol::Codec => st.codec.to_uppercase(),
             SCol::Bitrate => {
                 if st.bitrate > 0 {
                     st.bitrate.to_string()
@@ -546,9 +550,10 @@ fn radio_station_list(f: &mut Frame, list: Rect, app: &AppState) {
     let cols = vec![
         TableColumn::fixed(SCol::Mark.header(), components::PIN).seed(2),
         TableColumn::flexible(SCol::Name.header(), 16),
-        TableColumn::fixed(SCol::Country.header(), 4),
-        TableColumn::fixed(SCol::Genre.header(), 3),
-        TableColumn::fixed(SCol::Bitrate.header(), 5).right(),
+        TableColumn::fixed(SCol::Country.header(), 5),
+        TableColumn::fixed(SCol::Genre.header(), 4),
+        TableColumn::fixed(SCol::Bitrate.header(), 6).right(),
+        TableColumn::fixed(SCol::Codec.header(), 3),
         TableColumn::fixed(SCol::Plays.header(), 2).right(),
         TableColumn::fixed(SCol::Votes.header(), 1).right(),
     ];
@@ -558,6 +563,7 @@ fn radio_station_list(f: &mut Frame, list: Rect, app: &AppState) {
         SCol::Country,
         SCol::Genre,
         SCol::Bitrate,
+        SCol::Codec,
         SCol::Plays,
         SCol::Votes,
     ];

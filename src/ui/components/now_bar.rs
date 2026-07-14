@@ -431,6 +431,24 @@ const LIVE_EDGE_SECS: f64 = 4.0;
 const DVR_BAR_L: u16 = 8;
 const DVR_BAR_R: u16 = 12;
 
+/// The regional-indicator flag for an ISO-3166-1 alpha-2 country code
+/// (e.g. "US" → 🇺🇸); empty when the code isn't exactly two ASCII letters. Used on
+/// the single-line radio now-bar only — flags are kept out of the columnar station
+/// table, where their width-2-vs-computed-4 mismatch would misalign the columns.
+fn flag_emoji(cc: &str) -> String {
+    let bytes = cc.trim().as_bytes();
+    if bytes.len() != 2 || !bytes.iter().all(|b| b.is_ascii_alphabetic()) {
+        return String::new();
+    }
+    bytes
+        .iter()
+        .map(|b| {
+            let cp = 0x1F1E6u32 + (b.to_ascii_uppercase() - b'A') as u32;
+            char::from_u32(cp).unwrap_or('?')
+        })
+        .collect()
+}
+
 /// Format a DVR duration as `H:MM:SS` past an hour, else `M:SS`. Session/window
 /// times run to hours, which plain `mmss` would show as `83:45`.
 fn dvr_time(secs: f64) -> String {
@@ -505,9 +523,14 @@ pub(crate) fn radio_now_bar(f: &mut Frame, area: Rect, app: &AppState) {
         .filter(|t| !t.is_empty())
         .unwrap_or(&st.name)
         .to_string();
-    // sub-line: station · genre, then (for a DVR stream) the tuned-in session time
-    // and, when rewound, how far behind live the play-head sits.
-    let mut sub = format!("📻 {} · {}", st.name, st.subtitle());
+    // sub-line: (flag) station · genre · codec · bitrate, then (for a DVR stream)
+    // the tuned-in session time and, when rewound, how far behind live it sits.
+    let flag = flag_emoji(&st.countrycode);
+    let mut sub = if flag.is_empty() {
+        format!("📻 {} · {}", st.name, st.subtitle())
+    } else {
+        format!("📻 {flag} {} · {}", st.name, st.subtitle())
+    };
     if let Some(d) = app.rnow.dvr {
         sub.push_str(&format!("  ·  ⏱ {}", dvr_time(d.live)));
         let behind = d.behind_live();

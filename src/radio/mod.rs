@@ -75,6 +75,9 @@ impl Station {
         if !genre.is_empty() {
             parts.push(genre.to_string());
         }
+        if !self.codec.is_empty() {
+            parts.push(self.codec.to_uppercase());
+        }
         if self.bitrate > 0 {
             parts.push(format!("{}k", self.bitrate));
         }

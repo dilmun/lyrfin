@@ -5,6 +5,21 @@
 use super::*;
 
 #[test]
+fn station_subtitle_includes_codec_and_bitrate() {
+    let st = crate::radio::Station {
+        countrycode: "US".into(),
+        tags: "jazz,late night".into(),
+        codec: "aac".into(),
+        bitrate: 320,
+        ..Default::default()
+    };
+    let sub = st.subtitle();
+    assert!(sub.contains("AAC"), "codec shown uppercased: {sub}");
+    assert!(sub.contains("320k"), "bitrate shown: {sub}");
+    assert!(sub.contains("jazz"), "genre shown: {sub}");
+}
+
+#[test]
 fn radio_playlists_create_add_drill_remove_delete_persist() {
     use crate::action::Action;
     use crate::app::{Focus, RadioSection};
