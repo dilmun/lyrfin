@@ -82,6 +82,51 @@ fn radio_playlists_create_add_drill_remove_delete_persist() {
 }
 
 #[test]
+fn radio_search_matches_across_fields_and_trending_sorts() {
+    use crate::radio::{Sort, Station};
+    let st = |name: &str, country: &str, lang: &str, tags: &str, trend: i32| Station {
+        name: name.into(),
+        url: format!("http://x/{name}"),
+        country: country.into(),
+        countrycode: country.chars().take(2).collect::<String>().to_uppercase(),
+        language: lang.into(),
+        tags: tags.into(),
+        clicktrend: trend,
+        ..Default::default()
+    };
+    let mut a = demo();
+    a.layout = Layout::Radio;
+    a.ingest_directory(
+        vec![
+            st("Alpha", "Germany", "german", "techno", 5),
+            st("Beta", "France", "french", "jazz", 99),
+        ],
+        true,
+    );
+    let names =
+        |a: &AppState| -> Vec<String> { a.radio.stations.iter().map(|s| s.name.clone()).collect() };
+
+    // the free-text query matches name / country / language / genre-tags
+    a.radio_search("french".into());
+    assert_eq!(names(&a), vec!["Beta"], "matched by language");
+    a.radio_search("germany".into());
+    assert_eq!(names(&a), vec!["Alpha"], "matched by country");
+    a.radio_search("jazz".into());
+    assert_eq!(names(&a), vec!["Beta"], "matched by genre tag");
+    a.radio_search("alph".into());
+    assert_eq!(names(&a), vec!["Alpha"], "matched by name");
+
+    // Trending sorts by clicktrend (biggest riser first)
+    a.radio.sort = Sort::Trending;
+    a.radio_search(String::new());
+    assert_eq!(
+        names(&a),
+        vec!["Beta", "Alpha"],
+        "trending: Beta (99) before Alpha (5)"
+    );
+}
+
+#[test]
 fn key_6_opens_radio_view() {
     use crate::event::{Key, KeyCode, Mods};
     let mut a = demo();

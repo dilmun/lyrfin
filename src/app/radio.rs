@@ -300,10 +300,8 @@ impl AppState {
                 self.refresh_radio();
                 self.set_focus(Focus::Main);
             }
-            // No dedicated "trending" API field yet — rank by votes as an interim
-            // signal until `clicktrend` lands in the browse-polish phase.
             RadioSection::Trending => {
-                self.radio.sort = Sort::Votes;
+                self.radio.sort = Sort::Trending;
                 self.refresh_radio();
                 self.set_focus(Focus::Main);
             }
@@ -636,6 +634,8 @@ impl AppState {
         stations.sort_by_key(|b| std::cmp::Reverse(b.clickcount));
         self.radio.name_lc = stations.iter().map(|s| s.name.to_lowercase()).collect();
         self.radio.tags_lc = stations.iter().map(|s| s.tags.to_lowercase()).collect();
+        self.radio.country_lc = stations.iter().map(|s| s.country.to_lowercase()).collect();
+        self.radio.lang_lc = stations.iter().map(|s| s.language.to_lowercase()).collect();
         self.radio.all_countries = derive_countries(&stations);
         self.radio.all_tags = derive_genres(&stations, None);
         self.radio.genres_by_country.clear(); // re-derive per country on demand
@@ -798,10 +798,12 @@ pub struct Radio {
     /// The full station directory, downloaded once and cached, so all searching /
     /// filtering / sorting happens locally with no per-keystroke API calls.
     pub all_stations: Vec<crate::radio::Station>,
-    /// Lowercased name / tags parallel to `all_stations` (built once) so local
-    /// filtering never allocates per row.
+    /// Lowercased name / tags / country / language parallel to `all_stations`
+    /// (built once) so the multi-field search never allocates per row.
     pub(crate) name_lc: Vec<String>,
     pub(crate) tags_lc: Vec<String>,
+    pub(crate) country_lc: Vec<String>,
+    pub(crate) lang_lc: Vec<String>,
     /// The local directory is loaded and in use (else we use live API search).
     pub local_ready: bool,
     /// A directory load/download is in flight.
