@@ -425,6 +425,12 @@ pub fn now_bar(f: &mut Frame, area: Rect, app: &AppState) {
 /// live edge advances in bursts, so computing a fraction there jitters the knob).
 const LIVE_EDGE_SECS: f64 = 4.0;
 
+/// The radio status row's scrub/window bar (and the spectrum above it) are inset by
+/// a left rewind-depth label and a right play/LIVE badge, so the spectrum spans
+/// exactly that bar — like the local playback bar — not the full playback width.
+const DVR_BAR_L: u16 = 8;
+const DVR_BAR_R: u16 = 12;
+
 /// Format a DVR duration as `H:MM:SS` past an hour, else `M:SS`. Session/window
 /// times run to hours, which plain `mmss` would show as `83:45`.
 fn dvr_time(secs: f64) -> String {
@@ -551,7 +557,19 @@ pub(crate) fn radio_now_bar(f: &mut Frame, area: Rect, app: &AppState) {
     if let Some(v) = viz_opt
         && v.height > 0
     {
-        spectrum_bare(f, v, app, app.config.player_viz_mode);
+        // span exactly the scrub bar below (inset by the label + LIVE badge), like
+        // the local playback bar; fall back to full width only when too narrow to inset
+        let (vx, vw) = if v.width > DVR_BAR_L + DVR_BAR_R + 4 {
+            (v.x + DVR_BAR_L, v.width - DVR_BAR_L - DVR_BAR_R)
+        } else {
+            (v.x, v.width)
+        };
+        spectrum_bare(
+            f,
+            Rect::new(vx, v.y, vw, v.height),
+            app,
+            app.config.player_viz_mode,
+        );
     }
 
     // Timeshift (DVR) window bar when the stream is buffered — a "window timeline":
@@ -573,9 +591,9 @@ pub(crate) fn radio_now_bar(f: &mut Frame, area: Rect, app: &AppState) {
             ((dvr.pos - dvr.start) / span).clamp(0.0, 1.0) as f32
         };
         let [lab, bar, right] = Layout::horizontal([
-            Constraint::Length(8),  // −window: how far back you can rewind now
-            Constraint::Min(4),     // the rewindable window
-            Constraint::Length(12), // play/pause + persistent LIVE badge
+            Constraint::Length(DVR_BAR_L), // −window: how far back you can rewind now
+            Constraint::Min(4),            // the rewindable window
+            Constraint::Length(DVR_BAR_R), // play/pause + persistent LIVE badge
         ])
         .areas(status_row);
 
