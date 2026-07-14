@@ -149,14 +149,7 @@ impl AppState {
                 }
             }
             MouseTarget::Transport(b) => match b {
-                TransportButton::Shuffle => {
-                    if self.showing_spotify() {
-                        self.spotify_toggle_shuffle();
-                    } else {
-                        self.player.toggle_shuffle();
-                        self.update_gapless_next();
-                    }
-                }
+                TransportButton::Shuffle => self.toggle_shuffle_active(),
                 TransportButton::Prev => {
                     if self.showing_spotify() {
                         self.spotify_track(-1)
@@ -172,14 +165,7 @@ impl AppState {
                         self.advance_next()
                     }
                 }
-                TransportButton::Repeat => {
-                    if self.showing_spotify() {
-                        self.spotify_cycle_repeat();
-                    } else {
-                        self.player.cycle_repeat();
-                        self.update_gapless_next();
-                    }
-                }
+                TransportButton::Repeat => self.cycle_repeat_active(),
             },
             MouseTarget::Seek => {
                 if rect.width > 0 {

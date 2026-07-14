@@ -187,24 +187,8 @@ impl AppState {
             }
             GoLive => self.radio_go_live(),
             GoStreamStart => self.radio_go_start(),
-            ToggleShuffle => {
-                if self.showing_spotify() {
-                    self.spotify_toggle_shuffle();
-                } else {
-                    self.player.toggle_shuffle();
-                    // toggling shuffle reorders the upcoming tracks, so the preloaded
-                    // next track changes — recompute it.
-                    self.update_gapless_next();
-                }
-            }
-            CycleRepeat => {
-                if self.showing_spotify() {
-                    self.spotify_cycle_repeat();
-                } else {
-                    self.player.cycle_repeat();
-                    self.update_gapless_next(); // repeat-one/all changes the next track
-                }
-            }
+            ToggleShuffle => self.toggle_shuffle_active(),
+            CycleRepeat => self.cycle_repeat_active(),
             VolumeDelta(d) => {
                 self.player.adjust_volume(d);
                 self.engine
@@ -692,5 +676,35 @@ impl AppState {
             // remaining arms are wired as their milestones land
             _ => {}
         }
+    }
+
+    /// Toggle shuffle on the active source (Spotify or the local queue), keep the
+    /// preloaded next track in sync, and show the one unified status toast — so the
+    /// feedback reads the same in every view, not just Spotify. Shared by the `s` key
+    /// and the transport-button click.
+    pub(crate) fn toggle_shuffle_active(&mut self) {
+        let on = if self.showing_spotify() {
+            self.spotify_toggle_shuffle();
+            self.spov.sp_shuffle
+        } else {
+            self.player.toggle_shuffle();
+            self.update_gapless_next(); // reordered upcoming → recompute the next track
+            self.player.shuffle
+        };
+        self.notify(if on { "Shuffle on" } else { "Shuffle off" }.into());
+    }
+
+    /// Cycle repeat on the active source + the same unified toast. Shared by the `r`
+    /// key and the transport-button click.
+    pub(crate) fn cycle_repeat_active(&mut self) {
+        let repeat = if self.showing_spotify() {
+            self.spotify_cycle_repeat();
+            self.spov.sp_repeat
+        } else {
+            self.player.cycle_repeat();
+            self.update_gapless_next(); // repeat-one/all changes the next track
+            self.player.repeat
+        };
+        self.notify(format!("Repeat: {}", repeat_to_str(repeat)));
     }
 }

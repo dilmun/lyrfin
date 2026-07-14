@@ -473,15 +473,15 @@ impl AppState {
     /// Spotify is the active source, otherwise the local queue's next track. Radio
     /// streams have no queue → `None`. Keeps the status bar a pure display layer.
     pub fn status_next_title(&self) -> Option<String> {
-        if self.rnow.now_station.is_some() {
-            return None; // radio streams — no queue
+        // Follow the *view*, exactly like the now-playing bar (`now_bar` dispatches on
+        // `layout`): the Spotify view shows Spotify's up-next — even when paused — Radio
+        // has no queue, and every other view shows the local queue. So the "Next:" hint
+        // and the now-bar can never disagree about the source.
+        match self.layout {
+            Layout::Radio => None,
+            Layout::Spotify => self.spotify_next_title(),
+            _ => self.next_queue_title(),
         }
-        // "spotify streaming" idiom used across the app: now_spotify lingers Some
-        // while paused, so gate on !paused to mean *actively the source*.
-        if self.spov.now_spotify.is_some() && !self.spov.spotify_paused {
-            return self.spotify_next_title();
-        }
-        self.next_queue_title()
     }
 
     /// Path of the track to preload for a seamless transition (gapless *or*

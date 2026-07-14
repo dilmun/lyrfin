@@ -1083,11 +1083,6 @@ impl AppState {
                 (u64::from_le_bytes(buf) % k as u64) as usize
             });
         }
-        self.notify(if self.spov.sp_shuffle {
-            "Shuffle on".into()
-        } else {
-            "Shuffle off".into()
-        });
         self.spotify_preload_next(); // the upcoming track changed → re-prefetch
     }
 
@@ -1098,7 +1093,6 @@ impl AppState {
             Repeat::One => Repeat::All,
             Repeat::All => Repeat::Off,
         };
-        self.notify(format!("Repeat: {}", repeat_to_str(self.spov.sp_repeat)));
         self.spotify_preload_next(); // repeat mode changed the upcoming track → re-prefetch
     }
 

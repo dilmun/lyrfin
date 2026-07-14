@@ -1,7 +1,7 @@
 //! The bottom status bar: a four-zone chrome line drawn under every view.
 //! Left = context-sensitive navigation / prompt for the active window or modal;
-//! centre = the queue-derived "▶ Next:" hint; right = toggle state (sleep timer,
-//! A-B loop, ReplayGain, shuffle/repeat); far right = the current view name.
+//! centre = the queue-derived "▶ Next:" hint; right = transient toggle state (sleep
+//! timer, A-B loop, ReplayGain); far right = the current view name.
 //! Pure rendering — reads `&AppState`, draws into the `Frame`. The left prompt
 //! and right toggles are built by the `*_prompt` / `*_spans` helpers below so
 //! `status_bar` itself stays a thin layout/dispatch function.
@@ -12,9 +12,8 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
-use super::{col, trunc};
+use super::{clip, col};
 use crate::app::{AppState, Layout as AppLayout};
-use crate::core::player::Repeat;
 
 pub fn status_bar(f: &mut Frame, area: Rect, app: &AppState) {
     let th = &app.theme;
@@ -37,7 +36,11 @@ pub fn status_bar(f: &mut Frame, area: Rect, app: &AppState) {
         .flatten()
         .map(|t| compact_title(&t).to_string());
     let next_w = match &next {
-        Some(t) if area.width >= 90 => (t.chars().count().min(22) as u16) + 12,
+        // budget by DISPLAY width, not char count — a CJK title is 2 cols/char, so
+        // char count under-sizes the slot and the title gets clipped ("不染" → "不").
+        Some(t) if area.width >= 90 => {
+            (unicode_width::UnicodeWidthStr::width(t.as_str()).min(22) as u16) + 12
+        }
         _ => 0,
     };
     // fixed-width view slot so switching views never reflows the bar
@@ -82,7 +85,8 @@ pub fn status_bar(f: &mut Frame, area: Rect, app: &AppState) {
     if let Some(t) = &next
         && next_w > 0
     {
-        let title = trunc(t, next_w.saturating_sub(11) as usize);
+        // width-aware clip (CJK-safe) so the title fills the slot without overrunning
+        let title = clip(t, next_w.saturating_sub(11) as usize);
         f.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled("   ▶ Next: ", Style::default().fg(col(th.meta_text()))),
@@ -677,14 +681,13 @@ fn nav_hint(app: &AppState) -> Line<'static> {
     Line::from(spans)
 }
 
-/// The right zone: toggle-state badges (sleep timer, A-B loop, ReplayGain, and —
-/// for local playback only — shuffle / repeat), in toggle-on / toggle-off roles.
+/// The right zone: transient toggle-state badges — sleep timer, A-B loop, ReplayGain
+/// (shuffle / repeat are intentionally excluded; see below).
 fn toggle_spans(app: &AppState) -> Vec<Span<'static>> {
     let th = &app.theme;
     let on = Style::default()
         .fg(col(th.toggle_on()))
         .add_modifier(Modifier::BOLD);
-    let off = Style::default().fg(col(th.toggle_off()));
     let mut rs: Vec<Span> = Vec::new();
     if let Some(secs) = app.sleep_remaining_secs() {
         rs.push(Span::styled(
@@ -706,27 +709,9 @@ fn toggle_spans(app: &AppState) -> Vec<Span<'static>> {
         rs.push(Span::styled(format!("RG {rg}"), on));
         rs.push(Span::raw("   "));
     }
-    // shuffle / repeat are local-queue concepts — not for radio / Spotify views
-    if !matches!(app.layout, AppLayout::Radio | AppLayout::Spotify) {
-        rs.push(Span::styled(
-            app.icons.shuffle.clone(),
-            if app.player.shuffle { on } else { off },
-        ));
-        rs.push(Span::raw("   "));
-        let rep_txt = match app.player.repeat {
-            Repeat::Off => "",
-            Repeat::One => " 1",
-            Repeat::All => " all",
-        };
-        rs.push(Span::styled(
-            format!("{}{rep_txt} ", app.icons.repeat),
-            if app.player.repeat != Repeat::Off {
-                on
-            } else {
-                off
-            },
-        ));
-    }
+    // shuffle / repeat are deliberately NOT shown here — they're toggled with s/r and
+    // surfaced by a toast, not kept permanently on the status bar (matching the
+    // Spotify/Radio views, which never showed them).
     rs
 }
 
