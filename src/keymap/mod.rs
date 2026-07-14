@@ -822,7 +822,10 @@ fn radio_view(app: &AppState, key: Key) -> Option<Action> {
                 KeyCode::Char('d') => Action::RadioDeletePlaylist,
                 KeyCode::Char('r') | KeyCode::Char('e') => Action::RadioRenamePlaylist,
                 KeyCode::Char('l') | KeyCode::Right => Action::RadioActivate, // drill in
-                _ => global_binding(app, key),                                // j/k move, Tab, q…
+                // no station under the cursor here — swallow the station operators so
+                // they can't fall through to the local-music add-to-playlist / mark
+                KeyCode::Char('a') | KeyCode::Char('x') => Action::Noop,
+                _ => global_binding(app, key), // j/k move, Tab, q…
             });
         }
         match key.code {
