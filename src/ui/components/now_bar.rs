@@ -446,27 +446,88 @@ fn flag_emoji(cc: &str) -> String {
         .collect()
 }
 
-/// Draw the country flag (with its ISO code beneath) centred in the radio now-bar's
-/// art slot — the flag standing in for the album cover the local/Spotify bars show.
+/// Draw the station's country in the now-bar's art slot — the small flag emoji atop
+/// the ISO code in large 3-row block letters (accent-tinted), centred. Emoji can't
+/// be scaled in a terminal, so the big code is what fills the album-cover-sized box.
 fn render_flag_art(f: &mut Frame, area: Rect, th: &Theme, flag: &str, cc: &str) {
     if area.width == 0 || area.height == 0 {
         return;
     }
-    // vertically centre the two-line flag + code within the art box
-    let mid = area.y + area.height.saturating_sub(2) / 2;
-    f.render_widget(
-        Paragraph::new(Line::from(Span::raw(flag.to_string()))).alignment(Alignment::Center),
-        Rect::new(area.x, mid, area.width, 1),
-    );
-    if mid + 1 < area.y + area.height {
+    let code = big_code(cc); // 3 rows of block letters
+    // flag row (when there's vertical room) + the 3 code rows, block centred
+    let with_flag = area.height >= 5;
+    let block_h = if with_flag { 4 } else { 3 };
+    let mut y = area.y + area.height.saturating_sub(block_h) / 2;
+    let bottom = area.y + area.height;
+    if with_flag && y < bottom {
         f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                cc.to_uppercase(),
-                Style::default().fg(col(th.text_dim)),
-            )))
-            .alignment(Alignment::Center),
-            Rect::new(area.x, mid + 1, area.width, 1),
+            Paragraph::new(Line::from(Span::raw(flag.to_string()))).alignment(Alignment::Center),
+            Rect::new(area.x, y, area.width, 1),
         );
+        y += 1;
+    }
+    let style = Style::default()
+        .fg(col(th.accent[0]))
+        .add_modifier(Modifier::BOLD);
+    for row in code {
+        if y >= bottom {
+            break;
+        }
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(row, style))).alignment(Alignment::Center),
+            Rect::new(area.x, y, area.width, 1),
+        );
+        y += 1;
+    }
+}
+
+/// The (2-letter) ISO code as 3 rows of block letters, glyphs separated by a column.
+fn big_code(cc: &str) -> [String; 3] {
+    let mut rows = [String::new(), String::new(), String::new()];
+    for (i, ch) in cc.to_uppercase().chars().take(3).enumerate() {
+        if i > 0 {
+            rows.iter_mut().for_each(|r| r.push(' '));
+        }
+        let g = block_glyph(ch);
+        for (r, gr) in rows.iter_mut().zip(g) {
+            r.push_str(gr);
+        }
+    }
+    rows
+}
+
+/// A 3-row × 3-column block glyph for `A`–`Z` (ISO country codes are letters). The
+/// country name is shown in the now-bar sub-line, so the few close pairs (M/N,
+/// H/W) read fine in context.
+fn block_glyph(c: char) -> [&'static str; 3] {
+    match c {
+        'A' => ["▄▀▄", "█▀█", "█ █"],
+        'B' => ["█▀▄", "█▀▄", "█▄▀"],
+        'C' => ["▄▀▀", "█  ", "▀▄▄"],
+        'D' => ["█▀▄", "█ █", "█▄▀"],
+        'E' => ["█▀▀", "█▀ ", "█▄▄"],
+        'F' => ["█▀▀", "█▀ ", "█  "],
+        'G' => ["▄▀▀", "█ ▄", "▀▄▀"],
+        'H' => ["█ █", "█▀█", "█ █"],
+        'I' => ["▀█▀", " █ ", "▄█▄"],
+        'J' => ["▀▀█", "  █", "█▄▀"],
+        'K' => ["█ ▄", "█▀ ", "█ ▀"],
+        'L' => ["█  ", "█  ", "█▄▄"],
+        'M' => ["█▄█", "█▀█", "█ █"],
+        'N' => ["█▄█", "█ █", "█ █"],
+        'O' => ["▄▀▄", "█ █", "▀▄▀"],
+        'P' => ["█▀▄", "█▀▀", "█  "],
+        'Q' => ["▄▀▄", "█ █", "▀▄█"],
+        'R' => ["█▀▄", "█▀▄", "█ ▀"],
+        'S' => ["▄▀▀", "▀▀▄", "▀▄▀"],
+        'T' => ["▀█▀", " █ ", " █ "],
+        'U' => ["█ █", "█ █", "▀▄▀"],
+        'V' => ["█ █", "█ █", " ▀ "],
+        'W' => ["█ █", "█▄█", "█▀█"],
+        'X' => ["▀ ▀", " █ ", "▄ ▄"],
+        'Y' => ["█ █", "▀▄▀", " █ "],
+        'Z' => ["▀▀█", "▄▀ ", "█▄▄"],
+        _ => ["   ", "   ", "   "],
     }
 }
 
