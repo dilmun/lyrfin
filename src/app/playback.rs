@@ -13,6 +13,9 @@ impl AppState {
                 .send(AudioCommand::Seek(Duration::from_secs_f64(target)));
             if let Some(d) = self.rnow.dvr.as_mut() {
                 d.pos = target;
+                // scrubbing to (or past) the live edge re-follows it; anywhere earlier
+                // detaches and shows the true position.
+                d.following = (d.live - target) < super::LIVE_EDGE_SECS;
             }
             return;
         }
@@ -281,6 +284,7 @@ impl AppState {
                 .send(AudioCommand::Seek(Duration::from_secs_f64(target)));
             if let Some(d) = self.rnow.dvr.as_mut() {
                 d.pos = target; // reflect immediately; Progress will confirm
+                d.following = (d.live - target) < super::LIVE_EDGE_SECS;
             }
             return;
         }

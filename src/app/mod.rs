@@ -171,7 +171,7 @@ mod playback;
 mod playlists;
 pub use playlists::ModalInput;
 mod radio;
-pub use radio::{PickerKind, Radio, RadioNameTarget, RadioSection};
+pub use radio::{LIVE_EDGE_SECS, PickerKind, Radio, RadioNameTarget, RadioSection};
 mod radio_playlists;
 mod selection;
 pub use selection::MultiSelect;

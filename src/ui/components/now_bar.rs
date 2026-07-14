@@ -420,10 +420,7 @@ pub fn now_bar(f: &mut Frame, area: Rect, app: &AppState) {
     );
 }
 
-/// Below this "behind live" (seconds), a DVR stream is treated as playing live —
-/// the play-head pins to the edge and the marker reads LIVE (the byte-estimated
-/// live edge advances in bursts, so computing a fraction there jitters the knob).
-const LIVE_EDGE_SECS: f64 = 4.0;
+use crate::app::LIVE_EDGE_SECS;
 
 /// The radio status row's scrub/window bar (and the spectrum above it) are inset by
 /// a left rewind-depth label and a right play/LIVE badge, so the spectrum spans

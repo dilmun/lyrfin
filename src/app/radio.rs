@@ -16,6 +16,11 @@ pub struct RadioNow {
     pub dvr: Option<DvrState>,
 }
 
+/// Within this many seconds of the live edge, a DVR stream is treated as "at
+/// live": the play-head pins to the edge and the marker reads LIVE. Shared by the
+/// seek logic and the now-bar so both agree on when a stream is following live.
+pub const LIVE_EDGE_SECS: f64 = 4.0;
+
 /// The timeshift window + play position for a buffered live stream (seconds since
 /// tune-in): the stream can be sought anywhere in `[start, live]`.
 #[derive(Debug, Clone, Copy, Default)]
@@ -26,11 +31,20 @@ pub struct DvrState {
     pub start: f64,
     /// Live edge (newest buffered audio).
     pub live: f64,
+    /// Following the live edge: the play-head is pinned to `live` and the progress
+    /// bar stays stuck at the right end. `true` on tune-in and after "go live";
+    /// cleared once the user rewinds into the buffer. Keeps a fresh stream from
+    /// crawling up from the buffer start as the initial burst races ahead.
+    pub following: bool,
 }
 
 impl DvrState {
-    /// Seconds the play position sits behind the live edge (0 when at/near live).
+    /// Seconds the play position sits behind the live edge (0 when at/near live or
+    /// while following the live edge).
     pub fn behind_live(&self) -> f64 {
+        if self.following {
+            return 0.0;
+        }
         (self.live - self.pos).max(0.0)
     }
 }
@@ -53,8 +67,31 @@ impl AppState {
             self.engine.send(AudioCommand::GoLive);
             if let Some(d) = self.rnow.dvr.as_mut() {
                 d.pos = d.live;
+                d.following = true; // pin back to the live edge
             }
         }
+    }
+
+    /// Apply an engine timeshift-window report `[start, live]` (seconds since
+    /// tune-in). A fresh window (first report after tuning in) starts pinned to the
+    /// live edge so the bar sits at the end, not crawling up from the buffer start as
+    /// the initial burst races ahead; while following, the play-head tracks `live`.
+    pub(crate) fn on_dvr_window(&mut self, start: f64, live: f64) {
+        if self.rnow.now_station.is_none() {
+            return;
+        }
+        let fresh = self.rnow.dvr.is_none();
+        let dvr = self.rnow.dvr.get_or_insert_with(Default::default);
+        if fresh {
+            dvr.following = true;
+        }
+        dvr.start = start;
+        dvr.live = live;
+        dvr.pos = if dvr.following {
+            live
+        } else {
+            dvr.pos.clamp(start, live)
+        };
     }
 
     /// Jump a timeshifted live stream to the oldest buffered audio (the start of the
@@ -67,6 +104,7 @@ impl AppState {
                 )));
             if let Some(d) = self.rnow.dvr.as_mut() {
                 d.pos = d.start;
+                d.following = false; // rewound to the buffer start — stop following
             }
         }
     }

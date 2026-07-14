@@ -176,6 +176,49 @@ fn radio_vim_nav_ctrl_o_back_and_ctrl_np() {
 }
 
 #[test]
+fn radio_dvr_starts_at_live_and_rewind_detaches() {
+    use crate::radio::Station;
+    let mut a = demo();
+    a.layout = Layout::Radio;
+    a.rnow.now_station = Some(Station {
+        name: "Live FM".into(),
+        url: "u".into(),
+        ..Default::default()
+    });
+    a.rnow.dvr = None;
+
+    // first window report after tuning → follow the live edge: knob pinned right,
+    // nothing "behind live", even though the burst pushed `live` well past 0.
+    a.on_dvr_window(0.0, 30.0);
+    let d = a.rnow.dvr.expect("dvr window created");
+    assert!(d.following, "fresh tune follows live");
+    assert_eq!(d.pos, 30.0, "play-head pinned to the live edge");
+    assert_eq!(d.behind_live(), 0.0, "reads as live, not crawling up");
+
+    // window keeps advancing → still pinned to live
+    a.on_dvr_window(0.0, 45.0);
+    assert_eq!(
+        a.rnow.dvr.unwrap().pos,
+        45.0,
+        "stays pinned as live advances"
+    );
+
+    // rewinding to the buffer start detaches; the position is now the true spot
+    a.radio_go_start();
+    let d = a.rnow.dvr.unwrap();
+    assert!(!d.following, "rewind stops following");
+    assert!(d.behind_live() > 0.0, "shows how far behind live now");
+
+    // a further window report no longer yanks the play-head to live
+    a.on_dvr_window(0.0, 60.0);
+    assert_eq!(a.rnow.dvr.unwrap().pos, 0.0, "detached position preserved");
+
+    // go-live re-pins to the edge
+    a.radio_go_live();
+    assert!(a.rnow.dvr.unwrap().following, "go-live re-follows");
+}
+
+#[test]
 fn key_6_opens_radio_view() {
     use crate::event::{Key, KeyCode, Mods};
     let mut a = demo();

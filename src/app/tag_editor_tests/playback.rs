@@ -68,11 +68,12 @@ fn dvr_seek_moves_within_the_window_not_the_local_track() {
     a.player.elapsed = Duration::from_secs(42); // the preserved local position
     a.rnow.now_station = Some(crate::radio::Station::default());
     a.rnow.radio_paused = false;
-    // a timeshift buffer: playing at 100 s, window [0, 200]
+    // a timeshift buffer: rewound to 100 s within the window [0, 200]
     a.rnow.dvr = Some(DvrState {
         pos: 100.0,
         start: 0.0,
         live: 200.0,
+        following: false,
     });
 
     a.update(Action::Seek(-5)); // rewind 5 s within the DVR window
