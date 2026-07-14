@@ -12,9 +12,247 @@ fn command_palette_filters_and_runs() {
     let matches = a.palette_matches();
     assert!(!matches.is_empty(), "'theme' matches a command");
     let entries = a.palette_entries();
-    assert!(matches.iter().any(|&i| entries[i].1.contains("theme")));
+    assert!(matches.iter().any(|&i| entries[i].label.contains("theme")));
     a.update(Action::PaletteActivate); // runs top match + closes
     assert!(a.palette.is_none());
+}
+
+#[test]
+fn shift_f_cycles_lyrics_format_not_favorite() {
+    // Regression: on kitty-keyboard-protocol terminals (Ghostty/Kitty) Shift+f
+    // arrives as the base char 'f' + SHIFT, not the uppercase 'F'. With the Lyrics
+    // pane focused it must resolve to F = cycle-lyrics-format, never f = favourite.
+    let mut a = app();
+    a.focus = Focus::Pane(Panel::Lyrics);
+    let shift_f = Key {
+        code: KeyCode::Char('f'),
+        mods: Mods {
+            shift: true,
+            ..Mods::default()
+        },
+    };
+    assert_eq!(crate::keymap::map(&a, shift_f), Action::CycleLyricsFormat);
+
+    // plain 'f' is still favourite (targets the current track, or no-ops if none)
+    let plain_f = Key {
+        code: KeyCode::Char('f'),
+        mods: Mods::default(),
+    };
+    assert!(matches!(
+        crate::keymap::map(&a, plain_f),
+        Action::ToggleFavorite(_) | Action::Noop
+    ));
+}
+
+#[test]
+fn lyrics_format_key_is_pane_scoped() {
+    let mut a = app();
+    let shift_f = Key {
+        code: KeyCode::Char('F'),
+        mods: Mods::default(),
+    };
+
+    // Outside the lyrics view/pane, `F` is not a global binding any more — it does
+    // nothing (and certainly never toggles favourite).
+    a.layout = Layout::Dashboard;
+    a.focus = Focus::Main;
+    assert_eq!(crate::keymap::map(&a, shift_f), Action::Noop);
+
+    // The Lyrics side-pane focused → format cycles.
+    a.focus = Focus::Pane(Panel::Lyrics);
+    assert_eq!(crate::keymap::map(&a, shift_f), Action::CycleLyricsFormat);
+
+    // The dedicated Lyrics view (whose content is the main area) → also cycles.
+    a.layout = Layout::LyricsFocus;
+    a.focus = Focus::Main;
+    assert_eq!(crate::keymap::map(&a, shift_f), Action::CycleLyricsFormat);
+}
+
+#[test]
+fn queue_pane_owns_reorder_keys_but_nav_falls_through() {
+    use crate::action::Motion;
+    let mut a = app();
+    a.layout = Layout::Dashboard;
+    a.focus = Focus::Pane(Panel::Queue);
+    let k = |c| Key {
+        code: KeyCode::Char(c),
+        mods: Mods::default(),
+    };
+    assert_eq!(
+        crate::keymap::map(&a, k('K')),
+        Action::QueueMove(Motion::Up)
+    );
+    assert_eq!(
+        crate::keymap::map(&a, k('J')),
+        Action::QueueMove(Motion::Down)
+    );
+    assert_eq!(crate::keymap::map(&a, k('x')), Action::QueueRemove);
+    assert_eq!(crate::keymap::map(&a, k('D')), Action::QueueClearUpcoming);
+    // list navigation is universal — it still reaches the global table.
+    assert_eq!(crate::keymap::map(&a, k('j')), Action::Move(Motion::Down));
+}
+
+#[test]
+fn focused_pane_shadows_stray_globals_but_keeps_universal_keys() {
+    let mut a = app();
+    a.layout = Layout::Dashboard;
+    let k = |c| Key {
+        code: KeyCode::Char(c),
+        mods: Mods::default(),
+    };
+
+    // A focused side-pane exposes only its own options: view-content globals are
+    // swallowed rather than leaking in.
+    a.focus = Focus::Pane(Panel::Lyrics);
+    for c in ['f', 't', 'e', 'v', 'b', 'i', 'a'] {
+        assert_eq!(
+            crate::keymap::map(&a, k(c)),
+            Action::Noop,
+            "'{c}' must be shadowed while a pane is focused"
+        );
+    }
+    // …while universal keys (transport, nav, chrome) always pass through.
+    assert_ne!(
+        crate::keymap::map(&a, k('n')),
+        Action::Noop,
+        "next is transport"
+    );
+    assert_ne!(
+        crate::keymap::map(&a, k(' ')),
+        Action::Noop,
+        "play/pause is transport"
+    );
+    assert_ne!(
+        crate::keymap::map(&a, k(':')),
+        Action::Noop,
+        "the palette is always reachable"
+    );
+    assert_ne!(
+        crate::keymap::map(&a, k('1')),
+        Action::Noop,
+        "view switch is always reachable"
+    );
+
+    // The shadow is not layout-specific — the Queue pane behaves the same way.
+    a.focus = Focus::Pane(Panel::Queue);
+    assert_eq!(crate::keymap::map(&a, k('t')), Action::Noop);
+    assert_ne!(crate::keymap::map(&a, k('p')), Action::Noop);
+
+    // The dedicated Lyrics *view* (main focus, not a pane) is NOT shadowed — it's a
+    // full view, so its globals still work.
+    a.layout = Layout::LyricsFocus;
+    a.focus = Focus::Main;
+    assert_ne!(crate::keymap::map(&a, k('t')), Action::Noop);
+}
+
+#[test]
+fn palette_lists_settings_with_values_and_drills_to_apply() {
+    let mut a = app();
+    a.config.dir = std::env::temp_dir().join("lyrfin_palette_guided");
+    let _ = std::fs::remove_dir_all(&a.config.dir);
+
+    // the root list surfaces settings, each with its current value
+    let entries = a.palette_entries();
+    let theme_row = entries
+        .iter()
+        .find(|e| e.label == "Theme")
+        .expect("a Theme setting row is reachable from the palette");
+    assert_eq!(theme_row.value.as_deref(), Some(a.config.theme.as_str()));
+    assert!(matches!(
+        theme_row.action,
+        Action::PaletteOpenSetting(Setting::Theme)
+    ));
+
+    // its choices enumerate the themes, with exactly one marked current
+    let SettingChoices::Discrete(choices) = a.setting_choices(Setting::Theme) else {
+        panic!("theme is a discrete picker");
+    };
+    assert_eq!(choices.iter().filter(|c| c.current).count(), 1);
+    assert!(choices.iter().any(|c| c.label == "cyberpunk"));
+
+    // open → drill into Theme → filter → apply: it sets + persists + closes
+    a.update(Action::OpenPalette);
+    a.update(Action::PaletteOpenSetting(Setting::Theme));
+    assert!(matches!(
+        a.palette.as_ref().unwrap().ctx,
+        PaletteCtx::Setting(Setting::Theme)
+    ));
+    a.update(Action::PaletteInput("cyberpunk".into()));
+    a.update(Action::PaletteActivate);
+    assert!(a.palette.is_none());
+    assert_eq!(a.theme.name, "cyberpunk");
+
+    let _ = std::fs::remove_dir_all(&a.config.dir);
+}
+
+#[test]
+fn formerly_config_only_setting_is_reachable_and_toggles() {
+    let mut a = app();
+    a.config.dir = std::env::temp_dir().join("lyrfin_gap_settings");
+    let _ = std::fs::remove_dir_all(&a.config.dir);
+
+    // Arabic shaping used to be config.toml-only; it's now a reachable General setting
+    let entries = a.palette_entries();
+    assert!(entries.iter().any(|e| e.label == "Arabic text shaping"
+        && matches!(e.action, Action::PaletteOpenSetting(Setting::ArabicShaping))));
+
+    // and it flips in place from the palette (a plain toggle) + persists
+    let before = a.config.arabic_shaping;
+    a.update(Action::OpenPalette);
+    a.update(Action::PaletteOpenSetting(Setting::ArabicShaping));
+    assert!(a.palette.is_none());
+    assert_eq!(a.config.arabic_shaping, !before);
+
+    let _ = std::fs::remove_dir_all(&a.config.dir);
+}
+
+#[test]
+fn palette_esc_pops_drill_to_root_then_closes() {
+    let mut a = app();
+    a.update(Action::OpenPalette);
+    a.update(Action::PaletteOpenSetting(Setting::GridSize));
+    assert!(matches!(
+        a.palette.as_ref().unwrap().ctx,
+        PaletteCtx::Setting(_)
+    ));
+    a.update(Action::Back); // pops the value picker back to the root list
+    assert!(matches!(a.palette.as_ref().unwrap().ctx, PaletteCtx::Root));
+    a.update(Action::Back); // closes the palette
+    assert!(a.palette.is_none());
+}
+
+#[test]
+fn palette_toggle_setting_flips_in_place_without_drilling() {
+    let mut a = app();
+    a.config.dir = std::env::temp_dir().join("lyrfin_palette_toggle");
+    let _ = std::fs::remove_dir_all(&a.config.dir);
+    let before = a.config.gapless;
+    a.update(Action::OpenPalette);
+    a.update(Action::PaletteOpenSetting(Setting::Gapless));
+    // a plain toggle doesn't open a picker — it flips and the palette closes
+    assert!(a.palette.is_none());
+    assert_eq!(a.config.gapless, !before);
+    let _ = std::fs::remove_dir_all(&a.config.dir);
+}
+
+#[test]
+fn apply_setting_value_sets_exact_value_and_persists() {
+    let mut a = app();
+    a.config.dir = std::env::temp_dir().join("lyrfin_apply_value");
+    let _ = std::fs::remove_dir_all(&a.config.dir);
+
+    // crossfade is bounded — a chosen value applies exactly
+    a.apply_setting_value(Setting::Crossfade, &ChoiceValue::Int(4000));
+    assert_eq!(a.config.crossfade_ms, 4000);
+    // replaygain is indexed discrete (0 off / 1 track / 2 album)
+    a.apply_setting_value(Setting::ReplayGain, &ChoiceValue::Int(2));
+    assert_eq!(a.config.replaygain, 2);
+
+    // it hit config.toml (in the temp dir, never the real config)
+    let text = std::fs::read_to_string(a.config.dir.join("config.toml")).expect("config written");
+    assert!(text.contains("crossfade_ms = 4000"));
+
+    let _ = std::fs::remove_dir_all(&a.config.dir);
 }
 
 #[test]

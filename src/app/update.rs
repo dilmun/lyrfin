@@ -41,8 +41,15 @@ impl AppState {
             self.settings.popup = None;
             self.settings.sel = 0;
             self.settings.off.set(0);
-        } else if self.palette.is_some() {
-            self.palette = None;
+        } else if let Some(p) = self.palette.as_mut() {
+            // in a value picker, Esc pops back to the setting list; at the root it closes
+            if matches!(p.ctx, crate::app::PaletteCtx::Setting(_)) {
+                p.ctx = crate::app::PaletteCtx::Root;
+                p.query.clear();
+                p.sel = 0;
+            } else {
+                self.palette = None;
+            }
         } else if self.input.confirm_delete.is_some() {
             // dismiss the delete-confirmation dialog without deleting
             self.input.confirm_delete = None;
@@ -321,6 +328,7 @@ impl AppState {
                 self.palette = Some(Palette {
                     query: String::new(),
                     sel: 0,
+                    ctx: crate::app::PaletteCtx::Root,
                 })
             }
             PaletteInput(q) => {
@@ -336,6 +344,7 @@ impl AppState {
                 }
             }
             PaletteActivate => self.palette_activate(),
+            PaletteOpenSetting(s) => self.palette_open_setting(s),
             PalettePrefill(s) => {
                 if let Some(p) = &mut self.palette {
                     p.query = s;

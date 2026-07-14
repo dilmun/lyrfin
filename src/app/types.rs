@@ -325,10 +325,14 @@ pub enum Setting {
     PeakCaps,
     Fps,
     RadioRefresh,
+    /// Reshape/join Arabic script for correct display (config-only until now).
+    ArabicShaping,
     Gapless,
     Crossfade,
     SilenceSkip,
     ReplayGain,
+    /// Buffer live radio so you can pause / seek back (timeshift DVR).
+    RadioDvr,
     ColIndex,
     ColArtist,
     ColAlbumArtist,
@@ -400,7 +404,7 @@ impl Setting {
         use Setting::*;
         match self {
             Mouse | NextHint | OsMediaControls | TouchpadScroll | GridScrollLock | OverlaySize
-            | ReducedMotion | Fps | IconSet | RadioRefresh => "General",
+            | ReducedMotion | Fps | IconSet | RadioRefresh | ArabicShaping => "General",
             // the movable side panels (show / dock / size) + their stacking axis
             PanelShow(_) | PanelDock(_) | PanelSize(_) | PanesLayout => "Panes",
             // the cover-art grid: list⇄grid, card shape, card size
@@ -410,7 +414,7 @@ impl Setting {
             TrackColumns | ColIndex | ColArtist | ColAlbumArtist | ColAlbum | ColYear
             | ColGenre | ColComposer | ColFormat | ColBitrate | ColRating | ColTime | ColPlays
             | ColComment => "Tracklist",
-            Gapless | Crossfade | SilenceSkip | ReplayGain => "Audio",
+            Gapless | Crossfade | SilenceSkip | ReplayGain | RadioDvr => "Audio",
             PlayerViz | PlayerVizMode | PeakCaps => "Visualizer",
             LyricsAlign | LyricsGap | LyricsGradient | LyricsColor | LyricsKaraoke | LyricsDual
             | LyricsTranslate | LyricsTeleprompter => "Lyrics",

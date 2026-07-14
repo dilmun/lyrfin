@@ -11,7 +11,7 @@
 
 use crate::action::{Action, Caret, Motion};
 use crate::app::{AppState, Focus, InfoTab, Layout, LocalSection, Panel};
-use crate::event::{Key, KeyCode};
+use crate::event::{Key, KeyCode, Mods};
 
 mod catalog;
 pub use catalog::*;
@@ -19,6 +19,11 @@ pub use catalog::*;
 /// Translate a key press into an [`Action`] given current app context. Handlers
 /// are tried in priority order; the first to return `Some` wins.
 pub fn map(app: &AppState, key: Key) -> Action {
+    // Fold Shift into the char case up front so every downstream handler (the
+    // direct `Char('F')` matches AND the global-table `key_label`) sees one
+    // encoding regardless of the terminal's keyboard protocol (see
+    // [`normalize_shift`]).
+    let key = normalize_shift(key);
     capture_rebinding(app, key)
         .or_else(|| capture_confirm_logout(app, key))
         .or_else(|| eq_overlay(app, key))
@@ -36,15 +41,40 @@ pub fn map(app: &AppState, key: Key) -> Action {
         .or_else(|| naming_input(app, key))
         .or_else(|| confirm_input(app, key))
         .or_else(|| modal_overlay(app, key))
-        .or_else(|| lyrics_offset(app, key))
+        .or_else(|| pane_context(app, key))
         .or_else(|| spotify_view(app, key))
         .or_else(|| radio_view(app, key))
-        .or_else(|| queue_context(app, key))
         .or_else(|| sidebar_playlists_context(app, key))
         .or_else(|| grid_context(app, key))
         .or_else(|| library_view(app, key))
         .or_else(|| visual_select(app, key))
         .unwrap_or_else(|| global_binding(app, key))
+}
+
+/// Fold a held Shift into the character's case so key handling is identical across
+/// terminal keyboard protocols. Legacy terminals deliver `Shift+f` as the uppercase
+/// char `'F'` (Shift consumed into the case); the kitty keyboard protocol (Ghostty,
+/// Kitty) instead delivers the base char `'f'` with the SHIFT modifier set. Without
+/// normalisation the two encodings disagree and every uppercase binding (`F`, `G`,
+/// `Q`, …) silently degrades to its lowercase meaning under the kitty protocol — e.g.
+/// `F` (cycle lyrics format) would fire `f` (toggle favourite). We converge on the
+/// legacy form: uppercase an ASCII letter when Shift is held and clear the now-
+/// redundant bit. Symbols and digits are left untouched — their shifted glyph is
+/// keyboard-layout dependent, so we don't synthesise it here.
+fn normalize_shift(key: Key) -> Key {
+    if let KeyCode::Char(c) = key.code
+        && key.mods.shift
+        && c.is_ascii_lowercase()
+    {
+        return Key {
+            code: KeyCode::Char(c.to_ascii_uppercase()),
+            mods: Mods {
+                shift: false,
+                ..key.mods
+            },
+        };
+    }
+    key
 }
 
 /// Library (#2) 3-column browser: while a column is focused, h/l/←/→ switch the
@@ -758,21 +788,6 @@ fn radio_view(app: &AppState, key: Key) -> Option<Action> {
     Some(global_binding(app, key))
 }
 
-/// Context keys: the play queue (the QUEUE pane) supports reorder + removal. Only
-/// claims its own keys; everything else falls through to the global bindings.
-fn queue_context(app: &AppState, key: Key) -> Option<Action> {
-    if app.focus != Focus::Pane(Panel::Queue) {
-        return None;
-    }
-    match key.code {
-        KeyCode::Char('K') => Some(Action::QueueMove(Motion::Up)),
-        KeyCode::Char('J') => Some(Action::QueueMove(Motion::Down)),
-        KeyCode::Char('d') | KeyCode::Char('x') => Some(Action::QueueRemove),
-        KeyCode::Char('D') => Some(Action::QueueClearUpcoming),
-        _ => None,
-    }
-}
-
 /// Context keys: browsing the Playlists section (Dashboard, main pane) exposes
 /// playlist-management actions. Only claims its own keys; everything else falls
 /// through to the global bindings.
@@ -828,20 +843,101 @@ fn grid_context(app: &AppState, key: Key) -> Option<Action> {
     })
 }
 
-/// Lyric-sync nudge: while the Lyrics pane (or the dedicated Lyrics view) holds
-/// focus, `,` / `.` shift the synced-lyric offset earlier / later — they're the
-/// unshifted `<` / `>`, so the direction reads naturally. Scoped here (like the
-/// Library view's `h/l` column remap) so the global `,` / `.` rating keys are
-/// untouched everywhere else, and to dodge macOS reserving ctrl+arrows for Spaces.
-fn lyrics_offset(app: &AppState, key: Key) -> Option<Action> {
-    let lyrics_focused =
-        app.layout == Layout::LyricsFocus || app.focus == Focus::Pane(Panel::Lyrics);
-    if !lyrics_focused {
-        return None;
+/// Focus-scoped pane keys — a single place that gives the focused pane first crack
+/// at a press, with anything it doesn't claim falling through to the global table.
+/// Each pane's vocabulary lives in one `*_keys` helper, so "what does this pane do"
+/// is answerable in one spot. (Layout-scoped remaps — the Library columns, the
+/// cover grid, the Playlists section — stay in their own handlers below: they key
+/// off the *main* focus + layout, not a focused side-pane.)
+///
+/// Ordering: the lyrics view/pane gets first refusal (so `F`/`,`/`.` work whether
+/// the dedicated Lyrics view is up or the Lyrics side-pane is focused), then the
+/// specifically-focused pane. This preserves the old two-handler behaviour — e.g. in
+/// the Lyrics view with the Queue pane focused, `F` cycles the format AND `K`/`J`
+/// reorder the queue.
+fn pane_context(app: &AppState, key: Key) -> Option<Action> {
+    // The lyrics view/pane's own keys apply first (`F`, and the `,`/`.` offset nudges),
+    // in the dedicated Lyrics view or with the Lyrics side-pane focused.
+    if (app.layout == Layout::LyricsFocus || app.focus == Focus::Pane(Panel::Lyrics))
+        && let Some(a) = lyrics_keys(key)
+    {
+        return Some(a);
     }
+    // A focused side-pane owns the keyboard: its own keys win, then every
+    // non-universal key is *shadowed* (swallowed as a no-op) so a stray global — e.g.
+    // `f` = favourite while the Lyrics pane is focused — can't leak in. Only universal
+    // keys (navigation, playback transport, app chrome, and the focused pane's own
+    // resize/move) pass through to the global table. This is what makes a focused
+    // pane expose only its own options.
+    if let Focus::Pane(panel) = app.focus {
+        let claimed = match panel {
+            Panel::Queue => queue_keys(key),
+            Panel::Visualizer => viz_keys(key),
+            // Lyrics handled above; Artist/Sidebar are navigation-only.
+            _ => None,
+        };
+        if let Some(a) = claimed {
+            return Some(a);
+        }
+        if !is_universal_key(key) {
+            return Some(Action::Noop);
+        }
+    }
+    None
+}
+
+/// Keys that stay live no matter what owns the focus: navigation, playback
+/// transport, the core app chrome (quit / search / palette / help / switch view /
+/// switch focus), and the focused pane's own geometry (resize / move / fit). Every
+/// *other* key is a view-content action and is shadowed while a side-pane is focused
+/// (see [`pane_context`]), so only that pane's own options are reachable. Matched by
+/// canonical label, so a rebound key is classified by where it lands, not its glyph.
+fn is_universal_key(key: Key) -> bool {
+    const UNIVERSAL: &[&str] = &[
+        // navigation
+        "up", "down", "left", "right", "pageup", "pagedown", "home", "end", "enter", "esc", "tab",
+        "backtab", "j", "k", "g", "G",
+        // playback transport (seek / volume / speed / shuffle / repeat)
+        "space", "n", "p", "h", "l", "+", "=", "-", "[", "]", "s", "r",
+        // app chrome: quit / back / palette / help / search / copy-error / switch view
+        "q", "Q", "ctrl-c", "ctrl-o", ":", "?", "/", "y", "1", "2", "3", "4", "5", "6", "7",
+        // the focused pane's own geometry: resize (>< }{ ), move edge (m), fit/reset (zZ)
+        ">", "<", "}", "{", "m", "z", "Z",
+    ];
+    UNIVERSAL.contains(&key_label(key).as_str())
+}
+
+/// Lyrics pane keys: `F` cycles the lyric format (plain → karaoke → teleprompter);
+/// `,` / `.` nudge the synced-lyric offset earlier / later (the unshifted `<` / `>`,
+/// so the direction reads naturally — and it dodges macOS reserving ctrl+arrows for
+/// Spaces). Everything else falls through, leaving the global `,` / `.` rating keys
+/// untouched outside the lyrics view.
+fn lyrics_keys(key: Key) -> Option<Action> {
     match key.code {
+        KeyCode::Char('F') => Some(Action::CycleLyricsFormat),
         KeyCode::Char(',') => Some(Action::LyricsOffset(-50)), // earlier
         KeyCode::Char('.') => Some(Action::LyricsOffset(50)),  // later
+        _ => None,
+    }
+}
+
+/// Visualizer pane keys: `v` cycles the visualizer mode — the pane's own action,
+/// kept reachable so the shadow rule doesn't swallow it while the pane is focused.
+fn viz_keys(key: Key) -> Option<Action> {
+    match key.code {
+        KeyCode::Char('v') => Some(Action::CycleVisualizer),
+        _ => None,
+    }
+}
+
+/// Queue pane keys: reorder (`K` up / `J` down) and remove (`d` / `x` the selected
+/// track, `D` clears everything upcoming). Only claims its own keys.
+fn queue_keys(key: Key) -> Option<Action> {
+    match key.code {
+        KeyCode::Char('K') => Some(Action::QueueMove(Motion::Up)),
+        KeyCode::Char('J') => Some(Action::QueueMove(Motion::Down)),
+        KeyCode::Char('d') | KeyCode::Char('x') => Some(Action::QueueRemove),
+        KeyCode::Char('D') => Some(Action::QueueClearUpcoming),
         _ => None,
     }
 }
@@ -870,6 +966,12 @@ fn global_binding(app: &AppState, key: Key) -> Action {
 pub fn key_label(key: Key) -> String {
     let base = match key.code {
         KeyCode::Char(' ') => "space".to_string(),
+        // Defensive twin of `normalize_shift`: bindings are stored uppercase, so a
+        // `Shift+f` that reached here un-normalised (any caller outside `map`) still
+        // resolves to `"F"`. Idempotent — an already-uppercase char skips this arm.
+        KeyCode::Char(c) if key.mods.shift && c.is_ascii_lowercase() => {
+            c.to_ascii_uppercase().to_string()
+        }
         KeyCode::Char(c) => c.to_string(),
         KeyCode::Enter => "enter".into(),
         KeyCode::Esc => "esc".into(),
@@ -1002,5 +1104,61 @@ fn parse_action(s: &str, app: &AppState) -> Action {
         "toggle_mark" => ToggleMark,
         "add_to_playlist" => AddToPlaylistPrompt,
         _ => Noop,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ch(c: char, shift: bool) -> Key {
+        Key {
+            code: KeyCode::Char(c),
+            mods: Mods {
+                shift,
+                ..Mods::default()
+            },
+        }
+    }
+
+    #[test]
+    fn normalize_shift_uppercases_shifted_letters() {
+        // kitty-protocol delivery: base char + SHIFT → the legacy uppercase form,
+        // and the redundant shift bit is cleared.
+        let k = normalize_shift(ch('f', true));
+        assert_eq!(k.code, KeyCode::Char('F'));
+        assert!(!k.mods.shift);
+    }
+
+    #[test]
+    fn normalize_shift_is_idempotent_on_uppercase() {
+        // legacy delivery already folds Shift into the case; don't double-transform.
+        let k = normalize_shift(ch('F', true));
+        assert_eq!(k.code, KeyCode::Char('F'));
+    }
+
+    #[test]
+    fn normalize_shift_leaves_plain_and_symbol_keys() {
+        assert_eq!(normalize_shift(ch('f', false)).code, KeyCode::Char('f'));
+        // symbols/digits keep their shifted glyph as delivered (layout-dependent).
+        let sym = normalize_shift(ch('=', true));
+        assert_eq!(sym.code, KeyCode::Char('='));
+    }
+
+    #[test]
+    fn key_label_folds_shift_and_keeps_modifiers() {
+        // `F` and a shifted `f` must produce the same binding label…
+        assert_eq!(key_label(ch('F', false)), "F");
+        assert_eq!(key_label(ch('f', true)), "F");
+        assert_eq!(key_label(ch('f', false)), "f");
+        // …and ctrl is still prefixed.
+        let ctrl_c = Key {
+            code: KeyCode::Char('c'),
+            mods: Mods {
+                ctrl: true,
+                ..Mods::default()
+            },
+        };
+        assert_eq!(key_label(ctrl_c), "ctrl-c");
     }
 }

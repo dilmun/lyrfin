@@ -27,6 +27,7 @@ impl AppState {
             ReducedMotion,
             Fps,
             RadioRefresh,
+            ArabicShaping,
         ];
 
         // Panes — the current view's movable panels (show / dock / size), then the
@@ -72,6 +73,7 @@ impl AppState {
         v.push(Crossfade);
         v.push(SilenceSkip);
         v.push(ReplayGain);
+        v.push(RadioDvr);
 
         // Visualizer — the playback-bar spectrum + big-view peak caps
         v.push(PlayerViz);
@@ -409,7 +411,20 @@ impl AppState {
     /// group tab) and the `;` popup always have an active group, so Enter always
     /// acts on the selected row.
     pub(crate) fn settings_activate(&mut self) {
-        match self.settings_item() {
+        if let Some(item) = self.settings_item() {
+            self.activate_setting(item);
+        }
+    }
+
+    /// Enter/Space on a specific settings row: cycle / toggle / open its prompt. The
+    /// explicit-`Setting` core of [`Self::settings_activate`], so the command palette
+    /// can activate a value-less setting (Rescan, Add dir, a rebind, Spotify re-auth…)
+    /// without it being the overlay's current selection. The `self.settings_adjust(1)`
+    /// arms below still read the overlay selection, but those are only reached via
+    /// `settings_activate` (where the selection *is* `item`); the palette drives
+    /// value-bearing settings through `apply_setting_value` instead.
+    pub(crate) fn activate_setting(&mut self, item: Setting) {
+        match Some(item) {
             // a music dir is removed with Del / ^d (not Enter — too easy to hit)
             Some(Setting::MusicDir(_)) => {}
             Some(Setting::AddDir) => {
@@ -451,6 +466,8 @@ impl AppState {
             Some(Setting::OverlaySize) => self.cycle_overlay_size(1),
             Some(Setting::ReducedMotion) => self.toggle_setting(|c| &mut c.reduced_motion),
             Some(Setting::PeakCaps) => self.toggle_setting(|c| &mut c.peak_caps),
+            Some(Setting::ArabicShaping) => self.toggle_setting(|c| &mut c.arabic_shaping),
+            Some(Setting::RadioDvr) => self.toggle_setting(|c| &mut c.radio_dvr),
             Some(Setting::Gapless) => {
                 self.toggle_setting(|c| &mut c.gapless);
                 self.update_gapless_next();
@@ -595,6 +612,8 @@ impl AppState {
             Some(Setting::OverlaySize) => self.cycle_overlay_size(dir.signum()),
             Some(Setting::ReducedMotion) => self.set_setting(|c| &mut c.reduced_motion, dir > 0),
             Some(Setting::PeakCaps) => self.set_setting(|c| &mut c.peak_caps, dir > 0),
+            Some(Setting::ArabicShaping) => self.set_setting(|c| &mut c.arabic_shaping, dir > 0),
+            Some(Setting::RadioDvr) => self.set_setting(|c| &mut c.radio_dvr, dir > 0),
             Some(Setting::Gapless) => {
                 self.set_setting(|c| &mut c.gapless, dir > 0);
                 self.update_gapless_next();

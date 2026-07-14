@@ -64,7 +64,9 @@ pub const DEFAULT_BINDINGS: &[(&str, &str)] = &[
     ("ctrl-q", "toggle_queue_side"),
     ("b", "toggle_sidebar"), // b toggles the library sidebar
     ("V", "toggle_lyrics_viz"),
-    ("F", "cycle_lyrics_format"),
+    // `F` (cycle lyrics format) is no longer a global binding — it's a Lyrics-pane
+    // key now (see `keymap::pane_context`), so it only fires with the lyrics view /
+    // pane focused and can never shadow `f` = favourite elsewhere.
     ("v", "cycle_visualizer"),
     (">", "resize_pane:+1"), // widen the focused dock pane (left/top; flips on right/bottom)
     ("<", "resize_pane:-1"), // narrow the focused dock pane
@@ -109,6 +111,9 @@ pub const RETIRED_BINDINGS: &[(&str, &str)] = &[
     // `2` was a stopgap `layout:split` while the Miller browser was gone; it's now
     // the restored 3-column `layout:library_focus`.
     ("2", "layout:split"),
+    // `F` moved from a global binding to a Lyrics-pane key; drop a stale full-dump
+    // pin so it doesn't resurrect the global binding and shadow the pane scope.
+    ("F", "cycle_lyrics_format"),
 ];
 
 /// Distinct, user-configurable actions (one row per action in the Keys settings),

@@ -411,14 +411,52 @@ pub fn confirm_delete_overlay(f: &mut Frame, area: Rect, app: &AppState) {
 /// Command palette: grouped, fuzzy-runnable actions. Browsing shows tidy
 /// category sections (View / Playback / …); typing flat-filters across all.
 pub fn command_palette(f: &mut Frame, area: Rect, app: &AppState) {
+    use crate::app::PaletteCtx;
     let Some(p) = &app.palette else { return };
     let th = &app.theme;
-    let entries = app.palette_entries(); // (category, label, action)
-    let matches = app.palette_matches(); // indices into entries, best first
-    let browsing = p.query.trim().is_empty();
+    let matches = app.palette_matches(); // indices into the current level, best first
     let sel = p.sel.min(matches.len().saturating_sub(1));
 
-    // display rows: in browse mode insert a header when the category changes
+    // the display model for the current level: the root action/settings list, or a
+    // setting's value picker (drill-in).
+    struct Item {
+        category: String,
+        label: String,
+        value: Option<String>,
+        current: bool,
+    }
+    let drill = matches!(p.ctx, PaletteCtx::Setting(_));
+    let (title, items): (String, Vec<Item>) = match p.ctx {
+        PaletteCtx::Root => (
+            "COMMANDS".to_string(),
+            app.palette_entries()
+                .into_iter()
+                .map(|e| Item {
+                    category: e.category,
+                    label: e.label,
+                    value: e.value,
+                    current: false,
+                })
+                .collect(),
+        ),
+        PaletteCtx::Setting(s) => (
+            crate::ui::views::settings_rows::setting_label_value(app, &s)
+                .0
+                .to_uppercase(),
+            app.drill_choices(s)
+                .into_iter()
+                .map(|c| Item {
+                    category: String::new(),
+                    label: c.label,
+                    value: None,
+                    current: c.current,
+                })
+                .collect(),
+        ),
+    };
+    // headers group the root list while browsing (empty query); the drill list is flat
+    let browsing = !drill && p.query.trim().is_empty();
+
     enum Row {
         Header(String),
         Item { ci: usize, pos: usize },
@@ -427,7 +465,7 @@ pub fn command_palette(f: &mut Frame, area: Rect, app: &AppState) {
     let mut last_cat: Option<&str> = None;
     for (pos, &ci) in matches.iter().enumerate() {
         if browsing {
-            let cat = entries[ci].0.as_str();
+            let cat = items[ci].category.as_str();
             if last_cat != Some(cat) {
                 rows.push(Row::Header(cat.to_string()));
                 last_cat = Some(cat);
@@ -450,7 +488,7 @@ pub fn command_palette(f: &mut Frame, area: Rect, app: &AppState) {
     let y = area.y + 2;
     let rect = Rect::new(x, y, w, h);
     f.render_widget(ratatui::widgets::Clear, rect);
-    let inner = panel(f, rect, app, "COMMANDS", true);
+    let inner = panel(f, rect, app, &title, true);
 
     let [input, list, foot] = Layout::vertical([
         Constraint::Length(1),
@@ -458,12 +496,12 @@ pub fn command_palette(f: &mut Frame, area: Rect, app: &AppState) {
         Constraint::Length(1),
     ])
     .areas(inner);
-    footer_bar(
-        f,
-        foot,
-        app,
-        &[("↑↓", "select"), ("⏎", "run"), ("esc", "close")],
-    );
+    let foot_hints: &[(&str, &str)] = if drill {
+        &[("↑↓", "select"), ("⏎", "set"), ("esc", "back")]
+    } else {
+        &[("↑↓", "select"), ("⏎", "open"), ("esc", "close")]
+    };
+    footer_bar(f, foot, app, foot_hints);
     f.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(" ❯ ", Style::default().fg(col(th.accent[0]))),
@@ -489,11 +527,12 @@ pub fn command_palette(f: &mut Frame, area: Rect, app: &AppState) {
                     .add_modifier(Modifier::BOLD),
             ))),
             Row::Item { ci, pos } => {
-                // clickable row: single-click selects, double-click runs the command
+                // clickable row: single-click selects, double-click activates
                 app.register_click(
                     Rect::new(list.x, list.y + d as u16, list.width, 1),
                     MouseTarget::PaletteRow(*pos),
                 );
+                let item = &items[*ci];
                 let selected = *pos == sel;
                 let bg = if selected { Some(th.selection) } else { None };
                 let st = if selected {
@@ -504,11 +543,28 @@ pub fn command_palette(f: &mut Frame, area: Rect, app: &AppState) {
                     Style::default().fg(col(th.text_dim))
                 };
                 let marker = if selected { "❯ " } else { "  " };
-                let mut spans = vec![Span::styled(format!("{marker}{}", entries[*ci].1), st)];
-                if !browsing {
-                    // show which group it belongs to when results are flat
+                let mut spans = vec![Span::styled(format!("{marker}{}", item.label), st)];
+                // drill: mark the value that's currently in effect
+                if drill && item.current {
+                    spans.push(Span::styled("  ●", Style::default().fg(col(th.accent[0]))));
+                }
+                // root, flat results: show which group each row belongs to
+                if !browsing && !drill {
                     spans.push(Span::styled(
-                        format!("  · {}", entries[*ci].0),
+                        format!("  · {}", item.category),
+                        Style::default().fg(col(th.text_faint)),
+                    ));
+                }
+                // root setting rows: the current value, right-aligned and dim
+                if let Some(val) = &item.value {
+                    let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+                    let vw = val.chars().count();
+                    let pad = (list.width as usize).saturating_sub(used + vw + 1);
+                    if pad > 0 {
+                        spans.push(Span::raw(" ".repeat(pad)));
+                    }
+                    spans.push(Span::styled(
+                        val.clone(),
                         Style::default().fg(col(th.text_faint)),
                     ));
                 }
@@ -518,7 +574,11 @@ pub fn command_palette(f: &mut Frame, area: Rect, app: &AppState) {
     }
     if matches.is_empty() {
         lines.push(Line::from(Span::styled(
-            "   no matching command",
+            if drill {
+                "   no matching value"
+            } else {
+                "   no matching command"
+            },
             Style::default().fg(col(th.text_faint)),
         )));
     }

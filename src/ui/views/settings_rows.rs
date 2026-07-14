@@ -13,6 +13,13 @@ pub enum SettingValue {
     Text(String),
 }
 
+/// Value labels shared by the settings-row renderer AND the palette's value
+/// suggestions (`crate::app::settings_choices`), indexed by the config value, so the
+/// two surfaces never drift. Each array's index == the stored `u8`.
+pub(crate) const REPLAYGAIN_LABELS: [&str; 3] = ["off", "track", "album"];
+pub(crate) const LYRICS_ALIGN_LABELS: [&str; 3] = ["center", "left", "right"];
+pub(crate) const LYRICS_COLOR_LABELS: [&str; 5] = ["accent", "violet", "pink", "amber", "white"];
+
 /// A per-appearance theme picker's value: the theme name, marked `· active` when
 /// it's the one the follow-system switch is currently showing (so the user can see
 /// which of light/dark is live without guessing).
@@ -158,6 +165,11 @@ pub(crate) fn setting_label_value(app: &AppState, item: &Setting) -> (String, Se
                 n => format!("every {n} days"),
             }),
         ),
+        Setting::ArabicShaping => (
+            "Arabic text shaping".into(),
+            Toggle(app.config.arabic_shaping),
+        ),
+        Setting::RadioDvr => ("Radio timeshift (DVR)".into(), Toggle(app.config.radio_dvr)),
         Setting::Gapless => ("Gapless playback".into(), Toggle(app.config.gapless)),
         Setting::SilenceSkip => (
             "Skip silence between tracks".into(),
@@ -173,11 +185,7 @@ pub(crate) fn setting_label_value(app: &AppState, item: &Setting) -> (String, Se
         ),
         Setting::ReplayGain => (
             "ReplayGain (normalize)".into(),
-            Text(match app.config.replaygain {
-                1 => "track".to_string(),
-                2 => "album".to_string(),
-                _ => "off".to_string(),
-            }),
+            Text(REPLAYGAIN_LABELS[app.config.replaygain.min(2) as usize].to_string()),
         ),
         Setting::ColIndex => ("Track number".into(), Toggle(app.config.columns.index)),
         Setting::ColArtist => ("Artist".into(), Toggle(app.config.columns.artist)),
@@ -197,7 +205,7 @@ pub(crate) fn setting_label_value(app: &AppState, item: &Setting) -> (String, Se
         Setting::ColComment => ("Comment".into(), Toggle(app.config.columns.comment)),
         Setting::LyricsAlign => (
             "Lyrics alignment".into(),
-            Text(["center", "left", "right"][app.config.lyrics_align.min(2) as usize].to_string()),
+            Text(LYRICS_ALIGN_LABELS[app.config.lyrics_align.min(2) as usize].to_string()),
         ),
         Setting::LyricsGap => (
             "Lyrics line spacing".into(),
@@ -219,11 +227,7 @@ pub(crate) fn setting_label_value(app: &AppState, item: &Setting) -> (String, Se
         ),
         Setting::LyricsColor => (
             "Lyrics color (solid)".into(),
-            Text(
-                ["accent", "violet", "pink", "amber", "white"]
-                    [app.config.lyrics_color.min(4) as usize]
-                    .to_string(),
-            ),
+            Text(LYRICS_COLOR_LABELS[app.config.lyrics_color.min(4) as usize].to_string()),
         ),
         Setting::LyricsKaraoke => (
             "Lyrics: karaoke wipe".into(),

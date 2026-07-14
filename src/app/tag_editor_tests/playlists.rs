@@ -197,8 +197,8 @@ fn bookmark_create_jump_and_reject_empty() {
 
     // it surfaces as a quick-jump entry in the command palette
     let entries = a.palette_entries();
-    assert!(entries.iter().any(|(_, l, act)| l == "★ Top Rated"
-        && matches!(act, Action::RunSearch(q) if q.as_str() == "rating>=4 fav")));
+    assert!(entries.iter().any(|e| e.label == "★ Top Rated"
+        && matches!(&e.action, Action::RunSearch(q) if q.as_str() == "rating>=4 fav")));
 
     // jumping applies the saved query and leaves input mode
     a.search.query.clear();
