@@ -72,6 +72,19 @@ impl AppState {
         }
     }
 
+    /// Apply a live ICY "now playing" title from the stream. Many stations interleave
+    /// promo junk between song titles — the stream URL, a "Tracklist: https://…" plug,
+    /// or an empty frame — which makes the headline flip-flop; ignore those and keep
+    /// the last real title. No-op when no station is tuned.
+    pub(crate) fn on_icy_title(&mut self, t: &str) {
+        let t = t.trim();
+        let junk =
+            t.is_empty() || t.contains("://") || t.starts_with("http") || t.starts_with("www.");
+        if self.rnow.now_station.is_some() && !junk {
+            self.rnow.now_station_title = Some(t.to_string());
+        }
+    }
+
     /// Apply an engine timeshift-window report `[start, live]` (seconds since
     /// tune-in). A fresh window (first report after tuning in) starts pinned to the
     /// live edge so the bar sits at the end, not crawling up from the buffer start as

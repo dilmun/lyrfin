@@ -219,6 +219,64 @@ fn radio_dvr_starts_at_live_and_rewind_detaches() {
 }
 
 #[test]
+fn radio_icy_title_ignores_url_and_empty_promo_frames() {
+    use crate::radio::Station;
+    let mut a = demo();
+    a.rnow.now_station = Some(Station {
+        name: "Dance Wave!".into(),
+        url: "u".into(),
+        ..Default::default()
+    });
+
+    a.on_icy_title("Daft Punk - Around the World");
+    assert_eq!(
+        a.rnow.now_station_title.as_deref(),
+        Some("Daft Punk - Around the World")
+    );
+    // a promo URL frame must not overwrite the real song (the headline would flip)
+    a.on_icy_title("Tracklist: https://dancewave.online");
+    a.on_icy_title(""); // empty frame between songs
+    a.on_icy_title("http://dancewave.online");
+    assert_eq!(
+        a.rnow.now_station_title.as_deref(),
+        Some("Daft Punk - Around the World"),
+        "junk frames keep the last real title"
+    );
+    // a genuine new song still updates
+    a.on_icy_title("Justice - Genesis");
+    assert_eq!(
+        a.rnow.now_station_title.as_deref(),
+        Some("Justice - Genesis")
+    );
+}
+
+#[test]
+fn radio_add_picker_does_not_steal_jk_in_local_view() {
+    use crate::action::{Action, Motion};
+    use crate::radio::Station;
+    let mut a = demo();
+    // open the radio add-to-playlist picker, then leave for a local view
+    a.layout = Layout::Radio;
+    a.radio.stations = vec![Station {
+        name: "X".into(),
+        url: "u".into(),
+        ..Default::default()
+    }];
+    a.radio.sel = 0;
+    a.update(Action::RadioAddToPlaylist);
+    assert!(a.radio.pl.adding.is_some(), "picker open");
+    a.radio.pl.add_sel = 0;
+
+    a.layout = Layout::Dashboard;
+    let before = a.radio.pl.add_sel;
+    a.update(Action::Move(Motion::Down)); // j in the local view
+    assert_eq!(
+        a.radio.pl.add_sel, before,
+        "a stray radio modal must not capture j/k in a local view"
+    );
+}
+
+#[test]
 fn key_6_opens_radio_view() {
     use crate::event::{Key, KeyCode, Mods};
     let mut a = demo();

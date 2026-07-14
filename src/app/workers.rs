@@ -372,12 +372,7 @@ impl AppState {
                 }
                 AudioEvent::Advanced => self.soft_advance(),
                 AudioEvent::Spectrum(s) => self.player.spectrum = s,
-                AudioEvent::IcyTitle(t) => {
-                    // the live "now playing" title from a radio stream
-                    if self.rnow.now_station.is_some() {
-                        self.rnow.now_station_title = Some(t);
-                    }
-                }
+                AudioEvent::IcyTitle(t) => self.on_icy_title(&t),
                 AudioEvent::Error(e) => {
                     if self.spov.sp_stream {
                         // the episode's stream couldn't open/decode — stop the spinner

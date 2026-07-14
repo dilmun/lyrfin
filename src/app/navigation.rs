@@ -70,8 +70,10 @@ impl AppState {
             self.settings.sel = step(self.settings.sel, m, n);
             return;
         }
-        // The radio "add to playlist" picker captures movement (+1 = New playlist row).
-        if self.radio.pl.adding.is_some() {
+        // The radio "add to playlist" picker captures movement (+1 = New playlist row)
+        // — but only in the Radio view, so a modal left open never steals j/k from a
+        // local/Spotify list after switching views.
+        if self.layout == Layout::Radio && self.radio.pl.adding.is_some() {
             let n = self.radio.playlists.len() + 1;
             self.radio.pl.add_sel = step(self.radio.pl.add_sel, m, n);
             return;
