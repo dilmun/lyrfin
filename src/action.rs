@@ -119,8 +119,7 @@ pub enum Action {
     RadioPickerInput(String), // type into the open picker's filter box
     RadioPickerStartSearch,   // '/' inside a picker — focus its filter box
     RadioPickerEndSearch,     // Esc/Tab inside a picker — back to list navigation
-    RadioToggleFavorites,     // 'f' — switch between results and the saved list
-    RadioStar,                // 's' — star/unstar the selected station
+    RadioStar,                // 'f' — star/unstar the selected station
     RadioCycleSort,           // 'o' — cycle the result sort order
     RadioStation(i32),        // n/p — tune the next/previous station (change channel)
     RadioRefresh,             // R — force a re-download of the station directory

@@ -67,6 +67,7 @@ pub struct Session {
     pub queue_paths: Option<Vec<String>>,
 
     // internet radio: the active filters + the last-tuned station
+    pub radio_section: Option<String>, // active sidebar section (RadioSection key)
     pub radio_query: Option<String>,
     pub radio_country: Option<(String, String)>, // (name, ISO code)
     pub radio_tag: Option<String>,

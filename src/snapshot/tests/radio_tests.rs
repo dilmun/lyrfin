@@ -118,6 +118,9 @@ fn radio_dedicated_keys_drive_filters() {
     };
     let mut a = demo();
     a.layout = Layout::Radio;
+    // the station-list keys are scoped to the Main pane (the section sidebar shadows
+    // them), so focus the list before asserting them.
+    a.focus = crate::app::Focus::Main;
     assert!(matches!(
         crate::keymap::map(&a, key('c')),
         Action::RadioOpenCountry
@@ -126,12 +129,9 @@ fn radio_dedicated_keys_drive_filters() {
         crate::keymap::map(&a, key('g')),
         Action::RadioOpenGenre
     ));
+    // `f` stars the highlighted station (unified with favourite elsewhere).
     assert!(matches!(
         crate::keymap::map(&a, key('f')),
-        Action::RadioToggleFavorites
-    ));
-    assert!(matches!(
-        crate::keymap::map(&a, key('s')),
         Action::RadioStar
     ));
     assert!(matches!(
@@ -165,10 +165,10 @@ fn radio_favorites_star_persists_and_toggles() {
     // persisted to disk
     let loaded = crate::library::store::RadioFavorites::load(&a.config.dir);
     assert_eq!(loaded.len(), 1, "favorite written to radio_favorites.json");
-    // 'f' shows the saved list
-    a.update(Action::RadioToggleFavorites);
-    assert!(a.radio.fav_view && a.radio_view_list().len() == 1);
-    // star again removes it
+    // the Favorites section shows the saved list
+    a.radio.section = crate::app::RadioSection::Favorites;
+    assert_eq!(a.radio_view_list().len(), 1);
+    // star again (from the favorites list) removes it
     a.update(Action::RadioStar);
     assert!(a.radio.favorites.is_empty(), "unstarred");
     let _ = std::fs::remove_dir_all(&a.config.dir);
@@ -347,16 +347,26 @@ fn radio_picker_autoselects_closest_match() {
 }
 
 #[test]
-fn radio_tab_toggles_search_and_list_focus() {
+fn radio_tab_cycles_sidebar_and_list_focus() {
     use crate::action::{Action, Motion};
+    use crate::app::Focus;
     use crate::event::{Key, KeyCode, Mods};
     use crate::radio::Station;
     let tab = Key {
         code: KeyCode::Tab,
         mods: Mods::default(),
     };
+    let slash = Key {
+        code: KeyCode::Char('/'),
+        mods: Mods::default(),
+    };
+    let j = Key {
+        code: KeyCode::Char('j'),
+        mods: Mods::default(),
+    };
     let mut a = demo();
     a.layout = Layout::Radio;
+    a.focus = Focus::Main;
     a.radio.stations = vec![
         Station {
             name: "A".into(),
@@ -372,18 +382,26 @@ fn radio_tab_toggles_search_and_list_focus() {
         },
     ];
     a.radio.sel = 0;
-    // list focused by default: j moves the list, never the query
-    let j = Key {
-        code: KeyCode::Char('j'),
-        mods: Mods::default(),
-    };
+    // list focused: j moves the station list, never the query
     assert!(matches!(
         crate::keymap::map(&a, j),
         Action::Move(Motion::Down)
     ));
-    // Tab → search focus; now j edits the query instead of moving
+    // Tab cycles focus to the section sidebar; j then steps sections (still a Move,
+    // routed to the sidebar by navigation)
+    assert!(matches!(crate::keymap::map(&a, tab), Action::CyclePane));
+    a.update(Action::CyclePane);
+    assert_eq!(a.focus, Focus::Sidebar);
     assert!(matches!(
-        crate::keymap::map(&a, tab),
+        crate::keymap::map(&a, j),
+        Action::Move(Motion::Down)
+    ));
+    // Tab again returns to the station list
+    a.update(Action::CyclePane);
+    assert_eq!(a.focus, Focus::Main);
+    // '/' focuses the search box; only then does typing edit the query
+    assert!(matches!(
+        crate::keymap::map(&a, slash),
         Action::RadioFocusSearch
     ));
     a.update(Action::RadioFocusSearch);
@@ -392,14 +410,9 @@ fn radio_tab_toggles_search_and_list_focus() {
         Action::RadioInput(q) => assert_eq!(q, "j"),
         other => panic!("expected query edit while search-focused, got {other:?}"),
     }
-    // Tab again → back to the list (j moves again)
-    assert!(matches!(crate::keymap::map(&a, tab), Action::RadioCancel));
+    // Esc leaves search edit but stays in the view
     a.update(Action::RadioCancel);
     assert!(!a.radio.editing);
-    assert!(matches!(
-        crate::keymap::map(&a, j),
-        Action::Move(Motion::Down)
-    ));
 }
 
 #[test]

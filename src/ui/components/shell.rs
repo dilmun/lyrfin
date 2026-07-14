@@ -25,8 +25,8 @@ pub struct ShellPane<'a> {
 /// Render the standard shell. Every movable pane — including the library/section
 /// `Sidebar` — docks around `area` via [`super::dock_panels`]; the bordered
 /// `main` pane fills the remaining core. Views that have a sidebar simply list
-/// `Panel::Sidebar` in `panels` and draw it in their `dock` closure (Radio has
-/// none). `dock_panels` owns the responsive collapse: as the terminal shrinks it
+/// `Panel::Sidebar` in `panels` and draw it in their `dock` closure (Dashboard,
+/// Spotify, and Radio all do). `dock_panels` owns the responsive collapse: as the terminal shrinks it
 /// drops the least-important panes (percentage-sized) one by one, down to a
 /// single main pane — so a narrow terminal stays usable.
 pub fn browser_shell(

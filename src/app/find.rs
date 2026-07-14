@@ -157,7 +157,6 @@ impl AppState {
     /// Set the query and run a local search (used after the directory loads).
     pub(crate) fn run_local_search_with(&mut self, query: String) {
         self.radio.query = query;
-        self.radio.fav_view = false;
         self.run_local_search();
     }
 

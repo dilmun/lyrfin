@@ -767,19 +767,31 @@ fn radio_view(app: &AppState, key: Key) -> Option<Action> {
             Action::RadioCancel,
         ));
     }
-    // Browse mode: source-specific keys only (`n`/`p` change station, not the local
-    // queue). List navigation is left to the shared global table via the
-    // fall-through below.
+    // Browse mode. Keys common to both panes first, then pane-specific keys; Tab
+    // (cycle focus, sidebar ↔ list) and j/k (Move) fall through to the global table.
     match key.code {
         KeyCode::Esc => return Some(Action::RadioCancel),
-        KeyCode::Enter => return Some(Action::RadioActivate),
-        // Tab toggles focus to the search box (Tab again / Esc returns here)
-        KeyCode::Tab | KeyCode::BackTab => return Some(Action::RadioFocusSearch),
         KeyCode::Char('/') => return Some(Action::RadioFocusSearch),
+        // Enter plays a station on the list, or activates the section in the sidebar
+        // (radio_activate branches on focus).
+        KeyCode::Enter => return Some(Action::RadioActivate),
+        _ => {}
+    }
+    // Section sidebar focused: l/→ enters the section (opens a picker / focuses the
+    // list); h/← is a no-op; j/k + Tab fall through to the global bindings.
+    if app.focus == Focus::Sidebar {
+        return Some(match key.code {
+            KeyCode::Char('l') | KeyCode::Right => Action::RadioActivate,
+            KeyCode::Char('h') | KeyCode::Left => Action::Noop,
+            _ => global_binding(app, key),
+        });
+    }
+    // Station list focused: source-specific keys (`n`/`p` change station, not the
+    // local queue; `f` stars the highlighted station).
+    match key.code {
         KeyCode::Char('c') => return Some(Action::RadioOpenCountry),
         KeyCode::Char('g') => return Some(Action::RadioOpenGenre),
-        KeyCode::Char('f') => return Some(Action::RadioToggleFavorites),
-        KeyCode::Char('s') => return Some(Action::RadioStar),
+        KeyCode::Char('f') => return Some(Action::RadioStar),
         KeyCode::Char('o') => return Some(Action::RadioCycleSort),
         KeyCode::Char('R') => return Some(Action::RadioRefresh), // re-download directory
         KeyCode::Char('n') => return Some(Action::RadioStation(1)), // next channel

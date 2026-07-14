@@ -77,6 +77,9 @@ impl AppState {
     /// Switch to the Radio view and load the default station list on first open.
     pub(crate) fn open_radio(&mut self) {
         self.set_layout(Layout::Radio);
+        // land on the station list (not the section sidebar) so j/k moves stations
+        // the moment the view opens, matching the pre-sidebar muscle memory.
+        self.set_focus(Focus::Main);
         // pull the full directory (cache or download) so everything is local;
         // until it's ready the live API search serves as the fallback.
         self.load_directory(false);
@@ -109,12 +112,16 @@ impl AppState {
         self.load_directory(true);
     }
 
-    /// The list currently shown in the Radio view: favorites or search results.
+    /// The station list the active sidebar section shows: the saved favorites, a
+    /// dedicated history/playlist list, or the shared search-results set.
     pub fn radio_view_list(&self) -> &[crate::radio::Station] {
-        if self.radio.fav_view {
-            &self.radio.favorites
-        } else {
-            &self.radio.stations
+        match self.radio.section {
+            RadioSection::Favorites => &self.radio.favorites,
+            // History/playlist lists are wired in a later phase — empty for now, so
+            // the section renders its own "coming soon" empty state.
+            RadioSection::Recent | RadioSection::MostPlayed | RadioSection::Playlists => &[],
+            // Everything else views the shared search-results set (see `shows_results`).
+            _ => &self.radio.stations,
         }
     }
 
@@ -211,7 +218,11 @@ impl AppState {
     /// then it falls back to a coalesced live API search.
     pub(crate) fn radio_search(&mut self, query: String) {
         self.radio.query = query.clone();
-        self.radio.fav_view = false;
+        // Typing implies you want results — leave a dedicated-list section
+        // (Favorites/Recent/…) for the results view so the matches are visible.
+        if !self.radio.section.shows_results() {
+            self.radio.section = RadioSection::AllStations;
+        }
         self.radio.sel = 0;
         if self.radio.local_ready {
             self.run_local_search();
@@ -239,10 +250,15 @@ impl AppState {
         self.radio_search(q);
     }
 
-    /// Enter: play the selected station, or apply the open picker's selection.
+    /// Enter: apply the open picker, activate the highlighted sidebar section, or
+    /// play the selected station (depending on what has focus).
     pub(crate) fn radio_activate(&mut self) {
         if self.radio.picker.is_some() {
             self.radio_apply_picker();
+            return;
+        }
+        if self.focus == Focus::Sidebar {
+            self.radio_activate_section();
             return;
         }
         let pick = self.radio_view_list().get(self.radio.sel).cloned();
@@ -252,16 +268,44 @@ impl AppState {
         }
     }
 
-    /// Esc: close the picker, leave search edit, or leave favorites. In plain
-    /// browse it does nothing — Esc never drops you back to the local player
+    /// Enter (or click) on a sidebar section: open its picker (Countries/Genres),
+    /// focus the query box (Search), apply its sort (Popular/Trending), else just
+    /// hand focus to the station list. Shared by the keymap and the mouse handler.
+    pub(crate) fn radio_activate_section(&mut self) {
+        use crate::radio::Sort;
+        match self.radio.section {
+            RadioSection::Countries => self.radio_open_picker(PickerKind::Country),
+            RadioSection::Genres => self.radio_open_picker(PickerKind::Genre),
+            RadioSection::Search => {
+                self.radio.editing = true;
+                self.set_focus(Focus::Main);
+            }
+            RadioSection::Popular => {
+                self.radio.sort = Sort::Popular;
+                self.refresh_radio();
+                self.set_focus(Focus::Main);
+            }
+            // No dedicated "trending" API field yet — rank by votes as an interim
+            // signal until `clicktrend` lands in the browse-polish phase.
+            RadioSection::Trending => {
+                self.radio.sort = Sort::Votes;
+                self.refresh_radio();
+                self.set_focus(Focus::Main);
+            }
+            _ => self.set_focus(Focus::Main),
+        }
+    }
+
+    /// Esc: close the picker, leave search edit, or return to All Stations. In
+    /// plain browse it does nothing — Esc never drops you back to the local player
     /// (switch views with 1–6 for that), so it can't be hit by accident.
     pub(crate) fn radio_cancel(&mut self) {
         if self.radio.picker.is_some() {
             self.radio.picker = None;
         } else if self.radio.editing {
             self.radio.editing = false;
-        } else if self.radio.fav_view {
-            self.radio.fav_view = false;
+        } else if self.radio.section != RadioSection::AllStations {
+            self.radio.section = RadioSection::AllStations;
             self.radio.sel = 0;
         }
     }
@@ -343,17 +387,7 @@ impl AppState {
         self.refresh_radio();
     }
 
-    /// 'f': toggle between search results and the saved favorites list.
-    pub(crate) fn radio_toggle_favorites(&mut self) {
-        self.radio.editing = false;
-        self.radio.fav_view = !self.radio.fav_view;
-        self.radio.sel = 0;
-        if self.radio.fav_view && self.radio.favorites.is_empty() {
-            self.notify("No favorites yet — press s to star a station".into());
-        }
-    }
-
-    /// 's': star/unstar the highlighted station and persist the list.
+    /// 'f': star/unstar the highlighted station and persist the list.
     pub(crate) fn radio_star(&mut self) {
         let Some(st) = self.radio_view_list().get(self.radio.sel).cloned() else {
             return;
@@ -367,7 +401,7 @@ impl AppState {
         {
             self.radio.favorites.remove(pos);
             self.notify(format!("Unstarred: {}", st.name));
-            if self.radio.fav_view {
+            if self.radio.section == RadioSection::Favorites {
                 let len = self.radio.favorites.len();
                 if self.radio.sel >= len {
                     self.radio.sel = len.saturating_sub(1);
@@ -393,11 +427,12 @@ impl AppState {
         self.play_station(st);
     }
 
-    /// 'o': cycle the result sort order and re-search (no-op in favorites view).
+    /// 'o': cycle the result sort order and re-search (only the results sections
+    /// are sorted; favorites / history keep their own order).
     pub(crate) fn radio_cycle_sort(&mut self) {
         self.radio.sort = self.radio.sort.next();
         self.notify(format!("Sort: {}", self.radio.sort.label()));
-        if !self.radio.fav_view {
+        if self.radio.section.shows_results() {
             self.refresh_radio();
         }
     }
@@ -563,11 +598,109 @@ impl AppState {
     }
 }
 
-/// Internet-radio view state: the live search query, the fetched stations, the
-/// active filters (country / genre / sort), the saved favorites, and any open
-/// filter picker. `key` tags the in-flight search so stale results are ignored.
+/// The Radio view's sidebar sections — the radio analogue of [`LocalSection`].
+/// A flat list navigated in the sidebar: some are station lists (All Stations,
+/// Favorites, …), Countries/Genres drill into a filter picker, and Search focuses
+/// the query box. The active section drives [`AppState::radio_view_list`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum RadioSection {
+    #[default]
+    AllStations,
+    Favorites,
+    Playlists,
+    Recent,
+    MostPlayed,
+    Countries,
+    Genres,
+    Popular,
+    Trending,
+    Search,
+}
+
+impl RadioSection {
+    /// All sections in sidebar order.
+    pub const ALL: [RadioSection; 10] = [
+        RadioSection::AllStations,
+        RadioSection::Favorites,
+        RadioSection::Playlists,
+        RadioSection::Recent,
+        RadioSection::MostPlayed,
+        RadioSection::Countries,
+        RadioSection::Genres,
+        RadioSection::Popular,
+        RadioSection::Trending,
+        RadioSection::Search,
+    ];
+    pub fn label(self) -> &'static str {
+        match self {
+            RadioSection::AllStations => "All Stations",
+            RadioSection::Favorites => "Favorites",
+            RadioSection::Playlists => "Playlists",
+            RadioSection::Recent => "Recent",
+            RadioSection::MostPlayed => "Most Played",
+            RadioSection::Countries => "Countries",
+            RadioSection::Genres => "Genres",
+            RadioSection::Popular => "Popular",
+            RadioSection::Trending => "Trending",
+            RadioSection::Search => "Search",
+        }
+    }
+    pub fn icon(self) -> &'static str {
+        match self {
+            RadioSection::AllStations => "📻",
+            RadioSection::Favorites => "⭐",
+            RadioSection::Playlists => "📂",
+            RadioSection::Recent => "🕒",
+            RadioSection::MostPlayed => "📈",
+            RadioSection::Countries => "🌍",
+            RadioSection::Genres => "🎵",
+            RadioSection::Popular => "🔥",
+            RadioSection::Trending => "❤️",
+            RadioSection::Search => "🔍",
+        }
+    }
+    /// Stable key for session persistence (independent of label/order).
+    pub fn key(self) -> &'static str {
+        match self {
+            RadioSection::AllStations => "all",
+            RadioSection::Favorites => "favorites",
+            RadioSection::Playlists => "playlists",
+            RadioSection::Recent => "recent",
+            RadioSection::MostPlayed => "most_played",
+            RadioSection::Countries => "countries",
+            RadioSection::Genres => "genres",
+            RadioSection::Popular => "popular",
+            RadioSection::Trending => "trending",
+            RadioSection::Search => "search",
+        }
+    }
+    pub fn from_key(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|sec| sec.key() == s)
+    }
+    /// Whether this section's main list is the shared search-results set
+    /// (`radio.stations`) rather than a dedicated list (favorites / history /
+    /// playlists) — so a live search never has to clear the section to show hits.
+    pub fn shows_results(self) -> bool {
+        matches!(
+            self,
+            RadioSection::AllStations
+                | RadioSection::Search
+                | RadioSection::Countries
+                | RadioSection::Genres
+                | RadioSection::Popular
+                | RadioSection::Trending
+        )
+    }
+}
+
+/// Internet-radio view state: the active sidebar section, the live search query,
+/// the fetched stations, the active filters (country / genre / sort), the saved
+/// favorites, and any open filter picker. `key` tags the in-flight search so
+/// stale results are ignored.
 #[derive(Default)]
 pub struct Radio {
+    /// The selected sidebar section (drives which list `radio_view_list` returns).
+    pub section: RadioSection,
     pub query: String,
     pub sel: usize,
     /// Persisted sticky scroll offset of the station list — so clicking a visible
@@ -587,8 +720,6 @@ pub struct Radio {
     pub tag: Option<String>,
     /// Result ordering.
     pub sort: crate::radio::Sort,
-    /// Showing the saved favorites list instead of search results.
-    pub fav_view: bool,
     /// Starred stations (persisted to `radio_favorites.json`).
     pub favorites: Vec<crate::radio::Station>,
     /// Open country/genre picker, if any.

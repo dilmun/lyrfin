@@ -219,15 +219,23 @@ impl AppState {
                     self.radio_apply_picker();
                 }
             }
-            MouseTarget::RadioChip(c) => match c {
-                0 => {
-                    self.radio.fav_view = false;
-                    self.radio.editing = true;
+            MouseTarget::RadioSectionRow(i) => {
+                // a radio sidebar section row: focus the sidebar and select it; a
+                // double-click activates it (opens the picker / focuses search).
+                self.focus = Focus::Sidebar;
+                if let Some(&sec) = crate::app::RadioSection::ALL.get(i) {
+                    self.radio.section = sec;
+                    self.radio.sel = 0;
+                    if double {
+                        self.radio_activate_section();
+                    }
                 }
+            }
+            MouseTarget::RadioChip(c) => match c {
+                0 => self.radio.editing = true,
                 1 => self.radio_open_picker(PickerKind::Country),
                 2 => self.radio_open_picker(PickerKind::Genre),
                 3 => self.radio_cycle_sort(),
-                4 => self.radio_toggle_favorites(),
                 _ => {}
             },
             MouseTarget::PaletteRow(pos) => {
@@ -371,7 +379,9 @@ impl AppState {
                 self.focus = Focus::Main;
                 self.scroll_main(m);
             }
-            MouseTarget::Tree(_) | MouseTarget::Scroll(ScrollBox::Tree) => {
+            MouseTarget::Tree(_)
+            | MouseTarget::RadioSectionRow(_)
+            | MouseTarget::Scroll(ScrollBox::Tree) => {
                 self.focus = Focus::Sidebar;
                 self.move_selection(m);
             }

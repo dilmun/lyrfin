@@ -737,21 +737,26 @@ fn global_overlay_is_a_superset_of_every_popup() {
 #[test]
 fn settings_tabs_drop_only_empty_panes() {
     // The global overlay skips a group only when the current view has no rows for
-    // it — in practice just "Panes" (Radio/Concert host no movable panels). Every
+    // it — in practice just "Panes" for Concert (chrome-less, no movable panels).
+    // Radio now hosts a movable section Sidebar, so it keeps its Panes tab. Every
     // other group is always present, so the overlay never shows a blank tab.
-    for layout in [Layout::Radio, Layout::Concert] {
-        let mut a = demo();
-        a.layout = layout;
-        let tabs = a.settings_tabs();
-        assert!(
-            !tabs.contains(&"Panes"),
-            "{layout:?} has no movable panels → no Panes tab: {tabs:?}"
-        );
-        // the non-pane groups still show
-        for g in ["General", "Grid", "Tracklist", "Theme", "Spotify", "Keys"] {
-            assert!(tabs.contains(&g), "{g} tab present on {layout:?}");
-        }
+    let mut a = demo();
+    a.layout = Layout::Concert;
+    let tabs = a.settings_tabs();
+    assert!(
+        !tabs.contains(&"Panes"),
+        "Concert has no movable panels → no Panes tab: {tabs:?}"
+    );
+    // the non-pane groups still show
+    for g in ["General", "Grid", "Tracklist", "Theme", "Spotify", "Keys"] {
+        assert!(tabs.contains(&g), "{g} tab present on Concert");
     }
+    // Radio hosts the section Sidebar, so its Panes tab is present.
+    a.layout = Layout::Radio;
+    assert!(
+        a.settings_tabs().contains(&"Panes"),
+        "Radio hosts the section Sidebar → Panes tab present"
+    );
     for layout in [Layout::Dashboard, Layout::Spotify] {
         let mut a = demo();
         a.layout = layout;

@@ -70,12 +70,18 @@ impl AppState {
             self.settings.sel = step(self.settings.sel, m, n);
             return;
         }
-        // In the Radio view, movement walks the open picker, else the station list.
+        // In the Radio view, movement walks the open picker, the section sidebar
+        // (when it has focus), else the station list.
         if self.layout == Layout::Radio {
             if self.radio.picker.is_some() {
                 let n = self.radio_picker_match_count();
                 if let Some(p) = &mut self.radio.picker {
                     p.sel = step(p.sel, m, n);
+                }
+            } else if self.focus == Focus::Sidebar {
+                if let Some(s) = step_ring(&crate::app::RadioSection::ALL, self.radio.section, m) {
+                    self.radio.section = s;
+                    self.radio.sel = 0;
                 }
             } else {
                 let n = self.radio_view_list().len();

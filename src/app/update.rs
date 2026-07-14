@@ -378,10 +378,7 @@ impl AppState {
             OpenRadio => self.open_radio(),
             RadioInput(q) => self.radio_search(q),
             RadioActivate => self.radio_activate(),
-            RadioFocusSearch => {
-                self.radio.fav_view = false;
-                self.radio.editing = true;
-            }
+            RadioFocusSearch => self.radio.editing = true,
             RadioCancel => self.radio_cancel(),
             RadioOpenCountry => self.radio_open_picker(PickerKind::Country),
             RadioOpenGenre => self.radio_open_picker(PickerKind::Genre),
@@ -410,7 +407,6 @@ impl AppState {
                     p.editing = false;
                 }
             }
-            RadioToggleFavorites => self.radio_toggle_favorites(),
             RadioStar => self.radio_star(),
             RadioCycleSort => self.radio_cycle_sort(),
             RadioStation(delta) => self.radio_station(delta),

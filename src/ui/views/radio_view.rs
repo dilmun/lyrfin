@@ -1,7 +1,9 @@
-//! The Radio source view: the station list (a responsive columnar table), the
-//! country/genre filter picker, and the empty state. Split out of `views` to keep
-//! the radio rendering self-contained; the shared `clip` helper lives in the
-//! parent module and the search row is the shared `components::search_bar`.
+//! The Radio source view: the RADIO section sidebar (drill-in [`RadioSection`]s),
+//! the station list (a responsive columnar table), the country/genre filter
+//! picker, and the empty state. Split out of `views` to keep the radio rendering
+//! self-contained; the shared `clip` helper lives in the parent module, the
+//! sidebar reuses `components::section_list`, and the search row is the shared
+//! `components::search_bar`.
 
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
@@ -10,7 +12,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Cell, Paragraph};
 
 use super::clip;
-use crate::app::{AppState, MouseTarget, ScrollBox};
+use crate::app::{AppState, Focus, MouseTarget, Panel, RadioSection, ScrollBox};
 use crate::ui::components;
 
 pub fn radio(f: &mut Frame, area: Rect, app: &AppState) {
@@ -34,21 +36,53 @@ pub fn radio(f: &mut Frame, area: Rect, app: &AppState) {
         return;
     }
 
-    // single-pane shell form (no sidebar, no docked panes) — same chrome as the
-    // other source views, body drawn by `radio_body`.
+    // Standardized shell: a docked RADIO section sidebar + a titled main pane (the
+    // active section's name), body drawn by `radio_body` — same chrome as the
+    // Dashboard / Spotify views.
+    let title = r.section.label().to_uppercase();
     components::browser_shell(
         f,
         area,
         app,
-        &[],
-        &|_, _, _, _| {},
+        &[Panel::Sidebar],
+        &|f, slot, app, panel| {
+            if panel == Panel::Sidebar {
+                let inner = components::panel(f, slot, app, "RADIO", app.focus == Focus::Sidebar);
+                radio_sidebar(f, inner, app);
+            }
+        },
         components::ShellPane {
-            title: "RADIO",
+            title: &title,
             title_right: None,
-            focused: true,
+            focused: app.focus == Focus::Main || r.editing,
             render: &|f, inner, app| radio_body(f, inner, app),
         },
     );
+}
+
+/// The RADIO section sidebar: a flat drill-in list of [`RadioSection`]s, rendered
+/// with the shared `section_list` widget so it matches the library/Spotify sidebars.
+fn radio_sidebar(f: &mut Frame, inner: Rect, app: &AppState) {
+    if inner.height == 0 {
+        return;
+    }
+    app.register_click(inner, MouseTarget::Scroll(ScrollBox::Tree));
+    let rows: Vec<(&str, &str)> = RadioSection::ALL
+        .iter()
+        .map(|s| (s.icon(), s.label()))
+        .collect();
+    let selected = RadioSection::ALL
+        .iter()
+        .position(|&s| s == app.radio.section)
+        .unwrap_or(0);
+    // per-section click targets (click selects, double-click activates)
+    for i in 0..rows.len().min(inner.height as usize) {
+        app.register_click(
+            Rect::new(inner.x, inner.y + i as u16, inner.width, 1),
+            MouseTarget::RadioSectionRow(i),
+        );
+    }
+    components::section_list(f, inner, app, &rows, selected, app.focus == Focus::Sidebar);
 }
 
 /// The Radio view body (search box + filter chips + station list), drawn into the
@@ -68,13 +102,19 @@ fn radio_body(f: &mut Frame, inner: Rect, app: &AppState) {
     ])
     .areas(inner);
 
-    // --- search box (focused via Tab or '/') ---
+    // --- search box (focused via '/') ---
     let info = if !r.note.is_empty() {
         r.note.clone()
-    } else if r.fav_view {
-        format!("{} favorites", app.radio_view_list().len())
     } else {
-        format!("{} stations", app.radio_view_list().len())
+        let n = app.radio_view_list().len();
+        let noun = match r.section {
+            RadioSection::Favorites => "favorites",
+            RadioSection::Recent => "recent",
+            RadioSection::MostPlayed => "most played",
+            RadioSection::Playlists => "playlists",
+            _ => "stations",
+        };
+        format!("{n} {noun}")
     };
     let caret = r.query.chars().count();
     components::search_bar(
@@ -94,23 +134,17 @@ fn radio_body(f: &mut Frame, inner: Rect, app: &AppState) {
     );
     app.register_click(search, MouseTarget::RadioChip(0)); // click to focus search
 
-    // --- filter chips: Country · Genre · Sort · Favorites (clickable pills) ---
+    // --- filter chips: Country · Genre · Sort (clickable pills) ---
     let country = r
         .country
         .as_ref()
         .map(|(n, _)| n.clone())
         .unwrap_or_else(|| "All".into());
     let genre = r.tag.clone().unwrap_or_else(|| "Any".into());
-    let defs: [(u8, &str, String, bool); 4] = [
+    let defs: [(u8, &str, String, bool); 3] = [
         (1, "Country", country, r.country.is_some()),
         (2, "Genre", genre, r.tag.is_some()),
         (3, "Sort", r.sort.label().to_string(), false),
-        (
-            4,
-            "★ Favorites",
-            if r.fav_view { "on" } else { "off" }.to_string(),
-            r.fav_view,
-        ),
     ];
     let mut chips: Vec<Span> = vec![Span::raw(" ")];
     let mut cx = filters.x + 1; // leading space
@@ -234,10 +268,25 @@ fn radio_empty_state(f: &mut Frame, list: Rect, app: &AppState) {
     }
     let (line1, line2): (String, String) = if r.loading {
         ("Searching…".into(), String::new())
-    } else if r.fav_view {
+    } else if r.section == RadioSection::Favorites {
         (
             "No favorites yet".into(),
-            "Press s on a station to star it".into(),
+            "Press f on a station to star it".into(),
+        )
+    } else if r.section == RadioSection::Recent {
+        (
+            "No recent stations".into(),
+            "Stations you play show up here".into(),
+        )
+    } else if r.section == RadioSection::MostPlayed {
+        (
+            "No plays yet".into(),
+            "Your most-played stations show up here".into(),
+        )
+    } else if r.section == RadioSection::Playlists {
+        (
+            "No station playlists yet".into(),
+            "Named station collections are coming soon".into(),
         )
     } else if r.country.is_some() || r.tag.is_some() {
         let mut active = Vec::new();
