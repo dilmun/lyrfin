@@ -276,10 +276,6 @@ impl AppState {
         match self.radio.section {
             RadioSection::Countries => self.radio_open_picker(PickerKind::Country),
             RadioSection::Genres => self.radio_open_picker(PickerKind::Genre),
-            RadioSection::Search => {
-                self.radio.editing = true;
-                self.set_focus(Focus::Main);
-            }
             RadioSection::Popular => {
                 self.radio.sort = Sort::Popular;
                 self.refresh_radio();
@@ -600,8 +596,10 @@ impl AppState {
 
 /// The Radio view's sidebar sections — the radio analogue of [`LocalSection`].
 /// A flat list navigated in the sidebar: some are station lists (All Stations,
-/// Favorites, …), Countries/Genres drill into a filter picker, and Search focuses
-/// the query box. The active section drives [`AppState::radio_view_list`].
+/// Favorites, …); Countries/Genres drill into a filter picker. Searching is the
+/// always-present query box atop the main pane, not a section. The active section
+/// drives [`AppState::radio_view_list`]. Icons are monochrome glyphs (theme-tinted
+/// by `section_list`), matching the local library sidebar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum RadioSection {
     #[default]
@@ -614,12 +612,11 @@ pub enum RadioSection {
     Genres,
     Popular,
     Trending,
-    Search,
 }
 
 impl RadioSection {
     /// All sections in sidebar order.
-    pub const ALL: [RadioSection; 10] = [
+    pub const ALL: [RadioSection; 9] = [
         RadioSection::AllStations,
         RadioSection::Favorites,
         RadioSection::Playlists,
@@ -629,7 +626,6 @@ impl RadioSection {
         RadioSection::Genres,
         RadioSection::Popular,
         RadioSection::Trending,
-        RadioSection::Search,
     ];
     pub fn label(self) -> &'static str {
         match self {
@@ -642,21 +638,19 @@ impl RadioSection {
             RadioSection::Genres => "Genres",
             RadioSection::Popular => "Popular",
             RadioSection::Trending => "Trending",
-            RadioSection::Search => "Search",
         }
     }
     pub fn icon(self) -> &'static str {
         match self {
-            RadioSection::AllStations => "📻",
-            RadioSection::Favorites => "⭐",
-            RadioSection::Playlists => "📂",
-            RadioSection::Recent => "🕒",
-            RadioSection::MostPlayed => "📈",
-            RadioSection::Countries => "🌍",
-            RadioSection::Genres => "🎵",
-            RadioSection::Popular => "🔥",
-            RadioSection::Trending => "❤️",
-            RadioSection::Search => "🔍",
+            RadioSection::AllStations => "♫",
+            RadioSection::Favorites => "♥",
+            RadioSection::Playlists => "≡",
+            RadioSection::Recent => "↻",
+            RadioSection::MostPlayed => "▲",
+            RadioSection::Countries => "⊕",
+            RadioSection::Genres => "⊞",
+            RadioSection::Popular => "★",
+            RadioSection::Trending => "↗",
         }
     }
     /// Stable key for session persistence (independent of label/order).
@@ -671,7 +665,6 @@ impl RadioSection {
             RadioSection::Genres => "genres",
             RadioSection::Popular => "popular",
             RadioSection::Trending => "trending",
-            RadioSection::Search => "search",
         }
     }
     pub fn from_key(s: &str) -> Option<Self> {
@@ -684,7 +677,6 @@ impl RadioSection {
         matches!(
             self,
             RadioSection::AllStations
-                | RadioSection::Search
                 | RadioSection::Countries
                 | RadioSection::Genres
                 | RadioSection::Popular
