@@ -309,7 +309,10 @@ fn spotify_bitrate_row_cycles_and_persists() {
     assert!(a.cmd_set("spotify_quality 320").contains("320"));
     assert_eq!(a.config.spotify_bitrate, 320);
     let bad = a.cmd_set("spotify_quality 256");
-    assert!(bad.contains("96 | 160 | 320"), "invalid bitrate rejected");
+    assert!(
+        bad.contains("96 kbps") && bad.contains("320 kbps"),
+        "invalid bitrate rejected with the valid options: {bad}"
+    );
     assert_eq!(
         a.config.spotify_bitrate, 320,
         "rejected value left unchanged"

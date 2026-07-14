@@ -220,26 +220,96 @@ impl AppState {
         self.palette = None;
     }
 
+    /// Map a typed `set <name>` / `toggle <name>` param to the [`Setting`] it drives,
+    /// so the typed command path and the palette apply through one site. Non-setting
+    /// params (volume / speed / shuffle / pane widths / the panel toggles) are handled
+    /// inline by the callers, and `theme` has its own [`Self::cmd_theme`].
+    fn setting_for_param(name: &str) -> Option<Setting> {
+        use Setting::*;
+        Some(match name {
+            "fps" => Fps,
+            "crossfade" | "crossfade_ms" => Crossfade,
+            "icons" | "iconset" | "icon_set" => IconSet,
+            "replaygain" | "rg" => ReplayGain,
+            "spotify_quality" | "spotify_bitrate" | "sp_quality" => SpotifyBitrate,
+            "gapless" => Gapless,
+            "silence" | "silence_skip" => SilenceSkip,
+            "mouse" => Mouse,
+            "next" | "next_hint" => NextHint,
+            "album_art" | "art" => AlbumArt,
+            "reduced_motion" => ReducedMotion,
+            "peak_caps" => PeakCaps,
+            "karaoke" => LyricsKaraoke,
+            "dual" | "translation" | "translations" => LyricsDual,
+            "teleprompter" => LyricsTeleprompter,
+            "accent" | "dynamic_accent" => DynamicAccent,
+            "player_viz" | "playerviz" => PlayerViz,
+            _ => return None,
+        })
+    }
+
+    /// A short "Label: value" status toast for a setting's current state.
+    fn setting_status(&self, s: Setting) -> String {
+        let (label, val) = setting_label_value(self, &s);
+        match val {
+            SettingValue::Toggle(b) => format!("{label}: {}", onoff(b)),
+            SettingValue::Text(t) => format!("{label}: {t}"),
+        }
+    }
+
+    /// A usage hint listing a setting's valid values (for a rejected typed value).
+    fn setting_value_hint(&self, s: Setting, key: &str) -> String {
+        match self.setting_choices(s) {
+            SettingChoices::Discrete(cs) => {
+                let opts: Vec<&str> = cs.iter().map(|c| c.label.as_str()).collect();
+                format!("{key}: {}", opts.join(" | "))
+            }
+            SettingChoices::Bounded { min, max, .. } => format!("{key}: {min}–{max}"),
+            SettingChoices::Toggle => format!("{key}: on | off"),
+            SettingChoices::FreeText | SettingChoices::None => format!("{key}: ?"),
+        }
+    }
+
+    /// Parse `val` into the right value for `s` (reusing its [`Self::setting_choices`])
+    /// and apply it through the one [`Self::apply_setting_value`] site. Returns the
+    /// status toast, or `None` if `val` isn't a valid value for `s`.
+    fn apply_setting_from_str(&mut self, s: Setting, val: &str) -> Option<String> {
+        let value = match self.setting_choices(s) {
+            SettingChoices::Discrete(cs) => cs
+                .iter()
+                .find(|c| {
+                    c.label.eq_ignore_ascii_case(val)
+                        || match &c.value {
+                            ChoiceValue::Str(t) => t.eq_ignore_ascii_case(val),
+                            ChoiceValue::Int(n) => val.parse::<i64>().ok() == Some(*n),
+                            ChoiceValue::Bool(_) => false,
+                        }
+                })
+                .map(|c| c.value.clone())?,
+            SettingChoices::Bounded { min, max, .. } => {
+                ChoiceValue::Int(val.parse::<i64>().ok()?.clamp(min, max))
+            }
+            SettingChoices::Toggle => ChoiceValue::Bool(parse_onoff(val)?),
+            SettingChoices::FreeText | SettingChoices::None => return None,
+        };
+        self.apply_setting_value(s, &value);
+        Some(self.setting_status(s))
+    }
+
     pub(crate) fn cmd_theme(&mut self, name: &str) -> String {
         let name = name.trim();
         if name.is_empty() {
             return "Usage: theme <name>".into();
         }
-        const BUILTIN: [&str; 6] = [
-            "aurora",
-            "cyberpunk",
-            "glacier",
-            "monolith",
-            "highcontrast",
-            "high-contrast",
-        ];
-        let file = self.config.themes_dir().join(format!("{name}.toml"));
-        if !BUILTIN.contains(&name.to_lowercase().as_str()) && !file.exists() {
-            return format!("No theme '{name}' (try: aurora, cyberpunk, glacier, monolith)");
-        }
-        self.set_theme(name);
-        self.config.save();
-        format!("Theme: {}", self.theme.name)
+        // route through the one apply site; the valid set is `all_themes()` (via
+        // setting_choices), so there's no separate builtin list to drift.
+        self.apply_setting_from_str(Setting::Theme, name)
+            .unwrap_or_else(|| {
+                format!(
+                    "No theme '{name}' (try: {})",
+                    crate::ui::theme::BUILTIN_THEMES.join(", ")
+                )
+            })
     }
 
     pub(crate) fn cmd_set(&mut self, rest: &str) -> String {
@@ -248,7 +318,15 @@ impl AppState {
         };
         let key = key.to_lowercase().replace('-', "_");
         let val = val.trim();
+        // setting-backed params share the palette's one apply site
+        if let Some(s) = Self::setting_for_param(&key) {
+            return self
+                .apply_setting_from_str(s, val)
+                .unwrap_or_else(|| self.setting_value_hint(s, &key));
+        }
+        // non-setting params (transport + pane geometry) stay inline
         match key.as_str() {
+            "theme" => self.cmd_theme(val),
             "volume" | "vol" => match val.parse::<u8>() {
                 Ok(v) => {
                     self.update(Action::SetVolume(v.min(100)));
@@ -264,21 +342,6 @@ impl AppState {
                 }
                 Err(_) => "speed must be 0.5–2.0".into(),
             },
-            "fps" => match val.parse::<u8>() {
-                Ok(v) => {
-                    self.config.fps = v.clamp(10, 144);
-                    self.config.save();
-                    format!("FPS {}", self.config.fps)
-                }
-                Err(_) => "fps must be a number".into(),
-            },
-            "crossfade" | "crossfade_ms" => match val.parse::<u32>() {
-                Ok(v) => {
-                    self.set_crossfade(v);
-                    format!("Crossfade {} ms", self.config.crossfade_ms)
-                }
-                Err(_) => "crossfade must be milliseconds".into(),
-            },
             "sidebar" | "sidebar_width" => match val.parse::<u16>() {
                 Ok(v) => {
                     self.config.dash_sidebar_w = v.clamp(16, 50);
@@ -287,15 +350,6 @@ impl AppState {
                 }
                 Err(_) => "sidebar must be a number".into(),
             },
-            "icons" | "iconset" | "icon_set" => {
-                let v = val.trim().to_lowercase();
-                if crate::icons::Icons::PRESETS.contains(&v.as_str()) {
-                    self.set_icon_set(&v);
-                    format!("Icons: {v}")
-                } else {
-                    "icons: outline | triangles | skip | nerd".into()
-                }
-            }
             "artist_width" => match val.parse::<u16>() {
                 Ok(v) => {
                     self.config.dash_artist_w = v.clamp(20, 70);
@@ -304,76 +358,23 @@ impl AppState {
                 }
                 Err(_) => "artist_width must be a number".into(),
             },
-            "replaygain" | "rg" => {
-                let mode = match val.to_lowercase().as_str() {
-                    "off" | "none" | "0" => 0,
-                    "track" | "1" => 1,
-                    "album" | "2" => 2,
-                    _ => return "replaygain: off | track | album".into(),
-                };
-                self.config.replaygain = mode;
-                self.config.save();
-                self.refresh_replaygain();
-                format!("ReplayGain: {}", ["Off", "Track", "Album"][mode as usize])
-            }
-            "spotify_quality" | "spotify_bitrate" | "sp_quality" => {
-                match val.trim().trim_end_matches("kbps").trim().parse::<u16>() {
-                    Ok(b) if matches!(b, 96 | 160 | 320) => {
-                        self.config.spotify_bitrate = b;
-                        self.config.save();
-                        let live = self.spov.session_cmd.is_some();
-                        let note = if live { " (reconnect to apply)" } else { "" };
-                        format!("Spotify quality: {b} kbps{note}")
-                    }
-                    _ => "spotify_quality: 96 | 160 | 320".into(),
-                }
-            }
-            "theme" => self.cmd_theme(val),
             _ => format!("Unknown setting: {key}"),
         }
     }
 
     pub(crate) fn cmd_toggle(&mut self, key: &str) -> String {
         let key = key.trim().to_lowercase().replace('-', "_");
+        // setting-backed booleans flip through the one apply path (activate_setting)
+        if let Some(s) = Self::setting_for_param(&key) {
+            return if matches!(self.setting_choices(s), SettingChoices::Toggle) {
+                self.activate_setting(s);
+                self.setting_status(s)
+            } else {
+                format!("Can't toggle: {key}")
+            };
+        }
+        // non-setting toggles: player shuffle + the two panel-visibility toggles
         match key.as_str() {
-            "gapless" => {
-                self.config.gapless = !self.config.gapless;
-                self.config.save();
-                self.update_gapless_next();
-                format!("Gapless: {}", onoff(self.config.gapless))
-            }
-            "silence" | "silence_skip" => {
-                self.config.silence_skip = !self.config.silence_skip;
-                self.config.save();
-                self.apply_silence_skip();
-                format!("Silence-skip: {}", onoff(self.config.silence_skip))
-            }
-            "mouse" => {
-                self.config.mouse = !self.config.mouse;
-                self.config.save();
-                format!("Mouse: {}", onoff(self.config.mouse))
-            }
-            "next" | "next_hint" => {
-                self.config.next_hint = !self.config.next_hint;
-                self.config.save();
-                format!("Next hint: {}", onoff(self.config.next_hint))
-            }
-            "album_art" | "art" => {
-                self.config.album_art = !self.config.album_art;
-                self.config.save();
-                self.reload_cover();
-                format!("Album art: {}", onoff(self.config.album_art))
-            }
-            "reduced_motion" => {
-                self.config.reduced_motion = !self.config.reduced_motion;
-                self.config.save();
-                format!("Reduced motion: {}", onoff(self.config.reduced_motion))
-            }
-            "peak_caps" => {
-                self.config.peak_caps = !self.config.peak_caps;
-                self.config.save();
-                format!("Peak caps: {}", onoff(self.config.peak_caps))
-            }
             "shuffle" => {
                 self.player.toggle_shuffle();
                 format!("Shuffle: {}", onoff(self.player.shuffle))
@@ -381,32 +382,6 @@ impl AppState {
             "lyrics" => {
                 self.toggle_panel(Panel::Lyrics);
                 format!("Lyrics pane: {}", onoff(self.panel(Panel::Lyrics).shown))
-            }
-            "karaoke" => {
-                self.config.lyrics_karaoke = !self.config.lyrics_karaoke;
-                self.config.save();
-                format!("Karaoke: {}", onoff(self.config.lyrics_karaoke))
-            }
-            "dual" | "translation" | "translations" => {
-                self.config.lyrics_dual = !self.config.lyrics_dual;
-                self.config.save();
-                format!("Translations: {}", onoff(self.config.lyrics_dual))
-            }
-            "teleprompter" => {
-                self.config.lyrics_teleprompter = !self.config.lyrics_teleprompter;
-                self.config.save();
-                format!("Teleprompter: {}", onoff(self.config.lyrics_teleprompter))
-            }
-            "accent" | "dynamic_accent" => {
-                self.config.dynamic_accent = !self.config.dynamic_accent;
-                self.config.save();
-                self.reload_cover();
-                format!("Dynamic accent: {}", onoff(self.config.dynamic_accent))
-            }
-            "player_viz" | "playerviz" => {
-                self.config.player_viz = !self.config.player_viz;
-                self.config.save();
-                format!("Playback visualizer: {}", onoff(self.config.player_viz))
             }
             "artist_info" | "info" => {
                 let d = Layout::Dashboard.default_panel(Panel::Artist);
@@ -507,6 +482,16 @@ impl AppState {
             "" => "Type a command, e.g. `theme cyberpunk`".into(),
             other => format!("Unknown command: {other}"),
         }
+    }
+}
+
+/// Parse an on/off word for `set <toggle> <value>` (`on`/`off`, plus the usual
+/// aliases). `None` if it isn't a recognisable boolean.
+fn parse_onoff(s: &str) -> Option<bool> {
+    match s.trim().to_lowercase().as_str() {
+        "on" | "true" | "1" | "yes" => Some(true),
+        "off" | "false" | "0" | "no" => Some(false),
+        _ => None,
     }
 }
 
