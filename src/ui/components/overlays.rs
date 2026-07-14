@@ -499,7 +499,12 @@ pub fn command_palette(f: &mut Frame, area: Rect, app: &AppState) {
     let foot_hints: &[(&str, &str)] = if drill {
         &[("↑↓", "select"), ("⏎", "set"), ("esc", "back")]
     } else {
-        &[("↑↓", "select"), ("⏎", "open"), ("esc", "close")]
+        &[
+            ("↑↓", "select"),
+            ("⏎", "open"),
+            ("→", "in Settings"),
+            ("esc", "close"),
+        ]
     };
     footer_bar(f, foot, app, foot_hints);
     f.render_widget(

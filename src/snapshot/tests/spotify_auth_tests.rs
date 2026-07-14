@@ -305,18 +305,15 @@ fn spotify_bitrate_row_cycles_and_persists() {
     a.cycle_spotify_bitrate(-1);
     assert_eq!(a.config.spotify_bitrate, 96);
 
-    // the `set` command accepts the three valid steps and rejects others
-    assert!(a.cmd_set("spotify_quality 320").contains("320"));
+    // applying an exact value sets it, and the picker enumerates the three valid steps
+    a.apply_setting_value(Setting::SpotifyBitrate, &crate::app::ChoiceValue::Int(320));
     assert_eq!(a.config.spotify_bitrate, 320);
-    let bad = a.cmd_set("spotify_quality 256");
-    assert!(
-        bad.contains("96 kbps") && bad.contains("320 kbps"),
-        "invalid bitrate rejected with the valid options: {bad}"
-    );
-    assert_eq!(
-        a.config.spotify_bitrate, 320,
-        "rejected value left unchanged"
-    );
+    let crate::app::SettingChoices::Discrete(steps) = a.setting_choices(Setting::SpotifyBitrate)
+    else {
+        panic!("streaming quality is a discrete picker");
+    };
+    let labels: Vec<&str> = steps.iter().map(|c| c.label.as_str()).collect();
+    assert_eq!(labels, ["96 kbps", "160 kbps", "320 kbps"]);
 }
 
 #[test]

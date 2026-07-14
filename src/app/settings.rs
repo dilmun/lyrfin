@@ -351,9 +351,8 @@ impl AppState {
         self.settings.off.set(0);
     }
 
-    /// Open the Settings overlay directly at the named group tab (for tests / deep
-    /// links). Falls back to the first tab if the name is unknown.
-    #[allow(dead_code)]
+    /// Open the Settings overlay directly at the named group tab (the palette's `→`
+    /// reveal, and tests / deep links). Falls back to the first tab if unknown.
     pub fn open_settings_group(&mut self, group: &str) {
         self.settings.overlay = true;
         self.settings.group = Some(

@@ -3,23 +3,32 @@
 use super::*;
 
 #[test]
-fn palette_multiword_label_vs_command() {
+fn palette_multiword_label_and_setting_by_name() {
     use crate::action::Action;
+    use crate::app::Setting;
     let mut app = demo();
     let id = app.library.tracks.values().next().unwrap().id;
     app.player.current = Some(id);
-    // a multi-word ENTRY label opens its entry (not "Unknown command")
+    // a multi-word ENTRY label opens its entry
     app.update(Action::OpenPalette);
     app.update(Action::PaletteInput("Tag Edit".into()));
     app.update(Action::PaletteActivate);
     assert!(app.tags_open(), "'Tag Edit' opened the unified tag modal");
     assert!(app.palette.is_none());
     app.update(Action::Back); // close modal
-    // a real verb still runs as a command
+
+    // a setting is reached by typing its name (no command verb)
     app.update(Action::OpenPalette);
-    app.update(Action::PaletteInput("theme cyberpunk".into()));
-    app.update(Action::PaletteActivate);
-    assert_eq!(app.config.theme, "cyberpunk", "verb command still runs");
+    app.update(Action::PaletteInput("theme".into()));
+    let entries = app.palette_entries();
+    let m = app.palette_matches();
+    assert!(
+        m.iter().any(|&i| matches!(
+            entries[i].action,
+            Action::PaletteOpenSetting(Setting::Theme)
+        )),
+        "the Theme setting is reachable by name"
+    );
 }
 
 #[test]
