@@ -728,6 +728,33 @@ fn radio_view(app: &AppState, key: Key) -> Option<Action> {
     if app.layout != Layout::Radio {
         return None;
     }
+    // A playlist modal (name entry / add-to-playlist picker / delete confirm) is
+    // open — it captures every key so no browse command fires beneath it.
+    if app.radio.pl.modal_open() {
+        if app.radio.pl.naming.is_some() {
+            return Some(text_capture(
+                key,
+                &app.radio.pl.buffer,
+                Action::RadioNameInput,
+                Action::RadioModalConfirm,
+                Action::RadioModalCancel,
+            ));
+        }
+        if app.radio.pl.confirm_delete.is_some() {
+            return Some(match key.code {
+                KeyCode::Char('y') | KeyCode::Enter => Action::RadioModalConfirm,
+                _ => Action::RadioModalCancel,
+            });
+        }
+        // the add-to-playlist picker: j/k move, Enter adds (or opens New), Esc closes
+        return Some(match key.code {
+            KeyCode::Esc => Action::RadioModalCancel,
+            KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => Action::RadioModalConfirm,
+            KeyCode::Up | KeyCode::Char('k') => Action::Move(Motion::Up),
+            KeyCode::Down | KeyCode::Char('j') => Action::Move(Motion::Down),
+            _ => Action::Noop,
+        });
+    }
     // A country/genre picker is open. Like the station list, it defaults to
     // navigation (j/k/arrows move); '/' focuses its filter box for typing.
     if let Some(p) = &app.radio.picker {
@@ -786,12 +813,37 @@ fn radio_view(app: &AppState, key: Key) -> Option<Action> {
             _ => global_binding(app, key),
         });
     }
+    // Playlists section: the flat list (create/rename/delete, ⏎ drills in) vs a
+    // drilled-in playlist (its stations: d/x removes, a adds elsewhere, f stars).
+    if app.radio.section == crate::app::RadioSection::Playlists {
+        if app.radio.pl.open.is_none() {
+            return Some(match key.code {
+                KeyCode::Char('n') => Action::RadioNewPlaylist,
+                KeyCode::Char('d') => Action::RadioDeletePlaylist,
+                KeyCode::Char('r') | KeyCode::Char('e') => Action::RadioRenamePlaylist,
+                KeyCode::Char('l') | KeyCode::Right => Action::RadioActivate, // drill in
+                _ => global_binding(app, key),                                // j/k move, Tab, q…
+            });
+        }
+        match key.code {
+            KeyCode::Char('d') | KeyCode::Char('x') => {
+                return Some(Action::RadioRemoveFromPlaylist);
+            }
+            KeyCode::Char('a') => return Some(Action::RadioAddToPlaylist),
+            KeyCode::Char('f') => return Some(Action::RadioStar),
+            KeyCode::Char('n') => return Some(Action::RadioStation(1)),
+            KeyCode::Char('p') => return Some(Action::RadioStation(-1)),
+            _ => {}
+        }
+        return Some(global_binding(app, key));
+    }
     // Station list focused: source-specific keys (`n`/`p` change station, not the
-    // local queue; `f` stars the highlighted station).
+    // local queue; `f` stars, `a` adds the station to a playlist).
     match key.code {
         KeyCode::Char('c') => return Some(Action::RadioOpenCountry),
         KeyCode::Char('g') => return Some(Action::RadioOpenGenre),
         KeyCode::Char('f') => return Some(Action::RadioStar),
+        KeyCode::Char('a') => return Some(Action::RadioAddToPlaylist),
         KeyCode::Char('o') => return Some(Action::RadioCycleSort),
         KeyCode::Char('R') => return Some(Action::RadioRefresh), // re-download directory
         KeyCode::Char('n') => return Some(Action::RadioStation(1)), // next channel

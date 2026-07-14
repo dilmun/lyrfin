@@ -5,6 +5,83 @@
 use super::*;
 
 #[test]
+fn radio_playlists_create_add_drill_remove_delete_persist() {
+    use crate::action::Action;
+    use crate::app::{Focus, RadioSection};
+    use crate::radio::Station;
+    let st = |name: &str, uuid: &str| Station {
+        name: name.into(),
+        url: format!("http://x/{uuid}"),
+        uuid: uuid.into(),
+        ..Default::default()
+    };
+    let mut a = demo();
+    a.config.dir = std::env::temp_dir().join("lyrfin_radio_pl_test");
+    let _ = std::fs::remove_dir_all(&a.config.dir);
+    a.radio.playlists.clear();
+    a.layout = Layout::Radio;
+    a.focus = Focus::Main;
+    a.radio.section = RadioSection::Playlists;
+
+    // create a playlist "Jazz" through the name modal
+    a.update(Action::RadioNewPlaylist);
+    assert!(a.radio.pl.naming.is_some(), "name entry opened");
+    a.update(Action::RadioNameInput("Jazz".into()));
+    a.update(Action::RadioModalConfirm);
+    assert_eq!(a.radio.playlists.len(), 1);
+    assert_eq!(a.radio.playlists[0].name, "Jazz");
+    let jazz_id = a.radio.playlists[0].id;
+
+    // add a station to it via the add picker (first playlist row)
+    a.radio.section = RadioSection::AllStations;
+    a.radio.stations = vec![st("Cool Jazz", "cj")];
+    a.radio.sel = 0;
+    a.update(Action::RadioAddToPlaylist);
+    assert!(a.radio.pl.adding.is_some(), "add picker opened");
+    a.radio.pl.add_sel = 0;
+    a.update(Action::RadioModalConfirm);
+    assert!(a.radio.pl.adding.is_none(), "picker closed after add");
+    assert_eq!(a.radio.playlists[0].stations.len(), 1, "station added");
+    // dedup: adding the same station again is a no-op
+    a.update(Action::RadioAddToPlaylist);
+    a.radio.pl.add_sel = 0;
+    a.update(Action::RadioModalConfirm);
+    assert_eq!(
+        a.radio.playlists[0].stations.len(),
+        1,
+        "no duplicate members"
+    );
+
+    // persisted with its station
+    let loaded = crate::library::store::RadioPlaylists::load(&a.config.dir);
+    assert_eq!(loaded.len(), 1);
+    assert_eq!(loaded[0].stations.len(), 1);
+
+    // drill in → the playlist's stations show; remove the highlighted one
+    a.radio.section = RadioSection::Playlists;
+    a.radio.pl.sel = 0;
+    a.update(Action::RadioActivate);
+    assert_eq!(a.radio.pl.open, Some(jazz_id), "drilled into Jazz");
+    assert_eq!(a.radio_view_list().len(), 1);
+    a.radio.sel = 0;
+    a.update(Action::RadioRemoveFromPlaylist);
+    assert!(a.radio.playlists[0].stations.is_empty(), "station removed");
+
+    // back out, then delete the playlist (confirm)
+    a.radio.pl.open = None;
+    a.radio.pl.sel = 0;
+    a.update(Action::RadioDeletePlaylist);
+    assert_eq!(a.radio.pl.confirm_delete, Some(jazz_id));
+    a.update(Action::RadioModalConfirm);
+    assert!(a.radio.playlists.is_empty(), "playlist deleted");
+    assert!(
+        crate::library::store::RadioPlaylists::load(&a.config.dir).is_empty(),
+        "deletion persisted"
+    );
+    let _ = std::fs::remove_dir_all(&a.config.dir);
+}
+
+#[test]
 fn key_6_opens_radio_view() {
     use crate::event::{Key, KeyCode, Mods};
     let mut a = demo();

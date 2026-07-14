@@ -171,7 +171,8 @@ mod playback;
 mod playlists;
 pub use playlists::ModalInput;
 mod radio;
-pub use radio::{PickerKind, Radio, RadioSection};
+pub use radio::{PickerKind, Radio, RadioNameTarget, RadioSection};
+mod radio_playlists;
 mod selection;
 pub use selection::MultiSelect;
 mod session_restore;
@@ -238,17 +239,18 @@ pub enum MouseTarget {
     OpenSpotifyDashboard, // the "developer.spotify.com/dashboard" link in the guide
     OpenSpotifyAuthUrl, // the auth URL in the login panel (opens the full URL)
     Transport(TransportButton),
-    Seek,                   // the progress bar — fraction from the click x within the rect
-    Volume,                 // the volume bar — level from the click y within the rect
-    Tree(usize),            // a sidebar section row (selects + loads that LocalSection)
-    SettingRow(usize),      // a Settings row
-    RadioGoLive,            // the LIVE badge on the radio DVR bar: jump to the live edge
-    RadioRow(usize),        // a station row in the Radio view (click select, dbl play)
-    RadioSectionRow(usize), // a Radio sidebar section row (index into RadioSection::ALL)
-    RadioPick(usize),       // a country/genre row in the Radio picker
-    RadioChip(u8),          // a Radio filter chip: 0 search·1 country·2 genre·3 sort
-    PaletteRow(usize),      // a command-palette row (index into palette_matches; dbl-click runs)
-    SpotifySection(usize),  // a Spotify sidebar section row (index into Section::ALL)
+    Seek,                    // the progress bar — fraction from the click x within the rect
+    Volume,                  // the volume bar — level from the click y within the rect
+    Tree(usize),             // a sidebar section row (selects + loads that LocalSection)
+    SettingRow(usize),       // a Settings row
+    RadioGoLive,             // the LIVE badge on the radio DVR bar: jump to the live edge
+    RadioRow(usize),         // a station row in the Radio view (click select, dbl play)
+    RadioSectionRow(usize),  // a Radio sidebar section row (index into RadioSection::ALL)
+    RadioPlaylistRow(usize), // a row in the flat radio-playlist list (click select, dbl drill)
+    RadioPick(usize),        // a country/genre row in the Radio picker
+    RadioChip(u8),           // a Radio filter chip: 0 search·1 country·2 genre·3 sort
+    PaletteRow(usize),       // a command-palette row (index into palette_matches; dbl-click runs)
+    SpotifySection(usize),   // a Spotify sidebar section row (index into Section::ALL)
     /// A tab in a framed tabbed overlay (Info / global Settings) — switches that
     /// overlay's active tab. Registered per tab by `components::overlay_frame`.
     OverlayTab(usize),

@@ -212,6 +212,36 @@ impl RadioHistory {
     }
 }
 
+/// Persisted internet-radio playlists (`radio_playlists.json`): the user's named
+/// station collections, rewritten whenever one changes. Stations are stored inline
+/// (self-contained), so no path/id resolution is needed on load (unlike the local
+/// music `PlaylistStore`).
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct RadioPlaylists {
+    #[serde(default)]
+    pub playlists: Vec<crate::radio::Playlist>,
+}
+
+impl RadioPlaylists {
+    pub fn load(dir: &Path) -> Vec<crate::radio::Playlist> {
+        std::fs::read_to_string(dir.join("radio_playlists.json"))
+            .ok()
+            .and_then(|t| serde_json::from_str::<Self>(&t).ok())
+            .map(|s| s.playlists)
+            .unwrap_or_default()
+    }
+
+    pub fn save(playlists: &[crate::radio::Playlist], dir: &Path) {
+        let store = RadioPlaylists {
+            playlists: playlists.to_vec(),
+        };
+        if let Ok(json) = serde_json::to_string_pretty(&store) {
+            let _ = std::fs::create_dir_all(dir);
+            let _ = std::fs::write(dir.join("radio_playlists.json"), json);
+        }
+    }
+}
+
 /// Persisted listening history: unix timestamps of plays (`history.json`),
 /// oldest → newest. Drives the stats heatmap / streaks.
 #[derive(Debug, Default, Serialize, Deserialize)]

@@ -123,6 +123,15 @@ pub enum Action {
     RadioCycleSort,           // 'o' — cycle the result sort order
     RadioStation(i32),        // n/p — tune the next/previous station (change channel)
     RadioRefresh,             // R — force a re-download of the station directory
+    // ---- radio playlists (named station collections) ----
+    RadioNewPlaylist,        // 'n' — create a playlist (opens name entry)
+    RadioRenamePlaylist,     // 'r'/'e' — rename the highlighted playlist
+    RadioDeletePlaylist,     // 'd' — delete the highlighted playlist (confirm)
+    RadioAddToPlaylist,      // 'a' — add the highlighted station to a playlist (picker)
+    RadioRemoveFromPlaylist, // 'd'/'x' in an open playlist — drop the highlighted station
+    RadioNameInput(String),  // type into the playlist name-entry box
+    RadioModalConfirm,       // ⏎ — commit the open playlist modal (name/add/delete)
+    RadioModalCancel,        // esc — close the open playlist modal
     // ---- Spotify (librespot) ----
     OpenSpotify,            // switch to the Spotify view (resume cached session if any)
     SpotifyLogin,           // ⏎ on the auth panel — start the browser login flow

@@ -70,8 +70,14 @@ impl AppState {
             self.settings.sel = step(self.settings.sel, m, n);
             return;
         }
+        // The radio "add to playlist" picker captures movement (+1 = New playlist row).
+        if self.radio.pl.adding.is_some() {
+            let n = self.radio.playlists.len() + 1;
+            self.radio.pl.add_sel = step(self.radio.pl.add_sel, m, n);
+            return;
+        }
         // In the Radio view, movement walks the open picker, the section sidebar
-        // (when it has focus), else the station list.
+        // (when it has focus), the flat playlist list, else the station list.
         if self.layout == Layout::Radio {
             if self.radio.picker.is_some() {
                 let n = self.radio_picker_match_count();
@@ -82,7 +88,13 @@ impl AppState {
                 if let Some(s) = step_ring(&crate::app::RadioSection::ALL, self.radio.section, m) {
                     self.radio.section = s;
                     self.radio.sel = 0;
+                    self.radio.pl.open = None; // leaving the section drops any drill
                 }
+            } else if self.radio.section == crate::app::RadioSection::Playlists
+                && self.radio.pl.open.is_none()
+            {
+                let n = self.radio.playlists.len();
+                self.radio.pl.sel = step(self.radio.pl.sel, m, n);
             } else {
                 let n = self.radio_view_list().len();
                 self.radio.sel = step(self.radio.sel, m, n);

@@ -226,9 +226,18 @@ impl AppState {
                 if let Some(&sec) = crate::app::RadioSection::ALL.get(i) {
                     self.radio.section = sec;
                     self.radio.sel = 0;
+                    self.radio.pl.open = None; // leaving the section drops any drill
                     if double {
                         self.radio_activate_section();
                     }
+                }
+            }
+            MouseTarget::RadioPlaylistRow(i) => {
+                // a row in the flat playlist list: select it; double-click drills in
+                self.focus = Focus::Main;
+                self.radio.pl.sel = i;
+                if double {
+                    self.radio_playlist_open();
                 }
             }
             MouseTarget::RadioChip(c) => match c {
@@ -399,8 +408,9 @@ impl AppState {
             }
             MouseTarget::RadioRow(_)
             | MouseTarget::RadioPick(_)
+            | MouseTarget::RadioPlaylistRow(_)
             | MouseTarget::Scroll(ScrollBox::Radio) => {
-                // move_selection routes to the open picker or the station list
+                // move_selection routes to the open picker / flat playlist / station list
                 self.move_selection(m);
             }
             MouseTarget::SpotifyQueueRow(_) | MouseTarget::Scroll(ScrollBox::SpotifyQueue) => {

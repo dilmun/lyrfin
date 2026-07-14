@@ -90,6 +90,17 @@ pub struct HistoryEntry {
     pub last_played: u64,
 }
 
+/// A user-created named collection of stations (distinct from the single starred
+/// Favorites list). A station may belong to several playlists; stations are stored
+/// inline (self-contained value objects). Persisted to `radio_playlists.json`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Playlist {
+    pub id: u32,
+    pub name: String,
+    #[serde(default)]
+    pub stations: Vec<Station>,
+}
+
 /// Result ordering for a station search.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Sort {

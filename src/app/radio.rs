@@ -119,9 +119,17 @@ impl AppState {
             RadioSection::Favorites => &self.radio.favorites,
             RadioSection::Recent => &self.radio.recent,
             RadioSection::MostPlayed => &self.radio.most_played,
-            // Playlists are wired in a later phase — empty for now, so the section
-            // renders its own "coming soon" empty state.
-            RadioSection::Playlists => &[],
+            // Drilled into a playlist → its stations; on the flat playlist list the
+            // main pane renders the names itself (not a station table), so → empty.
+            RadioSection::Playlists => match self.radio.pl.open {
+                Some(id) => self
+                    .radio
+                    .playlists
+                    .iter()
+                    .find(|p| p.id == id)
+                    .map_or(&[][..], |p| &p.stations),
+                None => &[],
+            },
             // Everything else views the shared search-results set (see `shows_results`).
             _ => &self.radio.stations,
         }
@@ -259,8 +267,17 @@ impl AppState {
             self.radio_apply_picker();
             return;
         }
+        if self.radio.pl.modal_open() {
+            self.radio_modal_confirm();
+            return;
+        }
         if self.focus == Focus::Sidebar {
             self.radio_activate_section();
+            return;
+        }
+        // Playlists section, flat list: Enter drills into the highlighted playlist.
+        if self.radio.section == RadioSection::Playlists && self.radio.pl.open.is_none() {
+            self.radio_playlist_open();
             return;
         }
         let pick = self.radio_view_list().get(self.radio.sel).cloned();
@@ -300,8 +317,12 @@ impl AppState {
     pub(crate) fn radio_cancel(&mut self) {
         if self.radio.picker.is_some() {
             self.radio.picker = None;
+        } else if self.radio.pl.modal_open() {
+            self.radio_modal_cancel();
         } else if self.radio.editing {
             self.radio.editing = false;
+        } else if self.radio.section == RadioSection::Playlists && self.radio.pl.open.is_some() {
+            self.radio_playlist_back();
         } else if self.radio.section != RadioSection::AllStations {
             self.radio.section = RadioSection::AllStations;
             self.radio.sel = 0;
@@ -760,6 +781,11 @@ pub struct Radio {
     pub recent: Vec<crate::radio::Station>,
     /// Derived: stations by descending play count (the Most Played section).
     pub most_played: Vec<crate::radio::Station>,
+    /// User-created named station collections (persisted to `radio_playlists.json`).
+    pub playlists: Vec<crate::radio::Playlist>,
+    /// Playlists-section drill + modal state (which list is open, name entry, the
+    /// add-to-playlist picker, delete confirm).
+    pub pl: RadioPlaylistUi,
     /// Open country/genre picker, if any.
     pub picker: Option<RadioPicker>,
     /// Cached picker source lists (fetched once, reused on reopen).
@@ -782,6 +808,46 @@ pub struct Radio {
     pub directory_loading: bool,
     /// Bytes downloaded so far for the in-progress directory fetch (0 = none).
     pub directory_progress: u64,
+}
+
+/// What a radio playlist name-entry is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RadioNameTarget {
+    /// Create a new playlist.
+    New,
+    /// Rename the playlist with this id.
+    Rename(u32),
+}
+
+/// Playlists-section UI: the drill-in cursor plus the transient modal states (name
+/// entry, the "add station to a playlist" picker, and the delete confirm). All
+/// `None`/empty means the flat playlist list is showing.
+#[derive(Default)]
+pub struct RadioPlaylistUi {
+    /// The playlist drilled into (its stations show in the main pane); `None` = the
+    /// flat list of playlists is showing.
+    pub open: Option<u32>,
+    /// Cursor within the flat playlist list.
+    pub sel: usize,
+    /// Sticky scroll offset of the flat playlist list (set during render).
+    pub list_off: std::cell::Cell<usize>,
+    /// Active name-entry (create / rename) + its live buffer; `None` = not naming.
+    pub naming: Option<RadioNameTarget>,
+    pub buffer: String,
+    /// A station being added to a playlist: the "pick a playlist" overlay is open.
+    pub adding: Option<crate::radio::Station>,
+    /// Cursor in the add-to-playlist picker (an extra trailing row = "New playlist").
+    pub add_sel: usize,
+    /// A playlist id pending the two-step delete confirm.
+    pub confirm_delete: Option<u32>,
+}
+
+impl RadioPlaylistUi {
+    /// Whether any radio-playlist modal (name entry, add picker, delete confirm) is
+    /// open — used to gate global keys and route input to the modal.
+    pub fn modal_open(&self) -> bool {
+        self.naming.is_some() || self.adding.is_some() || self.confirm_delete.is_some()
+    }
 }
 
 impl Radio {
