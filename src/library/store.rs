@@ -180,6 +180,38 @@ impl RadioFavorites {
     }
 }
 
+/// Persisted internet-radio listening history (`radio_history.json`): every station
+/// tuned in, with its play count + last-played time. Rewritten on each tune-in and
+/// bounded to [`RadioHistory::CAP`] entries; drives the Recent + Most Played sections.
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct RadioHistory {
+    #[serde(default)]
+    pub entries: Vec<crate::radio::HistoryEntry>,
+}
+
+impl RadioHistory {
+    /// Keep at most this many stations in the history (newest-played retained).
+    pub const CAP: usize = 200;
+
+    pub fn load(dir: &Path) -> Vec<crate::radio::HistoryEntry> {
+        std::fs::read_to_string(dir.join("radio_history.json"))
+            .ok()
+            .and_then(|t| serde_json::from_str::<Self>(&t).ok())
+            .map(|s| s.entries)
+            .unwrap_or_default()
+    }
+
+    pub fn save(entries: &[crate::radio::HistoryEntry], dir: &Path) {
+        let store = RadioHistory {
+            entries: entries.to_vec(),
+        };
+        if let Ok(json) = serde_json::to_string_pretty(&store) {
+            let _ = std::fs::create_dir_all(dir);
+            let _ = std::fs::write(dir.join("radio_history.json"), json);
+        }
+    }
+}
+
 /// Persisted listening history: unix timestamps of plays (`history.json`),
 /// oldest → newest. Drives the stats heatmap / streaks.
 #[derive(Debug, Default, Serialize, Deserialize)]

@@ -175,6 +175,60 @@ fn radio_favorites_star_persists_and_toggles() {
 }
 
 #[test]
+fn radio_history_records_recent_and_most_played() {
+    use crate::app::RadioSection;
+    use crate::radio::Station;
+    let st = |name: &str, uuid: &str| Station {
+        name: name.into(),
+        url: format!("http://x/{uuid}"),
+        uuid: uuid.into(),
+        ..Default::default()
+    };
+    let mut a = demo();
+    a.config.dir = std::env::temp_dir().join("lyrfin_radio_hist_test");
+    let _ = std::fs::remove_dir_all(&a.config.dir);
+    // start clean: demo() loads the shared test dir's history at construction
+    a.radio.history.clear();
+    a.radio.recent.clear();
+    a.radio.most_played.clear();
+    a.layout = Layout::Radio;
+
+    // tune A, then B, then A again → A played twice (most-played), and A's last
+    // play is the newest, so both lists lead with A.
+    a.play_station(st("Alpha FM", "a"));
+    a.play_station(st("Beta FM", "b"));
+    a.play_station(st("Alpha FM", "a"));
+    assert_eq!(a.radio.history.len(), 2, "two distinct stations tracked");
+
+    a.radio.section = RadioSection::MostPlayed;
+    let mp: Vec<&str> = a
+        .radio_view_list()
+        .iter()
+        .map(|s| s.name.as_str())
+        .collect();
+    assert_eq!(mp, vec!["Alpha FM", "Beta FM"], "ranked by play count");
+
+    a.radio.section = RadioSection::Recent;
+    let rc: Vec<&str> = a
+        .radio_view_list()
+        .iter()
+        .map(|s| s.name.as_str())
+        .collect();
+    assert_eq!(rc, vec!["Alpha FM", "Beta FM"], "newest-played first");
+
+    // persisted to radio_history.json (survives a reload)
+    let loaded = crate::library::store::RadioHistory::load(&a.config.dir);
+    assert_eq!(loaded.len(), 2, "history written to disk");
+    assert!(
+        loaded
+            .iter()
+            .any(|e| e.station.name == "Alpha FM" && e.play_count == 2),
+        "Alpha FM's two plays persisted"
+    );
+    let _ = std::fs::remove_dir_all(&a.config.dir);
+}
+
+#[test]
 fn radio_picker_filters_and_applies_country() {
     use crate::action::Action;
     use crate::radio::Country;

@@ -13,6 +13,7 @@ impl AppState {
         let bookmarks = crate::library::store::BookmarkStore::load(&config.dir).bookmarks;
         let play_history = crate::library::store::HistoryStore::load(&config.dir);
         let radio_favorites = crate::library::store::RadioFavorites::load(&config.dir);
+        let radio_history = crate::library::store::RadioHistory::load(&config.dir);
         let spotify_tokens = crate::spotify::Tokens::load(&config.dir);
         let eq_presets = config.load_eq_presets(); // custom EQ presets (before `config` moves)
         let sort = parse_sort(&config.sort_order);
@@ -56,6 +57,8 @@ impl AppState {
             radio: {
                 let mut r = Radio::default();
                 r.favorites = radio_favorites;
+                r.history = radio_history;
+                r.rebuild_history_views(); // derive Recent / Most Played on launch
                 r
             },
             rnow: radio::RadioNow {

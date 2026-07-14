@@ -78,6 +78,18 @@ impl Station {
     }
 }
 
+/// One entry in the radio listening history: a station, how many times it was
+/// tuned in, and when it was last played (unix seconds). Persisted to
+/// `radio_history.json`; drives the Recent + Most Played sidebar sections.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoryEntry {
+    pub station: Station,
+    #[serde(default)]
+    pub play_count: u32,
+    #[serde(default)]
+    pub last_played: u64,
+}
+
 /// Result ordering for a station search.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Sort {

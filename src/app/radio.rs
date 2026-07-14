@@ -117,9 +117,11 @@ impl AppState {
     pub fn radio_view_list(&self) -> &[crate::radio::Station] {
         match self.radio.section {
             RadioSection::Favorites => &self.radio.favorites,
-            // History/playlist lists are wired in a later phase — empty for now, so
-            // the section renders its own "coming soon" empty state.
-            RadioSection::Recent | RadioSection::MostPlayed | RadioSection::Playlists => &[],
+            RadioSection::Recent => &self.radio.recent,
+            RadioSection::MostPlayed => &self.radio.most_played,
+            // Playlists are wired in a later phase — empty for now, so the section
+            // renders its own "coming soon" empty state.
+            RadioSection::Playlists => &[],
             // Everything else views the shared search-results set (see `shows_results`).
             _ => &self.radio.stations,
         }
@@ -441,6 +443,7 @@ impl AppState {
 
     pub(crate) fn play_station(&mut self, st: crate::radio::Station) {
         let (url, name) = (st.url.clone(), st.name.clone());
+        self.record_station_play(&st); // history: bump count + last-played, persist
         self.rnow.now_station = Some(st);
         self.rnow.now_station_title = None; // ICY title arrives once the stream is up
         self.rnow.radio_paused = false;
@@ -459,6 +462,41 @@ impl AppState {
         self.engine.send(AudioCommand::LoadStream { url, dvr });
         self.engine.send(AudioCommand::Play);
         self.notify(format!("Tuning in: {name}"));
+    }
+
+    /// Record a tune-in: bump the station's play count + last-played in the history
+    /// (move-to-front, deduped by [`station_key`]), rebuild the Recent / Most Played
+    /// views, and persist to `radio_history.json`. Called from every play path so
+    /// n/p channel-hopping and Enter both count.
+    pub(crate) fn record_station_play(&mut self, st: &crate::radio::Station) {
+        let now = crate::datetime::now_unix();
+        let key = station_key(st).to_string();
+        if let Some(e) = self
+            .radio
+            .history
+            .iter_mut()
+            .find(|e| station_key(&e.station) == key)
+        {
+            e.play_count = e.play_count.saturating_add(1);
+            e.last_played = now;
+            e.station = st.clone(); // refresh metadata (name/bitrate may have changed)
+        } else {
+            self.radio.history.push(crate::radio::HistoryEntry {
+                station: st.clone(),
+                play_count: 1,
+                last_played: now,
+            });
+        }
+        // bound: keep the most-recently-played CAP entries
+        let cap = crate::library::store::RadioHistory::CAP;
+        if self.radio.history.len() > cap {
+            self.radio
+                .history
+                .sort_by_key(|e| std::cmp::Reverse(e.last_played));
+            self.radio.history.truncate(cap);
+        }
+        self.radio.rebuild_history_views();
+        crate::library::store::RadioHistory::save(&self.radio.history, &self.config.dir);
     }
 
     /// Apply a radio worker result (search results, picker lists, errors),
@@ -714,6 +752,14 @@ pub struct Radio {
     pub sort: crate::radio::Sort,
     /// Starred stations (persisted to `radio_favorites.json`).
     pub favorites: Vec<crate::radio::Station>,
+    /// Listening history (persisted to `radio_history.json`) — the source of truth
+    /// for the Recent + Most Played sections; `recent`/`most_played` are derived
+    /// station lists rebuilt from it (see [`Radio::rebuild_history_views`]).
+    pub history: Vec<crate::radio::HistoryEntry>,
+    /// Derived: stations newest-played first (the Recent section).
+    pub recent: Vec<crate::radio::Station>,
+    /// Derived: stations by descending play count (the Most Played section).
+    pub most_played: Vec<crate::radio::Station>,
     /// Open country/genre picker, if any.
     pub picker: Option<RadioPicker>,
     /// Cached picker source lists (fetched once, reused on reopen).
@@ -736,6 +782,27 @@ pub struct Radio {
     pub directory_loading: bool,
     /// Bytes downloaded so far for the in-progress directory fetch (0 = none).
     pub directory_progress: u64,
+}
+
+impl Radio {
+    /// Rebuild the derived `recent` (newest-played first) and `most_played` (by
+    /// descending play count) station lists from `history`. Cheap — the history is
+    /// bounded — so it runs on load and after every tune-in rather than per frame.
+    pub fn rebuild_history_views(&mut self) {
+        let mut recent: Vec<&crate::radio::HistoryEntry> = self.history.iter().collect();
+        recent.sort_by_key(|e| std::cmp::Reverse(e.last_played));
+        self.recent = recent.into_iter().map(|e| e.station.clone()).collect();
+
+        let mut most: Vec<&crate::radio::HistoryEntry> =
+            self.history.iter().filter(|e| e.play_count > 0).collect();
+        most.sort_by_key(|e| {
+            (
+                std::cmp::Reverse(e.play_count),
+                std::cmp::Reverse(e.last_played),
+            )
+        });
+        self.most_played = most.into_iter().map(|e| e.station.clone()).collect();
+    }
 }
 
 /// A modal filter picker overlaying the Radio view (country or genre): a list
