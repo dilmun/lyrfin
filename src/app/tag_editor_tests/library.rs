@@ -314,63 +314,54 @@ fn sort_command_orders_and_persists_default() {
 }
 
 #[test]
-fn command_line_runs_typed_commands() {
+fn palette_finds_setting_by_name_and_drills_to_apply() {
     let mut a = app();
-    a.config.dir = std::env::temp_dir().join("lyrfin_cmd_test");
+    a.config.dir = std::env::temp_dir().join("lyrfin_palette_byname");
+    let _ = std::fs::remove_dir_all(&a.config.dir);
 
-    assert!(a.run_command("theme cyberpunk").contains("cyberpunk"));
-    assert_eq!(a.theme.name, "cyberpunk");
-
-    a.run_command("set volume 42");
-    assert_eq!(a.player.volume, 42);
-
-    let g0 = a.config.gapless;
-    a.run_command("toggle gapless");
-    assert_eq!(a.config.gapless, !g0);
-
-    assert!(a.run_command("replaygain album").contains("Album"));
-    assert_eq!(a.config.replaygain, 2);
-
-    a.run_command("sleep 20");
-    assert!(a.sleep_remaining_secs().is_some());
-
-    a.run_command("repeat one");
-    assert_eq!(a.player.repeat, Repeat::One);
-
-    // errors are reported as messages, never panics
+    // you just type the NAME (no `set`/`toggle` verb) and the setting is the top match
+    a.update(Action::OpenPalette);
+    a.update(Action::PaletteInput("crossfade".into()));
+    let entries = a.palette_entries();
+    let m = a.palette_matches();
+    assert!(!m.is_empty(), "'crossfade' matches something");
     assert!(
-        a.run_command("bogus xyz")
-            .to_lowercase()
-            .contains("unknown")
-    );
-    assert!(a.run_command("set volume abc").contains("0"));
-    assert!(
-        a.run_command("theme nope")
-            .to_lowercase()
-            .contains("no theme")
+        matches!(
+            entries[m[0]].action,
+            Action::PaletteOpenSetting(Setting::Crossfade)
+        ),
+        "the Crossfade setting is the top match"
     );
 
-    let _ = std::fs::remove_dir_all(std::env::temp_dir().join("lyrfin_cmd_test"));
+    // Enter opens its value picker; pick a value → applied + persisted + closed
+    a.update(Action::PaletteActivate);
+    assert!(matches!(
+        a.palette.as_ref().unwrap().ctx,
+        PaletteCtx::Setting(Setting::Crossfade)
+    ));
+    a.update(Action::PaletteInput("4 s".into()));
+    a.update(Action::PaletteActivate);
+    assert!(a.palette.is_none());
+    assert_eq!(a.config.crossfade_ms, 4000);
+
+    let _ = std::fs::remove_dir_all(&a.config.dir);
 }
 
 #[test]
-fn palette_runs_command_and_prefills_templates() {
+fn palette_arrow_reveals_setting_in_settings_overlay() {
     let mut a = app();
-    a.config.dir = std::env::temp_dir().join("lyrfin_cmd_test2");
-
-    // a typed "verb arg" line runs as a command and closes the palette
     a.update(Action::OpenPalette);
-    a.update(Action::PaletteInput("theme glacier".into()));
-    a.update(Action::PaletteActivate);
-    assert!(a.palette.is_none());
-    assert_eq!(a.theme.name, "glacier");
+    a.update(Action::PaletteInput("crossfade".into()));
 
-    // a template entry pre-fills the query and keeps the palette open
-    a.update(Action::OpenPalette);
-    a.update(Action::PalettePrefill("set ".into()));
-    assert_eq!(a.palette.as_ref().unwrap().query, "set ");
-
-    let _ = std::fs::remove_dir_all(std::env::temp_dir().join("lyrfin_cmd_test2"));
+    // → reveals the highlighted setting in the full Settings overlay, focused on it
+    a.update(Action::PaletteReveal);
+    assert!(a.palette.is_none(), "palette closed");
+    assert!(a.settings.overlay, "the Settings overlay opened");
+    assert_eq!(
+        a.settings_item(),
+        Some(Setting::Crossfade),
+        "focused on the Crossfade row (in its Audio group)"
+    );
 }
 
 #[test]

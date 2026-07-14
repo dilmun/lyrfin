@@ -14,7 +14,7 @@ on the focused pane or the active view (noted below where relevant).
 |-----|--------|
 | <kbd>q</kbd> / <kbd>Ctrl</kbd>+<kbd>C</kbd> | Quit |
 | <kbd>?</kbd> | Toggle the help / info overlay |
-| <kbd>:</kbd> | Command palette — fuzzy-find any action or setting, then pick its value from a list |
+| <kbd>:</kbd> | Command palette — type a name to find any action or setting; <kbd>⏎</kbd> runs / opens its value list, <kbd>→</kbd> reveals a setting in the Settings overlay |
 | <kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd> | Focus next / previous pane |
 | <kbd>Esc</kbd> | Back / up one level / close overlay |
 | <kbd>Ctrl</kbd>+<kbd>O</kbd> | Back (up one level) |

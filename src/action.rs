@@ -257,9 +257,9 @@ pub enum Action {
     PaletteInput(String),
     PaletteMove(Motion),
     PaletteActivate,
-    PalettePrefill(String), // replace the palette query (command template), stay open
     PaletteOpenSetting(Setting), // drill into a setting's value picker (or run it if value-less)
-    RunCommand(String),     // execute a typed `verb args` command line
+    PaletteReveal,               // → reveal the highlighted setting in the Settings overlay
+    RunCommand(String),          // run a RunCommand row's payload (the tracklist `sort:` spec)
 }
 
 impl Action {

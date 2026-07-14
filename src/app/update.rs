@@ -345,12 +345,7 @@ impl AppState {
             }
             PaletteActivate => self.palette_activate(),
             PaletteOpenSetting(s) => self.palette_open_setting(s),
-            PalettePrefill(s) => {
-                if let Some(p) = &mut self.palette {
-                    p.query = s;
-                    p.sel = 0;
-                }
-            }
+            PaletteReveal => self.palette_reveal_selected(),
             RunCommand(s) => {
                 let msg = self.run_command(&s);
                 self.notify(msg);

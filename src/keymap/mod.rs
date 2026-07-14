@@ -289,6 +289,8 @@ fn palette(app: &AppState, key: Key) -> Option<Action> {
         KeyCode::Enter => Action::PaletteActivate,
         KeyCode::Up | KeyCode::BackTab => Action::PaletteMove(Motion::Up),
         KeyCode::Down | KeyCode::Tab => Action::PaletteMove(Motion::Down),
+        // → reveals the highlighted setting in the full Settings overlay
+        KeyCode::Right => Action::PaletteReveal,
         // ctrl-j / ctrl-k navigate without leaving the home row
         KeyCode::Char('k') if key.mods.ctrl => Action::PaletteMove(Motion::Up),
         KeyCode::Char('j') if key.mods.ctrl => Action::PaletteMove(Motion::Down),

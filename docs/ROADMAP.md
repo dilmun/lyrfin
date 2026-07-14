@@ -24,11 +24,6 @@ detection instead of fingerprinting.
 
 The active list. Ordered by priority.
 
-- [ ] **Collapse the typed-command duplication.** The `:` palette is now a guided
-  picker over the one `Setting` vocabulary (`setting_choices` / `apply_setting_value`),
-  but the legacy typed fast-path (`run_command` → `cmd_theme` / `cmd_set` / `cmd_toggle`)
-  still re-implements setting application. Route the setting verbs through
-  `apply_setting_value` (or retire them) so the apply logic lives in one place.
 - [ ] **Terminal compatibility.** Developed and tested only on
   [**Ghostty**](https://ghostty.org). Verify and tune rendering — truecolor,
   inline-image protocols (Kitty/sixel/iTerm2), Unicode / RTL shaping, mouse — on
