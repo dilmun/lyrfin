@@ -12,7 +12,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
-use super::{col, trunc};
+use super::{clip, col};
 use crate::app::{AppState, Layout as AppLayout};
 
 pub fn status_bar(f: &mut Frame, area: Rect, app: &AppState) {
@@ -36,7 +36,11 @@ pub fn status_bar(f: &mut Frame, area: Rect, app: &AppState) {
         .flatten()
         .map(|t| compact_title(&t).to_string());
     let next_w = match &next {
-        Some(t) if area.width >= 90 => (t.chars().count().min(22) as u16) + 12,
+        // budget by DISPLAY width, not char count — a CJK title is 2 cols/char, so
+        // char count under-sizes the slot and the title gets clipped ("不染" → "不").
+        Some(t) if area.width >= 90 => {
+            (unicode_width::UnicodeWidthStr::width(t.as_str()).min(22) as u16) + 12
+        }
         _ => 0,
     };
     // fixed-width view slot so switching views never reflows the bar
@@ -81,7 +85,8 @@ pub fn status_bar(f: &mut Frame, area: Rect, app: &AppState) {
     if let Some(t) = &next
         && next_w > 0
     {
-        let title = trunc(t, next_w.saturating_sub(11) as usize);
+        // width-aware clip (CJK-safe) so the title fills the slot without overrunning
+        let title = clip(t, next_w.saturating_sub(11) as usize);
         f.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled("   ▶ Next: ", Style::default().fg(col(th.meta_text()))),

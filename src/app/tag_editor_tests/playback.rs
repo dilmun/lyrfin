@@ -455,3 +455,47 @@ fn playback_speed_scales_the_progress_clock() {
         "2x advances the clock faster: {at_2x:?} vs {at_1x:?}"
     );
 }
+
+#[test]
+fn local_shuffle_repeat_toggle_shows_a_status_toast() {
+    // Regression: only Spotify used to toast on shuffle/repeat; local was silent, so
+    // the feedback differed between views. Now the shared active-source helpers toast
+    // everywhere.
+    let mut a = app();
+    a.layout = Layout::Dashboard; // a local view
+    a.cycle_repeat_active();
+    assert!(
+        a.notification
+            .as_ref()
+            .is_some_and(|n| n.text.contains("Repeat")),
+        "cycling repeat toasts the mode in local too"
+    );
+    a.toggle_shuffle_active();
+    assert!(
+        a.notification
+            .as_ref()
+            .is_some_and(|n| n.text.contains("Shuffle")),
+        "toggling shuffle toasts in local too"
+    );
+}
+
+#[test]
+fn next_hint_follows_the_view_not_play_state() {
+    // Regression: the "Next:" hint used to fall back to the LOCAL queue whenever
+    // Spotify was paused, disagreeing with the (view-driven) now-playing bar. It now
+    // follows the view, exactly like `now_bar`.
+    let mut a = app();
+
+    // a local view → the local queue's next, regardless of any Spotify state
+    a.layout = Layout::Dashboard;
+    a.spov.spotify_paused = true;
+    assert_eq!(a.status_next_title(), a.next_queue_title());
+
+    // the Spotify view → Spotify's up-next, even when paused (the reported bug)
+    a.layout = Layout::Spotify;
+    assert_eq!(a.status_next_title(), a.spotify_next_title());
+
+    // radio → no queue
+    a.layout = Layout::Radio;
+    assert_eq!(a.status_next_title(), None);
+}

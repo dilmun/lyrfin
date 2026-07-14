@@ -1359,10 +1359,12 @@ fn spotify_separated_stalls_keep_retrying() {
     assert_eq!(a.spov.sp_idx, 0, "a track making progress is never skipped");
 }
 
-/// The status-bar "▶ Next:" hint follows the active source (like the QUEUE pane),
-/// mirroring `spotify_advance`'s repeat rules — not the local queue alone.
+/// The status-bar "▶ Next:" hint follows the *view*, exactly like the now-playing
+/// bar (`now_bar` dispatches on `layout`), mirroring `spotify_advance`'s repeat
+/// rules — and it does so whether Spotify is playing or paused.
 #[test]
-fn status_next_hint_follows_the_active_source() {
+fn status_next_hint_follows_the_view() {
+    use crate::app::Layout;
     use crate::core::player::Repeat;
     use crate::spotify::api::{Item, Kind};
     let mk = |n: &str| Item {
@@ -1375,16 +1377,20 @@ fn status_next_hint_follows_the_active_source() {
     let mut a = demo();
     a.spov.sp_queue = vec![mk("A"), mk("B"), mk("C")];
     a.spov.now_spotify = Some(a.spov.sp_queue[0].clone());
-    a.spov.spotify_paused = false; // Spotify is the active source
 
-    // Spotify active → the hint reads the Spotify up-next, not the local queue.
+    // In the Spotify view the hint reads the Spotify up-next — regardless of pause
+    // (the reported bug: pausing must NOT fall back to the local queue).
+    a.layout = Layout::Spotify;
     a.spov.sp_idx = 0;
     a.spov.sp_repeat = Repeat::Off;
-    assert_eq!(
-        a.status_next_title().as_deref(),
-        Some("B"),
-        "shows the next Spotify track while Spotify plays"
-    );
+    for paused in [false, true] {
+        a.spov.spotify_paused = paused;
+        assert_eq!(
+            a.status_next_title().as_deref(),
+            Some("B"),
+            "Spotify up-next in the Spotify view (paused={paused})"
+        );
+    }
 
     // On the last track the hint mirrors auto-advance: Off stops, All wraps, One
     // replays the current track.
@@ -1408,14 +1414,13 @@ fn status_next_hint_follows_the_active_source() {
         "One replays the current track"
     );
 
-    // Paused Spotify (now_spotify lingers Some) is no longer the active source, so
-    // the hint falls back to the local queue — never a stale Spotify title.
+    // A local view shows the local queue instead — never a Spotify title.
+    a.layout = Layout::Dashboard;
     a.player.queue.items.clear();
-    a.spov.spotify_paused = true;
     assert_eq!(
         a.status_next_title(),
         None,
-        "paused Spotify yields to the (empty) local queue, not a stale up-next"
+        "the local view reads the (empty) local queue"
     );
 }
 

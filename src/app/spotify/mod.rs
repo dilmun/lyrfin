@@ -2,7 +2,6 @@
 //! methods on `AppState`. Playback/transport lives in `playback`, browse/nav in
 //! `browse`.
 
-use super::repeat_to_str;
 use super::{AppState, Layout, Panel};
 use crate::audio::AudioCommand;
 use crate::core::player::{Repeat, Status};
