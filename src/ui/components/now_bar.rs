@@ -5,7 +5,7 @@ use crate::app::{AppState, Layout as AppLayout, MouseTarget, TransportButton};
 use crate::core::player::{Repeat, Status};
 use crate::ui::theme::Theme;
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
@@ -449,6 +449,30 @@ fn flag_emoji(cc: &str) -> String {
         .collect()
 }
 
+/// Draw the country flag (with its ISO code beneath) centred in the radio now-bar's
+/// art slot — the flag standing in for the album cover the local/Spotify bars show.
+fn render_flag_art(f: &mut Frame, area: Rect, th: &Theme, flag: &str, cc: &str) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    // vertically centre the two-line flag + code within the art box
+    let mid = area.y + area.height.saturating_sub(2) / 2;
+    f.render_widget(
+        Paragraph::new(Line::from(Span::raw(flag.to_string()))).alignment(Alignment::Center),
+        Rect::new(area.x, mid, area.width, 1),
+    );
+    if mid + 1 < area.y + area.height {
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                cc.to_uppercase(),
+                Style::default().fg(col(th.text_dim)),
+            )))
+            .alignment(Alignment::Center),
+            Rect::new(area.x, mid + 1, area.width, 1),
+        );
+    }
+}
+
 /// Format a DVR duration as `H:MM:SS` past an hour, else `M:SS`. Session/window
 /// times run to hours, which plain `mmss` would show as `83:45`.
 fn dvr_time(secs: f64) -> String {
@@ -493,14 +517,14 @@ pub(crate) fn radio_now_bar(f: &mut Frame, area: Rect, app: &AppState) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let [_, center] = Layout::horizontal([Constraint::Length(1), Constraint::Min(16)]).areas(inner);
-
     // nothing tuned → an idle radio bar (never the local track)
     let Some(st) = &app.rnow.now_station else {
+        let [_, center] =
+            Layout::horizontal([Constraint::Length(1), Constraint::Min(16)]).areas(inner);
         f.render_widget(
             Paragraph::new(vec![
                 Line::from(Span::styled(
-                    "📻 Radio",
+                    "Radio",
                     Style::default()
                         .fg(col(th.text_dim))
                         .add_modifier(Modifier::BOLD),
@@ -515,6 +539,25 @@ pub(crate) fn radio_now_bar(f: &mut Frame, area: Rect, app: &AppState) {
         return;
     };
 
+    // The station's country flag stands in for the album cover the local/Spotify
+    // bars show — drawn in the art slot on the left, dropped when the bar is too
+    // narrow so the controls keep room.
+    let flag = flag_emoji(&st.countrycode);
+    let center = if !flag.is_empty() && inner.width >= 56 {
+        let [art, _gap, center] = Layout::horizontal([
+            Constraint::Length(12),
+            Constraint::Length(2),
+            Constraint::Min(16),
+        ])
+        .areas(inner);
+        render_flag_art(f, art, th, &flag, &st.countrycode);
+        center
+    } else {
+        let [_, center] =
+            Layout::horizontal([Constraint::Length(1), Constraint::Min(16)]).areas(inner);
+        center
+    };
+
     // headline = live ICY song if present, else the station name
     let headline = app
         .rnow
@@ -523,13 +566,14 @@ pub(crate) fn radio_now_bar(f: &mut Frame, area: Rect, app: &AppState) {
         .filter(|t| !t.is_empty())
         .unwrap_or(&st.name)
         .to_string();
-    // sub-line: (flag) station · genre · codec · bitrate, then (for a DVR stream)
-    // the tuned-in session time and, when rewound, how far behind live it sits.
-    let flag = flag_emoji(&st.countrycode);
-    let mut sub = if flag.is_empty() {
-        format!("📻 {} · {}", st.name, st.subtitle())
+    // sub-line: station · genre · codec · bitrate (the flag is the art now, no 📻);
+    // when the headline is the ICY song, lead with the station name, else the
+    // headline already is the name so just show the details. For a DVR stream,
+    // append the tuned-in session time and, when rewound, how far behind live.
+    let mut sub = if headline == st.name {
+        st.subtitle()
     } else {
-        format!("📻 {flag} {} · {}", st.name, st.subtitle())
+        format!("{} · {}", st.name, st.subtitle())
     };
     if let Some(d) = app.rnow.dvr {
         sub.push_str(&format!("  ·  ⏱ {}", dvr_time(d.live)));

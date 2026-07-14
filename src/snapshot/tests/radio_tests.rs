@@ -236,7 +236,10 @@ fn radio_view_lists_and_plays_stations() {
         "selected station becomes now-playing"
     );
     let s = render_layout(&mut a, Layout::Radio, 100, 20);
-    assert!(s.contains("📻"), "the now-bar shows the streaming station");
+    assert!(
+        s.contains("LIVE"),
+        "the now-bar shows the streaming station"
+    );
 }
 
 #[test]
@@ -742,7 +745,7 @@ fn radio_overlay_keeps_local_context_in_local_views() {
         "Dashboard shows the local track, not the radio"
     );
     assert!(
-        !s.contains("📻"),
+        !s.contains("Cairo Jazz"),
         "no radio bleeds into the music-player view"
     );
     assert!(
@@ -798,7 +801,7 @@ fn radio_channel_change_updates_overlay() {
     assert_eq!(a.player.current, local_before, "local still preserved");
     // the Radio view's now-bar shows the station (no album-art block)
     let s = render_layout(&mut a, Layout::Radio, 100, 20);
-    assert!(s.contains("📻"), "radio now-bar");
+    assert!(s.contains("LIVE"), "radio now-bar");
     assert!(!s.contains("████████████"), "no album-art block for radio");
 }
 
@@ -897,10 +900,7 @@ fn radio_icy_title_headlines_the_now_bar() {
         s.contains("Miles Davis - So What"),
         "ICY song is the headline"
     );
-    assert!(
-        s.contains("📻") && s.contains("Cairo Jazz"),
-        "station shown below"
-    );
+    assert!(s.contains("Cairo Jazz"), "station shown below the ICY song");
 }
 
 #[test]
