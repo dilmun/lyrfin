@@ -78,27 +78,6 @@ impl AppState {
         self.tags.tab = 0;
     }
 
-    /// The tracks an operator (edit / add-to-playlist) applies to: the marked
-    /// set + live visual range in display order, or — when nothing is selected —
-    /// the cursor track (falling back to the now-playing track).
-    pub(crate) fn selected_track_ids(&self) -> Vec<crate::core::model::TrackId> {
-        if !self.marks.ids.is_empty() || self.marks.anchor.is_some() {
-            self.display_ids()
-                .into_iter()
-                .enumerate()
-                .filter(|(i, id)| self.marks.ids.contains(id) || self.in_visual_range(*i))
-                .map(|(_, id)| id)
-                .collect()
-        } else {
-            self.display_ids()
-                .get(self.selection)
-                .copied()
-                .or(self.player.current)
-                .into_iter()
-                .collect()
-        }
-    }
-
     /// Open the tag editor on the marked tracks (bulk) — or, with no marks, the
     /// selected track (falling back to the now-playing track).
     pub(crate) fn begin_tag_edit(&mut self) {

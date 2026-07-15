@@ -73,7 +73,7 @@ impl AppState {
         // The radio "add to playlist" picker captures movement (+1 = New playlist row)
         // — but only in the Radio view, so a modal left open never steals j/k from a
         // local/Spotify list after switching views.
-        if self.layout == Layout::Radio && self.radio.pl.adding.is_some() {
+        if self.layout == Layout::Radio && !self.radio.pl.adding.is_empty() {
             let n = self.radio.playlists.len() + 1;
             self.radio.pl.add_sel = step(self.radio.pl.add_sel, m, n);
             return;
@@ -91,6 +91,7 @@ impl AppState {
                     self.radio.section = s;
                     self.radio.sel = 0;
                     self.radio.pl.open = None; // leaving the section drops any drill
+                    self.clear_marks(); // a new station list invalidates the old selection
                 }
             } else if self.radio.section == crate::app::RadioSection::Playlists
                 && self.radio.pl.open.is_none()

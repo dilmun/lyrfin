@@ -107,7 +107,7 @@ on the focused pane or the active view (noted below where relevant).
 | Key | Action |
 |-----|--------|
 | <kbd>Shift</kbd>+<kbd>J</kbd> / <kbd>Shift</kbd>+<kbd>K</kbd> | Move the selected upcoming track down / up |
-| <kbd>d</kbd> / <kbd>x</kbd> | Remove the selected upcoming track |
+| <kbd>d</kbd> | Remove the selected upcoming track |
 | <kbd>Shift</kbd>+<kbd>D</kbd> | Clear everything after the now-playing track |
 | <kbd>c</kbd> | Clear the queue |
 | <kbd>a</kbd> | Play the selected track's album |
@@ -129,8 +129,9 @@ on the focused pane or the active view (noted below where relevant).
 |-----|--------|
 | <kbd>/</kbd> | Search stations |
 | <kbd>n</kbd> / <kbd>p</kbd> | Next / previous station |
-| <kbd>f</kbd> | Star / unstar the selected station (saved to Favorites) |
-| <kbd>a</kbd> | Add the selected station to a playlist |
+| <kbd>f</kbd> | Star / unstar the selected station(s) (saved to Favorites) |
+| <kbd>a</kbd> | Add the selected station(s) to a playlist |
+| <kbd>x</kbd> / <kbd>Shift</kbd>+<kbd>V</kbd> | Mark station / visual range — `f` and `a` then apply to the whole selection |
 | <kbd>o</kbd> | Cycle sort order |
 | <kbd>Shift</kbd>+<kbd>R</kbd> | Refresh the station directory |
 | <kbd>Enter</kbd> on **Countries** / **Genres** | Browse / filter by country or genre (sidebar sections) |
@@ -145,12 +146,13 @@ sidebar's **Countries** and **Genres** sections rather than on a shortcut key.
 | <kbd>Enter</kbd> | Log in (when disconnected) |
 | <kbd>/</kbd> | Search |
 | <kbd>n</kbd> / <kbd>p</kbd> | Next / previous track |
-| <kbd>f</kbd> | Like / unlike the now-playing track |
-| <kbd>a</kbd> | Add to a playlist |
+| <kbd>f</kbd> | Like the now-playing track (or the whole selection) |
+| <kbd>a</kbd> | Add the selected track(s) to a playlist |
+| <kbd>x</kbd> / <kbd>Shift</kbd>+<kbd>V</kbd> | Mark track / visual range (on a track list) — `f` likes and `a` adds the whole selection |
 | <kbd>n</kbd> (Playlists) | New playlist |
 | <kbd>e</kbd> / <kbd>r</kbd> | Rename the selected playlist |
 | <kbd>Shift</kbd>+<kbd>D</kbd> | Delete (unfollow) the selected playlist |
-| <kbd>d</kbd> / <kbd>x</kbd> (inside a playlist) | Remove the selected track |
+| <kbd>d</kbd> (inside a playlist) | Remove the selected track(s) from the playlist |
 
 ## Tag editor
 

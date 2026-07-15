@@ -226,13 +226,9 @@ fn left_prompt(app: &AppState) -> Line<'static> {
     } else if let Some(line) = tag_prompt(app) {
         line
     } else if app.marks.anchor.is_some() {
-        let n = app
-            .marks
-            .anchor
-            .map(|a| a.max(app.selection) - a.min(app.selection) + 1)
-            .unwrap_or(0);
+        let n = app.visual_range().map(|(lo, hi)| hi - lo + 1).unwrap_or(0);
         Line::from(Span::styled(
-            format!(" visual · {n} lines · j/k extend · x mark · esc"),
+            format!(" visual · {n} tracks · j/k extend · x mark · esc"),
             faint,
         ))
     } else {

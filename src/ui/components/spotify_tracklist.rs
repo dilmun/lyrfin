@@ -99,10 +99,24 @@ pub(crate) fn spotify_tracks(
 
     let (cols, kinds) = spotify_col_specs(&app.config.columns, index_w);
     let meta = Style::default().fg(col(th.meta_text()));
+    // multi-select: the live visual range (over `sel`) + the marked URIs, gathered
+    // once so the row loop stays allocation-free.
+    let vis = app.marks.anchor.map(|a| (a.min(sel), a.max(sel)));
+    let marked_uris: std::collections::HashSet<&str> = app
+        .marks
+        .ids
+        .iter()
+        .filter_map(|k| match k {
+            crate::app::MarkKey::Spotify(u) => Some(u.as_str()),
+            _ => None,
+        })
+        .collect();
 
     let mut rows: Vec<TableRow> = Vec::new();
     for (i, it) in items.iter().enumerate().skip(off).take(body_h.max(1)) {
         let selected = i == sel;
+        let marked =
+            marked_uris.contains(it.uri.as_str()) || vis.is_some_and(|(lo, hi)| i >= lo && i <= hi);
         let is_now = is_now_playing(app, it);
         // the now-playing row takes the accent + bold title (like the QUEUE pane)
         // so the current track stands out; the cursor selection keeps its own
@@ -117,7 +131,11 @@ pub(crate) fn spotify_tracks(
         let cells: Vec<TableCell> = kinds
             .iter()
             .map(|k| match k {
-                // ▶ replaces the row number on the now-playing row (its accent)
+                // ✓ (marked) / ▶ (now-playing) replace the row number
+                Col::Index if marked => TableCell::new(
+                    Cell::from("✓").style(Style::default().fg(col(th.marked_color()))),
+                    index_w,
+                ),
                 Col::Index if is_now => TableCell::new(
                     Cell::from("▶").style(Style::default().fg(col(th.now_playing_color()))),
                     index_w,
@@ -165,6 +183,8 @@ pub(crate) fn spotify_tracks(
             Some(col(th.selection))
         } else if selected {
             Some(col(th.panel.mix(th.text_faint, 0.25)))
+        } else if marked {
+            Some(col(th.marked_color().mix(th.bg, 0.82)))
         } else {
             None
         };
@@ -203,10 +223,22 @@ pub(crate) fn spotify_track_rows(
     // sticky (not recentring) so clicking a visible row doesn't make the list jump
     let off = sticky_off(&app.spotify.list_off, sel, total, body_h);
     let meta_style = Style::default().fg(col(th.meta_text()));
+    let vis = app.marks.anchor.map(|a| (a.min(sel), a.max(sel)));
+    let marked_uris: std::collections::HashSet<&str> = app
+        .marks
+        .ids
+        .iter()
+        .filter_map(|k| match k {
+            crate::app::MarkKey::Spotify(u) => Some(u.as_str()),
+            _ => None,
+        })
+        .collect();
     for (i, it) in items.iter().enumerate().skip(off).take(body_h.max(1)) {
         let row = Rect::new(area.x, area.y + (i - off) as u16, area.width, 1);
         app.register_click(row, MouseTarget::SpotifyItem(i)); // click selects, dbl plays
         let selected = i == sel;
+        let marked =
+            marked_uris.contains(it.uri.as_str()) || vis.is_some_and(|(lo, hi)| i >= lo && i <= hi);
         let is_now = is_now_playing(app, it);
         // ▶ + accent (bold) marks the now-playing track, mirroring the QUEUE pane;
         // the cursor selection keeps its own pill background (`sel_fill`), so both
@@ -218,7 +250,9 @@ pub(crate) fn spotify_track_rows(
         } else {
             Style::default().fg(col(th.title_text()))
         };
-        let lead = if is_now {
+        let lead = if marked {
+            Span::styled("✓", Style::default().fg(col(th.marked_color())))
+        } else if is_now {
             Span::styled("▶", Style::default().fg(col(th.now_playing_color())))
         } else {
             Span::raw(" ")
@@ -241,12 +275,9 @@ pub(crate) fn spotify_track_rows(
         );
         // selected row keeps a (dim) highlight even when unfocused — matches
         // `spotify_tracks` so the cursor stays visible from the sidebar / a pane.
-        let line = pill_line(
-            app,
-            area.width as usize,
-            line,
-            sel_fill(th, selected, focused),
-        );
+        let fill = sel_fill(th, selected, focused)
+            .or_else(|| marked.then(|| th.marked_color().mix(th.bg, 0.82)));
+        let line = pill_line(app, area.width as usize, line, fill);
         f.render_widget(Paragraph::new(line), row);
     }
 }

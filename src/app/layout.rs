@@ -261,6 +261,9 @@ impl AppState {
         if target == self.layout {
             return;
         }
+        // a multi-select can't refer across views (its keys + anchor index are for
+        // the list you left) — drop it on any view switch.
+        self.clear_marks();
         self.views
             .cursors
             .insert(self.layout, (self.selection, self.queue_sel));

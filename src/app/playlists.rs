@@ -56,16 +56,32 @@ impl AppState {
     /// Remove the selected track from the playlist we're drilled into, then
     /// refresh the open track list in place (keeping the cursor in range).
     pub(crate) fn remove_selected_from_playlist(&mut self) {
-        let sel_track = match self.local.items.get(self.local.sel) {
-            Some(LocalItem::Track(t)) => Some(*t),
-            _ => None,
-        };
-        let (Some(pid), Some(tid)) = (self.current_local_playlist(), sel_track) else {
+        let Some(pid) = self.current_local_playlist() else {
             return;
         };
-        self.library.remove_from_playlist(pid, tid);
+        // the selection (marked set / visual range, else the cursor track) — all of
+        // which are tracks of the drilled-in playlist.
+        let ids: Vec<_> = self
+            .selected_keys()
+            .into_iter()
+            .filter_map(|k| match k {
+                MarkKey::Track(id) => Some(id),
+                _ => None,
+            })
+            .collect();
+        if ids.is_empty() {
+            return;
+        }
+        for tid in &ids {
+            self.library.remove_from_playlist(pid, *tid);
+        }
         self.save_playlists();
-        self.notify("Removed from playlist".into());
+        self.clear_marks();
+        let n = ids.len();
+        self.notify(format!(
+            "Removed {n} {} from playlist",
+            if n == 1 { "track" } else { "tracks" }
+        ));
         self.local.items = self
             .library
             .playlist_tracks(pid)

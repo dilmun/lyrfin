@@ -436,7 +436,7 @@ impl AppState {
             }
             SpotifyActivate => self.spotify_activate(),
             SpotifyTrack(delta) => self.spotify_track(delta),
-            SpotifyLike => self.spotify_toggle_saved(),
+            SpotifyLike => self.spotify_like_selection(),
             SpotifyFollow => self.spotify_toggle_follow(),
             SpotifyWriteConfig => {
                 // prompt for the client id right here; we write the config + log in

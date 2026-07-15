@@ -460,31 +460,50 @@ impl AppState {
         self.refresh_radio();
     }
 
-    /// 'f': star/unstar the highlighted station and persist the list.
+    /// 'f': star/unstar the selection (marked set / visual range, else the cursor
+    /// station) and persist. Stars all unless every selected station is already
+    /// starred (then unstars all) — mirroring the local favourite operator.
     pub(crate) fn radio_star(&mut self) {
-        let Some(st) = self.radio_view_list().get(self.radio.sel).cloned() else {
+        let sel = self.selected_stations();
+        if sel.is_empty() {
             return;
-        };
-        let id = station_key(&st);
-        if let Some(pos) = self
-            .radio
-            .favorites
-            .iter()
-            .position(|f| station_key(f) == id)
-        {
-            self.radio.favorites.remove(pos);
-            self.notify(format!("Unstarred: {}", st.name));
-            if self.radio.section == RadioSection::Favorites {
-                let len = self.radio.favorites.len();
-                if self.radio.sel >= len {
-                    self.radio.sel = len.saturating_sub(1);
+        }
+        let unstar = sel.iter().all(|st| self.radio_is_fav(st));
+        let mut changed = 0usize;
+        for st in &sel {
+            let key = station_key(st);
+            let pos = self
+                .radio
+                .favorites
+                .iter()
+                .position(|f| station_key(f) == key);
+            match (unstar, pos) {
+                (true, Some(p)) => {
+                    self.radio.favorites.remove(p);
+                    changed += 1;
                 }
+                (false, None) => {
+                    self.radio.favorites.push(st.clone());
+                    changed += 1;
+                }
+                _ => {}
             }
-        } else {
-            self.radio.favorites.push(st.clone());
-            self.notify(format!("Starred: {}", st.name));
+        }
+        // removing from the Favorites view can leave the cursor past the end
+        if unstar && self.radio.section == RadioSection::Favorites {
+            let len = self.radio.favorites.len();
+            if self.radio.sel >= len {
+                self.radio.sel = len.saturating_sub(1);
+            }
         }
         crate::library::store::RadioFavorites::save(&self.radio.favorites, &self.config.dir);
+        self.clear_marks();
+        let noun = if changed == 1 { "station" } else { "stations" };
+        self.notify(if unstar {
+            format!("Unstarred {changed} {noun}")
+        } else {
+            format!("Starred {changed} {noun}")
+        });
     }
 
     /// n/p: tune the next/previous station in the current list (wrap-around).
@@ -892,8 +911,9 @@ pub struct RadioPlaylistUi {
     /// Active name-entry (create / rename) + its live buffer; `None` = not naming.
     pub naming: Option<RadioNameTarget>,
     pub buffer: String,
-    /// A station being added to a playlist: the "pick a playlist" overlay is open.
-    pub adding: Option<crate::radio::Station>,
+    /// Station(s) being added to a playlist: non-empty while the "pick a playlist"
+    /// overlay is open (one item for a single station, several for a multi-select).
+    pub adding: Vec<crate::radio::Station>,
     /// Cursor in the add-to-playlist picker (an extra trailing row = "New playlist").
     pub add_sel: usize,
     /// A playlist id pending the two-step delete confirm.
@@ -904,7 +924,7 @@ impl RadioPlaylistUi {
     /// Whether any radio-playlist modal (name entry, add picker, delete confirm) is
     /// open — used to gate global keys and route input to the modal.
     pub fn modal_open(&self) -> bool {
-        self.naming.is_some() || self.adding.is_some() || self.confirm_delete.is_some()
+        self.naming.is_some() || !self.adding.is_empty() || self.confirm_delete.is_some()
     }
 }
 
