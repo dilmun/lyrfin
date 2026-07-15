@@ -87,8 +87,11 @@ fn queue_pane_owns_reorder_keys_but_nav_falls_through() {
         crate::keymap::map(&a, k('J')),
         Action::QueueMove(Motion::Down)
     );
-    assert_eq!(crate::keymap::map(&a, k('x')), Action::QueueRemove);
+    assert_eq!(crate::keymap::map(&a, k('d')), Action::QueueRemove);
     assert_eq!(crate::keymap::map(&a, k('D')), Action::QueueClearUpcoming);
+    // `x` is the mark key everywhere and is never a destructive remove — the queue
+    // isn't a selectable list, so it's simply shadowed here (not QueueRemove).
+    assert_eq!(crate::keymap::map(&a, k('x')), Action::Noop);
     // list navigation is universal — it still reaches the global table.
     assert_eq!(crate::keymap::map(&a, k('j')), Action::Move(Motion::Down));
 }

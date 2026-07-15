@@ -451,14 +451,15 @@ fn spotify_playlist_keys(app: &AppState, key: Key) -> Option<Action> {
         return None;
     }
     let selected = app.spotify.items.get(app.spotify.sel);
-    // Drilled into a playlist (its tracks are shown): d/x removes the selected one.
+    // Drilled into a playlist (its tracks are shown): `d` removes the selection
+    // (`x` is reserved for marking — the shared multi-select key).
     let in_playlist = app
         .spotify
         .open_item
         .as_ref()
         .is_some_and(|it| it.kind == Kind::Playlist);
     if in_playlist
-        && matches!(key.code, KeyCode::Char('d') | KeyCode::Char('x'))
+        && key.code == KeyCode::Char('d')
         && selected.is_some_and(|it| it.kind == Kind::Track)
     {
         return Some(Action::SpotifyRemoveFromPlaylist);
@@ -723,6 +724,8 @@ fn spotify_view(app: &AppState, key: Key) -> Option<Action> {
             return Some(a);
         }
         match key.code {
+            // Esc clears an active selection first, then cancels search / drill-in.
+            KeyCode::Esc if app.has_selection() => return Some(Action::Back),
             KeyCode::Esc => return Some(Action::SpotifyCancel),
             KeyCode::Enter => return Some(Action::SpotifyActivate),
             KeyCode::Tab => return Some(Action::SpotifyCycleFocus(1)),
@@ -844,6 +847,8 @@ fn radio_view(app: &AppState, key: Key) -> Option<Action> {
     // Browse mode. Keys common to both panes first, then pane-specific keys; Tab
     // (cycle focus, sidebar ↔ list) and j/k (Move) fall through to the global table.
     match key.code {
+        // Esc clears an active selection first (like every other view), then cancels.
+        KeyCode::Esc if app.has_selection() => return Some(Action::Back),
         KeyCode::Esc => return Some(Action::RadioCancel),
         KeyCode::Char('/') => return Some(Action::RadioFocusSearch),
         // Enter plays a station on the list, or activates the section in the sidebar
@@ -883,7 +888,8 @@ fn radio_view(app: &AppState, key: Key) -> Option<Action> {
         match key.code {
             // d/x remove the selected station(s); V starts a visual range so a/f/d
             // apply to the whole selection.
-            KeyCode::Char('d') | KeyCode::Char('x') => {
+            // `d` removes the selection; `x` marks (below).
+            KeyCode::Char('d') => {
                 return Some(Action::RadioRemoveFromPlaylist);
             }
             KeyCode::Char('V') => return Some(Action::VisualSelect),
@@ -930,12 +936,13 @@ fn sidebar_playlists_context(app: &AppState, key: Key) -> Option<Action> {
     {
         return None;
     }
-    // Drilled *into* a (normal) playlist → the list shows its tracks, so `d`/`x`
-    // removes the selected track from that playlist (the management keys below
-    // only make sense on the playlists list itself).
+    // Drilled *into* a (normal) playlist → the list shows its tracks, so `d`
+    // removes the selection from that playlist. `x` is left for marking (it falls
+    // through to the global `toggle_mark`); the management keys below only make
+    // sense on the playlists list itself.
     if app.current_local_playlist().is_some() {
         return match key.code {
-            KeyCode::Char('d') | KeyCode::Char('x') => Some(Action::RemoveFromPlaylist),
+            KeyCode::Char('d') => Some(Action::RemoveFromPlaylist),
             _ => None,
         };
     }
@@ -1058,13 +1065,15 @@ fn viz_keys(key: Key) -> Option<Action> {
     }
 }
 
-/// Queue pane keys: reorder (`K` up / `J` down) and remove (`d` / `x` the selected
-/// track, `D` clears everything upcoming). Only claims its own keys.
+/// Queue pane keys: reorder (`K` up / `J` down) and remove (`d` the selected track,
+/// `D` clears everything upcoming). `x` is left alone so it never means "remove"
+/// anywhere — it's the mark key elsewhere (inert here; the queue isn't selectable).
+/// Only claims its own keys.
 fn queue_keys(key: Key) -> Option<Action> {
     match key.code {
         KeyCode::Char('K') => Some(Action::QueueMove(Motion::Up)),
         KeyCode::Char('J') => Some(Action::QueueMove(Motion::Down)),
-        KeyCode::Char('d') | KeyCode::Char('x') => Some(Action::QueueRemove),
+        KeyCode::Char('d') => Some(Action::QueueRemove),
         KeyCode::Char('D') => Some(Action::QueueClearUpcoming),
         _ => None,
     }

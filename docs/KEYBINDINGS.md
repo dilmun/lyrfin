@@ -107,7 +107,7 @@ on the focused pane or the active view (noted below where relevant).
 | Key | Action |
 |-----|--------|
 | <kbd>Shift</kbd>+<kbd>J</kbd> / <kbd>Shift</kbd>+<kbd>K</kbd> | Move the selected upcoming track down / up |
-| <kbd>d</kbd> / <kbd>x</kbd> | Remove the selected upcoming track |
+| <kbd>d</kbd> | Remove the selected upcoming track |
 | <kbd>Shift</kbd>+<kbd>D</kbd> | Clear everything after the now-playing track |
 | <kbd>c</kbd> | Clear the queue |
 | <kbd>a</kbd> | Play the selected track's album |
@@ -152,7 +152,7 @@ sidebar's **Countries** and **Genres** sections rather than on a shortcut key.
 | <kbd>n</kbd> (Playlists) | New playlist |
 | <kbd>e</kbd> / <kbd>r</kbd> | Rename the selected playlist |
 | <kbd>Shift</kbd>+<kbd>D</kbd> | Delete (unfollow) the selected playlist |
-| <kbd>d</kbd> / <kbd>x</kbd> (inside a playlist) | Remove the selected track |
+| <kbd>d</kbd> (inside a playlist) | Remove the selected track |
 
 ## Tag editor
 

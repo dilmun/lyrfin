@@ -247,6 +247,59 @@ fn radio_visual_select_bulk_stars_and_adds() {
 }
 
 #[test]
+fn radio_x_marks_d_removes_and_esc_clears_selection() {
+    use crate::action::Action;
+    use crate::app::{Focus, RadioSection};
+    use crate::event::{Key, KeyCode, Mods};
+    use crate::radio::{Playlist, Station};
+    let st = |name: &str, uuid: &str| Station {
+        name: name.into(),
+        url: format!("http://x/{uuid}"),
+        uuid: uuid.into(),
+        ..Default::default()
+    };
+    let key = |c| Key {
+        code: KeyCode::Char(c),
+        mods: Mods::default(),
+    };
+    let mut a = demo();
+    a.config.dir = std::env::temp_dir().join("lyrfin_radio_xd_test");
+    let _ = std::fs::remove_dir_all(&a.config.dir);
+    a.radio.playlists.clear();
+    a.layout = Layout::Radio;
+    a.focus = Focus::Main;
+    a.radio.playlists.push(Playlist {
+        id: 1,
+        name: "P".into(),
+        stations: vec![st("A", "a"), st("B", "b"), st("C", "c")],
+    });
+    a.radio.section = RadioSection::Playlists;
+    a.radio.pl.open = Some(1);
+    a.radio.sel = 0;
+
+    // in a drilled playlist: x MARKS (never removes); d removes.
+    assert_eq!(crate::keymap::map(&a, key('x')), Action::ToggleMark);
+    assert_eq!(
+        crate::keymap::map(&a, key('d')),
+        Action::RadioRemoveFromPlaylist
+    );
+
+    // mark A + B, then Esc clears the selection instead of leaving the view.
+    a.update(Action::ToggleMark);
+    a.update(Action::ToggleMark);
+    assert_eq!(a.marks.ids.len(), 2);
+    let esc = Key {
+        code: KeyCode::Esc,
+        mods: Mods::default(),
+    };
+    assert_eq!(crate::keymap::map(&a, esc), Action::Back);
+    a.update(Action::Back);
+    assert!(!a.has_selection(), "Esc cleared the selection");
+    assert_eq!(a.radio.pl.open, Some(1), "…without leaving the playlist");
+    let _ = std::fs::remove_dir_all(&a.config.dir);
+}
+
+#[test]
 fn radio_swallows_shuffle_and_repeat_but_keeps_playlist_rename() {
     use crate::action::Action;
     use crate::app::{Focus, RadioSection};

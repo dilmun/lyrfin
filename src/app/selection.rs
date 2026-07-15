@@ -160,6 +160,11 @@ impl AppState {
         self.marks.anchor = None;
     }
 
+    /// Whether a multi-selection (a marked set or a live visual range) is active.
+    pub(crate) fn has_selection(&self) -> bool {
+        !self.marks.ids.is_empty() || self.marks.anchor.is_some()
+    }
+
     /// `x`: in visual mode, commit the live range to the marked set and leave it;
     /// otherwise toggle the item under the cursor and advance. A no-op when no
     /// selectable list is focused.
