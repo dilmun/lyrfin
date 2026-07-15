@@ -573,8 +573,11 @@ pub fn keybindings_help() -> Vec<(&'static str, &'static str, HelpScope)> {
         ("c", "paste your Spotify client id", Spotify),
         ("esc", "leave search / back out of a drill-in", Spotify),
         // --- Radio view ---
-        ("c", "filter by country", Radio),
-        ("g", "filter by genre / tag", Radio),
+        (
+            "⏎ (sidebar)",
+            "browse by country / genre — open the Countries / Genres sidebar sections",
+            Radio,
+        ),
         ("o", "cycle the result sort order", Radio),
         (
             "f",

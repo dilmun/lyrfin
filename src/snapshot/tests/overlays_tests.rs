@@ -324,7 +324,7 @@ fn help_overlay_is_scoped_to_the_view() {
         "local shows home/library keys"
     );
     assert!(
-        !has(&local, "Liked Songs") && !has(&local, "filter by country"),
+        !has(&local, "Liked Songs") && !has(&local, "browse by country"),
         "Spotify/Radio-only keys hidden in local views"
     );
 
@@ -344,7 +344,7 @@ fn help_overlay_is_scoped_to_the_view() {
     // Radio view: global + radio keys; no playlist keys
     a.layout = Layout::Radio;
     let rd = a.help_matches();
-    assert!(has(&rd, "filter by country"), "radio keys shown in Radio");
+    assert!(has(&rd, "browse by country"), "radio keys shown in Radio");
     assert!(
         !has(&rd, "add to playlist"),
         "playlist keys hidden in Radio"

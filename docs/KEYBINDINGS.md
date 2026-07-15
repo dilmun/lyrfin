@@ -128,12 +128,14 @@ on the focused pane or the active view (noted below where relevant).
 |-----|--------|
 | <kbd>/</kbd> | Search stations |
 | <kbd>n</kbd> / <kbd>p</kbd> | Next / previous station |
-| <kbd>c</kbd> | Filter by country |
-| <kbd>g</kbd> | Filter by genre / tag |
-| <kbd>f</kbd> | Toggle results ↔ starred stations |
-| <kbd>s</kbd> | Star / unstar the selected station |
+| <kbd>f</kbd> | Star / unstar the selected station (saved to Favorites) |
+| <kbd>a</kbd> | Add the selected station to a playlist |
 | <kbd>o</kbd> | Cycle sort order |
 | <kbd>Shift</kbd>+<kbd>R</kbd> | Refresh the station directory |
+| <kbd>Enter</kbd> on **Countries** / **Genres** | Browse / filter by country or genre (sidebar sections) |
+
+`g` / `G` are jump-to-top / bottom here too — country and genre live in the
+sidebar's **Countries** and **Genres** sections rather than on a shortcut key.
 
 ## Spotify view
 

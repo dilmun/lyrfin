@@ -868,10 +868,10 @@ fn radio_view(app: &AppState, key: Key) -> Option<Action> {
         return Some(radio_global(app, key));
     }
     // Station list focused: source-specific keys (`n`/`p` change station, not the
-    // local queue; `f` stars, `a` adds the station to a playlist).
+    // local queue; `f` stars, `a` adds the station to a playlist). Filtering by
+    // country / genre is the Countries / Genres sidebar sections (⏎ opens the
+    // picker) — no `c`/`g` shortcut, so `g`/`G` stay vim jump-to-top/bottom.
     match key.code {
-        KeyCode::Char('c') => return Some(Action::RadioOpenCountry),
-        KeyCode::Char('g') => return Some(Action::RadioOpenGenre),
         KeyCode::Char('f') => return Some(Action::RadioStar),
         KeyCode::Char('a') => return Some(Action::RadioAddToPlaylist),
         KeyCode::Char('o') => return Some(Action::RadioCycleSort),

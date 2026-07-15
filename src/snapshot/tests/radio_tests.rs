@@ -411,8 +411,8 @@ fn radio_search_is_not_focused_by_default() {
 }
 
 #[test]
-fn radio_dedicated_keys_drive_filters() {
-    use crate::action::Action;
+fn radio_station_list_keys_and_vim_jumps() {
+    use crate::action::{Action, Motion};
     use crate::event::{Key, KeyCode, Mods};
     let key = |c| Key {
         code: KeyCode::Char(c),
@@ -423,14 +423,6 @@ fn radio_dedicated_keys_drive_filters() {
     // the station-list keys are scoped to the Main pane (the section sidebar shadows
     // them), so focus the list before asserting them.
     a.focus = crate::app::Focus::Main;
-    assert!(matches!(
-        crate::keymap::map(&a, key('c')),
-        Action::RadioOpenCountry
-    ));
-    assert!(matches!(
-        crate::keymap::map(&a, key('g')),
-        Action::RadioOpenGenre
-    ));
     // `f` stars the highlighted station (unified with favourite elsewhere).
     assert!(matches!(
         crate::keymap::map(&a, key('f')),
@@ -440,7 +432,19 @@ fn radio_dedicated_keys_drive_filters() {
         crate::keymap::map(&a, key('o')),
         Action::RadioCycleSort
     ));
-    // opening a picker, then Esc closes it without leaving the view
+    // g/G are the usual vim jump-to-top/bottom — NOT a genre shortcut. Country /
+    // genre filtering is the sidebar's Countries / Genres sections instead.
+    assert!(matches!(
+        crate::keymap::map(&a, key('g')),
+        Action::Move(Motion::Top)
+    ));
+    assert!(matches!(
+        crate::keymap::map(&a, key('G')),
+        Action::Move(Motion::Bottom)
+    ));
+
+    // the pickers still open (from a sidebar section, or programmatically here),
+    // and Esc closes them without leaving the view
     a.update(Action::RadioOpenCountry);
     assert!(a.radio.picker.is_some(), "country picker opened");
     a.update(Action::RadioCancel);
