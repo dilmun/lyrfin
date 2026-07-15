@@ -5,7 +5,7 @@ use crate::app::{AppState, Layout as AppLayout, MouseTarget, TransportButton};
 use crate::core::player::{Repeat, Status};
 use crate::ui::theme::Theme;
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
@@ -420,10 +420,116 @@ pub fn now_bar(f: &mut Frame, area: Rect, app: &AppState) {
     );
 }
 
-/// Below this "behind live" (seconds), a DVR stream is treated as playing live —
-/// the play-head pins to the edge and the marker reads LIVE (the byte-estimated
-/// live edge advances in bursts, so computing a fraction there jitters the knob).
-const LIVE_EDGE_SECS: f64 = 4.0;
+use crate::app::LIVE_EDGE_SECS;
+
+/// The radio status row's scrub/window bar (and the spectrum above it) are inset by
+/// a left rewind-depth label and a right play/LIVE badge, so the spectrum spans
+/// exactly that bar — like the local playback bar — not the full playback width.
+const DVR_BAR_L: u16 = 8;
+const DVR_BAR_R: u16 = 12;
+
+/// The regional-indicator flag for an ISO-3166-1 alpha-2 country code
+/// (e.g. "US" → 🇺🇸); empty when the code isn't exactly two ASCII letters. Used on
+/// the single-line radio now-bar only — flags are kept out of the columnar station
+/// table, where their width-2-vs-computed-4 mismatch would misalign the columns.
+fn flag_emoji(cc: &str) -> String {
+    let bytes = cc.trim().as_bytes();
+    if bytes.len() != 2 || !bytes.iter().all(|b| b.is_ascii_alphabetic()) {
+        return String::new();
+    }
+    bytes
+        .iter()
+        .map(|b| {
+            let cp = 0x1F1E6u32 + (b.to_ascii_uppercase() - b'A') as u32;
+            char::from_u32(cp).unwrap_or('?')
+        })
+        .collect()
+}
+
+/// Draw the station's country in the now-bar's art slot — the small flag emoji atop
+/// the ISO code in large 3-row block letters (accent-tinted), centred. Emoji can't
+/// be scaled in a terminal, so the big code is what fills the album-cover-sized box.
+fn render_flag_art(f: &mut Frame, area: Rect, th: &Theme, flag: &str, cc: &str) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let code = big_code(cc); // 3 rows of block letters
+    // flag row (when there's vertical room) + the 3 code rows, block centred
+    let with_flag = area.height >= 5;
+    let block_h = if with_flag { 4 } else { 3 };
+    let mut y = area.y + area.height.saturating_sub(block_h) / 2;
+    let bottom = area.y + area.height;
+    if with_flag && y < bottom {
+        f.render_widget(
+            Paragraph::new(Line::from(Span::raw(flag.to_string()))).alignment(Alignment::Center),
+            Rect::new(area.x, y, area.width, 1),
+        );
+        y += 1;
+    }
+    let style = Style::default()
+        .fg(col(th.accent[0]))
+        .add_modifier(Modifier::BOLD);
+    for row in code {
+        if y >= bottom {
+            break;
+        }
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(row, style))).alignment(Alignment::Center),
+            Rect::new(area.x, y, area.width, 1),
+        );
+        y += 1;
+    }
+}
+
+/// The (2-letter) ISO code as 3 rows of block letters, glyphs separated by a column.
+fn big_code(cc: &str) -> [String; 3] {
+    let mut rows = [String::new(), String::new(), String::new()];
+    for (i, ch) in cc.to_uppercase().chars().take(3).enumerate() {
+        if i > 0 {
+            rows.iter_mut().for_each(|r| r.push(' '));
+        }
+        let g = block_glyph(ch);
+        for (r, gr) in rows.iter_mut().zip(g) {
+            r.push_str(gr);
+        }
+    }
+    rows
+}
+
+/// A 3-row × 3-column block glyph for `A`–`Z` (ISO country codes are letters). The
+/// country name is shown in the now-bar sub-line, so the few close pairs (M/N,
+/// H/W) read fine in context.
+fn block_glyph(c: char) -> [&'static str; 3] {
+    match c {
+        'A' => ["▄▀▄", "█▀█", "█ █"],
+        'B' => ["█▀▄", "█▀▄", "█▄▀"],
+        'C' => ["▄▀▀", "█  ", "▀▄▄"],
+        'D' => ["█▀▄", "█ █", "█▄▀"],
+        'E' => ["█▀▀", "█▀ ", "█▄▄"],
+        'F' => ["█▀▀", "█▀ ", "█  "],
+        'G' => ["▄▀▀", "█ ▄", "▀▄▀"],
+        'H' => ["█ █", "█▀█", "█ █"],
+        'I' => ["▀█▀", " █ ", "▄█▄"],
+        'J' => ["▀▀█", "  █", "█▄▀"],
+        'K' => ["█ ▄", "█▀ ", "█ ▀"],
+        'L' => ["█  ", "█  ", "█▄▄"],
+        'M' => ["█▄█", "█▀█", "█ █"],
+        'N' => ["█▄█", "█ █", "█ █"],
+        'O' => ["▄▀▄", "█ █", "▀▄▀"],
+        'P' => ["█▀▄", "█▀▀", "█  "],
+        'Q' => ["▄▀▄", "█ █", "▀▄█"],
+        'R' => ["█▀▄", "█▀▄", "█ ▀"],
+        'S' => ["▄▀▀", "▀▀▄", "▀▄▀"],
+        'T' => ["▀█▀", " █ ", " █ "],
+        'U' => ["█ █", "█ █", "▀▄▀"],
+        'V' => ["█ █", "█ █", " ▀ "],
+        'W' => ["█ █", "█▄█", "█▀█"],
+        'X' => ["▀ ▀", " █ ", "▄ ▄"],
+        'Y' => ["█ █", "▀▄▀", " █ "],
+        'Z' => ["▀▀█", "▄▀ ", "█▄▄"],
+        _ => ["   ", "   ", "   "],
+    }
+}
 
 /// Format a DVR duration as `H:MM:SS` past an hour, else `M:SS`. Session/window
 /// times run to hours, which plain `mmss` would show as `83:45`.
@@ -469,14 +575,14 @@ pub(crate) fn radio_now_bar(f: &mut Frame, area: Rect, app: &AppState) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let [_, center] = Layout::horizontal([Constraint::Length(1), Constraint::Min(16)]).areas(inner);
-
     // nothing tuned → an idle radio bar (never the local track)
     let Some(st) = &app.rnow.now_station else {
+        let [_, center] =
+            Layout::horizontal([Constraint::Length(1), Constraint::Min(16)]).areas(inner);
         f.render_widget(
             Paragraph::new(vec![
                 Line::from(Span::styled(
-                    "📻 Radio",
+                    "Radio",
                     Style::default()
                         .fg(col(th.text_dim))
                         .add_modifier(Modifier::BOLD),
@@ -491,6 +597,25 @@ pub(crate) fn radio_now_bar(f: &mut Frame, area: Rect, app: &AppState) {
         return;
     };
 
+    // The station's country flag stands in for the album cover the local/Spotify
+    // bars show — drawn in the art slot on the left, dropped when the bar is too
+    // narrow so the controls keep room.
+    let flag = flag_emoji(&st.countrycode);
+    let center = if !flag.is_empty() && inner.width >= 56 {
+        let [art, _gap, center] = Layout::horizontal([
+            Constraint::Length(12),
+            Constraint::Length(2),
+            Constraint::Min(16),
+        ])
+        .areas(inner);
+        render_flag_art(f, art, th, &flag, &st.countrycode);
+        center
+    } else {
+        let [_, center] =
+            Layout::horizontal([Constraint::Length(1), Constraint::Min(16)]).areas(inner);
+        center
+    };
+
     // headline = live ICY song if present, else the station name
     let headline = app
         .rnow
@@ -499,9 +624,15 @@ pub(crate) fn radio_now_bar(f: &mut Frame, area: Rect, app: &AppState) {
         .filter(|t| !t.is_empty())
         .unwrap_or(&st.name)
         .to_string();
-    // sub-line: station · genre, then (for a DVR stream) the tuned-in session time
-    // and, when rewound, how far behind live the play-head sits.
-    let mut sub = format!("📻 {} · {}", st.name, st.subtitle());
+    // sub-line: station · genre · codec · bitrate (the flag is the art now, no 📻);
+    // when the headline is the ICY song, lead with the station name, else the
+    // headline already is the name so just show the details. For a DVR stream,
+    // append the tuned-in session time and, when rewound, how far behind live.
+    let mut sub = if headline == st.name {
+        st.subtitle()
+    } else {
+        format!("{} · {}", st.name, st.subtitle())
+    };
     if let Some(d) = app.rnow.dvr {
         sub.push_str(&format!("  ·  ⏱ {}", dvr_time(d.live)));
         let behind = d.behind_live();
@@ -551,7 +682,19 @@ pub(crate) fn radio_now_bar(f: &mut Frame, area: Rect, app: &AppState) {
     if let Some(v) = viz_opt
         && v.height > 0
     {
-        spectrum_bare(f, v, app, app.config.player_viz_mode);
+        // span exactly the scrub bar below (inset by the label + LIVE badge), like
+        // the local playback bar; fall back to full width only when too narrow to inset
+        let (vx, vw) = if v.width > DVR_BAR_L + DVR_BAR_R + 4 {
+            (v.x + DVR_BAR_L, v.width - DVR_BAR_L - DVR_BAR_R)
+        } else {
+            (v.x, v.width)
+        };
+        spectrum_bare(
+            f,
+            Rect::new(vx, v.y, vw, v.height),
+            app,
+            app.config.player_viz_mode,
+        );
     }
 
     // Timeshift (DVR) window bar when the stream is buffered — a "window timeline":
@@ -573,9 +716,9 @@ pub(crate) fn radio_now_bar(f: &mut Frame, area: Rect, app: &AppState) {
             ((dvr.pos - dvr.start) / span).clamp(0.0, 1.0) as f32
         };
         let [lab, bar, right] = Layout::horizontal([
-            Constraint::Length(8),  // −window: how far back you can rewind now
-            Constraint::Min(4),     // the rewindable window
-            Constraint::Length(12), // play/pause + persistent LIVE badge
+            Constraint::Length(DVR_BAR_L), // −window: how far back you can rewind now
+            Constraint::Min(4),            // the rewindable window
+            Constraint::Length(DVR_BAR_R), // play/pause + persistent LIVE badge
         ])
         .areas(status_row);
 

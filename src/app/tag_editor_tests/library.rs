@@ -33,15 +33,16 @@ fn shift_f_cycles_lyrics_format_not_favorite() {
     };
     assert_eq!(crate::keymap::map(&a, shift_f), Action::CycleLyricsFormat);
 
-    // plain 'f' is still favourite (targets the current track, or no-ops if none)
+    // plain 'f' is swallowed while the Lyrics pane is focused (a focused pane
+    // shadows non-universal keys), so favourite never fires from here.
     let plain_f = Key {
         code: KeyCode::Char('f'),
         mods: Mods::default(),
     };
-    assert!(matches!(
-        crate::keymap::map(&a, plain_f),
-        Action::ToggleFavorite(_) | Action::Noop
-    ));
+    assert_eq!(crate::keymap::map(&a, plain_f), Action::Noop);
+    // …but with the main list focused it favourites the selection.
+    a.focus = Focus::Main;
+    assert_eq!(crate::keymap::map(&a, plain_f), Action::ToggleFavoriteSel);
 }
 
 #[test]

@@ -357,8 +357,11 @@ impl AppState {
                 p.push(Focus::Main);
                 p
             }
-            // Concert is chrome-less; Radio has a single list with no pane ring.
-            Layout::Concert | Layout::Radio => Vec::new(),
+            // Radio: the section Sidebar + the station-list Main (its search box is
+            // a text-input sub-mode reached with '/', not a ring stop).
+            Layout::Radio => vec![Focus::Sidebar, Focus::Main],
+            // Concert is chrome-less — no focusable panes.
+            Layout::Concert => Vec::new(),
         }
     }
 

@@ -79,6 +79,8 @@ impl AppState {
             self.marks.anchor = None;
         } else if !self.marks.ids.is_empty() {
             self.marks.ids.clear();
+        } else if self.layout == Layout::Radio && self.radio_back() {
+            // Radio: close a picker/modal, leave a drilled playlist, or drop the section
         } else if self.layout == Layout::Dashboard && self.local_back() {
             // Dashboard drill-in: pop one level back to the parent list
         } else if self.layout == Layout::Spotify && self.spotify_cancel() {
@@ -378,11 +380,10 @@ impl AppState {
             OpenRadio => self.open_radio(),
             RadioInput(q) => self.radio_search(q),
             RadioActivate => self.radio_activate(),
-            RadioFocusSearch => {
-                self.radio.fav_view = false;
-                self.radio.editing = true;
+            RadioFocusSearch => self.radio.editing = true,
+            RadioCancel => {
+                self.radio_back();
             }
-            RadioCancel => self.radio_cancel(),
             RadioOpenCountry => self.radio_open_picker(PickerKind::Country),
             RadioOpenGenre => self.radio_open_picker(PickerKind::Genre),
             RadioPickerInput(q) => {
@@ -410,11 +411,18 @@ impl AppState {
                     p.editing = false;
                 }
             }
-            RadioToggleFavorites => self.radio_toggle_favorites(),
             RadioStar => self.radio_star(),
             RadioCycleSort => self.radio_cycle_sort(),
             RadioStation(delta) => self.radio_station(delta),
             RadioRefresh => self.refresh_directory(),
+            RadioNewPlaylist => self.radio_begin_new_playlist(),
+            RadioRenamePlaylist => self.radio_begin_rename_playlist(),
+            RadioDeletePlaylist => self.radio_delete_playlist_prompt(),
+            RadioAddToPlaylist => self.radio_add_current_to_playlist(),
+            RadioRemoveFromPlaylist => self.radio_remove_from_playlist(),
+            RadioNameInput(s) => self.radio_name_input(s),
+            RadioModalConfirm => self.radio_modal_confirm(),
+            RadioModalCancel => self.radio_modal_cancel(),
             OpenSpotify => self.open_spotify(),
             SpotifyLogin => self.spotify_login(),
             SpotifyLogout => self.spotify_logout(),
@@ -621,25 +629,7 @@ impl AppState {
             }
             TagEditSaveAlbum => self.tag_edit_apply(true),
             TagEditCancel => self.close_tags(),
-            ToggleFavorite(id) => {
-                if let Some(t) = self.library.tracks.get_mut(&id) {
-                    t.favorite = !t.favorite;
-                    let fav = t.favorite;
-                    self.notify(if fav {
-                        "♥ Added to favorites".into()
-                    } else {
-                        "Removed from favorites".into()
-                    });
-                }
-                self.library.favorites = self
-                    .library
-                    .tracks
-                    .values()
-                    .filter(|t| t.favorite)
-                    .map(|t| t.id)
-                    .collect();
-                self.search.lib_gen += 1; // fav:/rating: searches may change
-            }
+            ToggleFavoriteSel => self.toggle_favorite_selection(),
             Rate(id, stars) => {
                 let stars = stars.min(5);
                 if let Some(t) = self.library.tracks.get_mut(&id) {

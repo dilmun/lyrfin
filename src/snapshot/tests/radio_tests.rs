@@ -5,6 +5,278 @@
 use super::*;
 
 #[test]
+fn station_subtitle_includes_codec_and_bitrate() {
+    let st = crate::radio::Station {
+        countrycode: "US".into(),
+        tags: "jazz,late night".into(),
+        codec: "aac".into(),
+        bitrate: 320,
+        ..Default::default()
+    };
+    let sub = st.subtitle();
+    assert!(sub.contains("AAC"), "codec shown uppercased: {sub}");
+    assert!(sub.contains("320k"), "bitrate shown: {sub}");
+    assert!(sub.contains("jazz"), "genre shown: {sub}");
+}
+
+#[test]
+fn radio_playlists_create_add_drill_remove_delete_persist() {
+    use crate::action::Action;
+    use crate::app::{Focus, RadioSection};
+    use crate::radio::Station;
+    let st = |name: &str, uuid: &str| Station {
+        name: name.into(),
+        url: format!("http://x/{uuid}"),
+        uuid: uuid.into(),
+        ..Default::default()
+    };
+    let mut a = demo();
+    a.config.dir = std::env::temp_dir().join("lyrfin_radio_pl_test");
+    let _ = std::fs::remove_dir_all(&a.config.dir);
+    a.radio.playlists.clear();
+    a.layout = Layout::Radio;
+    a.focus = Focus::Main;
+    a.radio.section = RadioSection::Playlists;
+
+    // create a playlist "Jazz" through the name modal
+    a.update(Action::RadioNewPlaylist);
+    assert!(a.radio.pl.naming.is_some(), "name entry opened");
+    a.update(Action::RadioNameInput("Jazz".into()));
+    a.update(Action::RadioModalConfirm);
+    assert_eq!(a.radio.playlists.len(), 1);
+    assert_eq!(a.radio.playlists[0].name, "Jazz");
+    let jazz_id = a.radio.playlists[0].id;
+
+    // add a station to it via the add picker (first playlist row)
+    a.radio.section = RadioSection::AllStations;
+    a.radio.stations = vec![st("Cool Jazz", "cj")];
+    a.radio.sel = 0;
+    a.update(Action::RadioAddToPlaylist);
+    assert!(a.radio.pl.adding.is_some(), "add picker opened");
+    a.radio.pl.add_sel = 0;
+    a.update(Action::RadioModalConfirm);
+    assert!(a.radio.pl.adding.is_none(), "picker closed after add");
+    assert_eq!(a.radio.playlists[0].stations.len(), 1, "station added");
+    // dedup: adding the same station again is a no-op
+    a.update(Action::RadioAddToPlaylist);
+    a.radio.pl.add_sel = 0;
+    a.update(Action::RadioModalConfirm);
+    assert_eq!(
+        a.radio.playlists[0].stations.len(),
+        1,
+        "no duplicate members"
+    );
+
+    // persisted with its station
+    let loaded = crate::library::store::RadioPlaylists::load(&a.config.dir);
+    assert_eq!(loaded.len(), 1);
+    assert_eq!(loaded[0].stations.len(), 1);
+
+    // drill in → the playlist's stations show; remove the highlighted one
+    a.radio.section = RadioSection::Playlists;
+    a.radio.pl.sel = 0;
+    a.update(Action::RadioActivate);
+    assert_eq!(a.radio.pl.open, Some(jazz_id), "drilled into Jazz");
+    assert_eq!(a.radio_view_list().len(), 1);
+    a.radio.sel = 0;
+    a.update(Action::RadioRemoveFromPlaylist);
+    assert!(a.radio.playlists[0].stations.is_empty(), "station removed");
+
+    // back out, then delete the playlist (confirm)
+    a.radio.pl.open = None;
+    a.radio.pl.sel = 0;
+    a.update(Action::RadioDeletePlaylist);
+    assert_eq!(a.radio.pl.confirm_delete, Some(jazz_id));
+    a.update(Action::RadioModalConfirm);
+    assert!(a.radio.playlists.is_empty(), "playlist deleted");
+    assert!(
+        crate::library::store::RadioPlaylists::load(&a.config.dir).is_empty(),
+        "deletion persisted"
+    );
+    let _ = std::fs::remove_dir_all(&a.config.dir);
+}
+
+#[test]
+fn radio_search_matches_across_fields_and_trending_sorts() {
+    use crate::radio::{Sort, Station};
+    let st = |name: &str, country: &str, lang: &str, tags: &str, trend: i32| Station {
+        name: name.into(),
+        url: format!("http://x/{name}"),
+        country: country.into(),
+        countrycode: country.chars().take(2).collect::<String>().to_uppercase(),
+        language: lang.into(),
+        tags: tags.into(),
+        clicktrend: trend,
+        ..Default::default()
+    };
+    let mut a = demo();
+    a.layout = Layout::Radio;
+    a.ingest_directory(
+        vec![
+            st("Alpha", "Germany", "german", "techno", 5),
+            st("Beta", "France", "french", "jazz", 99),
+        ],
+        true,
+    );
+    let names =
+        |a: &AppState| -> Vec<String> { a.radio.stations.iter().map(|s| s.name.clone()).collect() };
+
+    // the free-text query matches name / country / language / genre-tags
+    a.radio_search("french".into());
+    assert_eq!(names(&a), vec!["Beta"], "matched by language");
+    a.radio_search("germany".into());
+    assert_eq!(names(&a), vec!["Alpha"], "matched by country");
+    a.radio_search("jazz".into());
+    assert_eq!(names(&a), vec!["Beta"], "matched by genre tag");
+    a.radio_search("alph".into());
+    assert_eq!(names(&a), vec!["Alpha"], "matched by name");
+
+    // Trending sorts by clicktrend (biggest riser first)
+    a.radio.sort = Sort::Trending;
+    a.radio_search(String::new());
+    assert_eq!(
+        names(&a),
+        vec!["Beta", "Alpha"],
+        "trending: Beta (99) before Alpha (5)"
+    );
+}
+
+#[test]
+fn radio_vim_nav_ctrl_o_back_and_ctrl_np() {
+    use crate::action::Action;
+    use crate::app::{Focus, RadioSection};
+    use crate::event::{Key, KeyCode, Mods};
+    let mut a = demo();
+    a.layout = Layout::Radio;
+    a.focus = Focus::Main;
+    let ctrl = |c| Key {
+        code: KeyCode::Char(c),
+        mods: Mods {
+            ctrl: true,
+            ..Mods::default()
+        },
+    };
+
+    // h from the main pane jumps back to the section sidebar (vim left)
+    let h = Key {
+        code: KeyCode::Char('h'),
+        mods: Mods::default(),
+    };
+    assert_eq!(crate::keymap::map(&a, h), Action::FocusPane(Focus::Sidebar));
+
+    // ctrl-o = back (not swallowed by `o` = cycle-sort); ctrl-n/p still navigate
+    assert_eq!(crate::keymap::map(&a, ctrl('o')), Action::Back);
+    assert_eq!(crate::keymap::map(&a, ctrl('n')), Action::NavDown);
+    assert_eq!(crate::keymap::map(&a, ctrl('p')), Action::NavUp);
+
+    // Back drops a non-default section to All Stations (via the go_back radio arm)
+    a.radio.section = RadioSection::Favorites;
+    a.update(Action::Back);
+    assert_eq!(a.radio.section, RadioSection::AllStations);
+}
+
+#[test]
+fn radio_dvr_starts_at_live_and_rewind_detaches() {
+    use crate::radio::Station;
+    let mut a = demo();
+    a.layout = Layout::Radio;
+    a.rnow.now_station = Some(Station {
+        name: "Live FM".into(),
+        url: "u".into(),
+        ..Default::default()
+    });
+    a.rnow.dvr = None;
+
+    // first window report after tuning → follow the live edge: knob pinned right,
+    // nothing "behind live", even though the burst pushed `live` well past 0.
+    a.on_dvr_window(0.0, 30.0);
+    let d = a.rnow.dvr.expect("dvr window created");
+    assert!(d.following, "fresh tune follows live");
+    assert_eq!(d.pos, 30.0, "play-head pinned to the live edge");
+    assert_eq!(d.behind_live(), 0.0, "reads as live, not crawling up");
+
+    // window keeps advancing → still pinned to live
+    a.on_dvr_window(0.0, 45.0);
+    assert_eq!(
+        a.rnow.dvr.unwrap().pos,
+        45.0,
+        "stays pinned as live advances"
+    );
+
+    // rewinding to the buffer start detaches; the position is now the true spot
+    a.radio_go_start();
+    let d = a.rnow.dvr.unwrap();
+    assert!(!d.following, "rewind stops following");
+    assert!(d.behind_live() > 0.0, "shows how far behind live now");
+
+    // a further window report no longer yanks the play-head to live
+    a.on_dvr_window(0.0, 60.0);
+    assert_eq!(a.rnow.dvr.unwrap().pos, 0.0, "detached position preserved");
+
+    // go-live re-pins to the edge
+    a.radio_go_live();
+    assert!(a.rnow.dvr.unwrap().following, "go-live re-follows");
+}
+
+#[test]
+fn radio_icy_title_ignores_url_and_empty_promo_frames() {
+    use crate::radio::Station;
+    let mut a = demo();
+    a.rnow.now_station = Some(Station {
+        name: "Dance Wave!".into(),
+        url: "u".into(),
+        ..Default::default()
+    });
+
+    a.on_icy_title("Daft Punk - Around the World");
+    assert_eq!(
+        a.rnow.now_station_title.as_deref(),
+        Some("Daft Punk - Around the World")
+    );
+    // a promo URL frame must not overwrite the real song (the headline would flip)
+    a.on_icy_title("Tracklist: https://dancewave.online");
+    a.on_icy_title(""); // empty frame between songs
+    a.on_icy_title("http://dancewave.online");
+    assert_eq!(
+        a.rnow.now_station_title.as_deref(),
+        Some("Daft Punk - Around the World"),
+        "junk frames keep the last real title"
+    );
+    // a genuine new song still updates
+    a.on_icy_title("Justice - Genesis");
+    assert_eq!(
+        a.rnow.now_station_title.as_deref(),
+        Some("Justice - Genesis")
+    );
+}
+
+#[test]
+fn radio_add_picker_does_not_steal_jk_in_local_view() {
+    use crate::action::{Action, Motion};
+    use crate::radio::Station;
+    let mut a = demo();
+    // open the radio add-to-playlist picker, then leave for a local view
+    a.layout = Layout::Radio;
+    a.radio.stations = vec![Station {
+        name: "X".into(),
+        url: "u".into(),
+        ..Default::default()
+    }];
+    a.radio.sel = 0;
+    a.update(Action::RadioAddToPlaylist);
+    assert!(a.radio.pl.adding.is_some(), "picker open");
+    a.radio.pl.add_sel = 0;
+
+    a.layout = Layout::Dashboard;
+    let before = a.radio.pl.add_sel;
+    a.update(Action::Move(Motion::Down)); // j in the local view
+    assert_eq!(
+        a.radio.pl.add_sel, before,
+        "a stray radio modal must not capture j/k in a local view"
+    );
+}
+
+#[test]
 fn key_6_opens_radio_view() {
     use crate::event::{Key, KeyCode, Mods};
     let mut a = demo();
@@ -65,7 +337,10 @@ fn radio_view_lists_and_plays_stations() {
         "selected station becomes now-playing"
     );
     let s = render_layout(&mut a, Layout::Radio, 100, 20);
-    assert!(s.contains("📻"), "the now-bar shows the streaming station");
+    assert!(
+        s.contains("LIVE"),
+        "the now-bar shows the streaming station"
+    );
 }
 
 #[test]
@@ -118,6 +393,9 @@ fn radio_dedicated_keys_drive_filters() {
     };
     let mut a = demo();
     a.layout = Layout::Radio;
+    // the station-list keys are scoped to the Main pane (the section sidebar shadows
+    // them), so focus the list before asserting them.
+    a.focus = crate::app::Focus::Main;
     assert!(matches!(
         crate::keymap::map(&a, key('c')),
         Action::RadioOpenCountry
@@ -126,12 +404,9 @@ fn radio_dedicated_keys_drive_filters() {
         crate::keymap::map(&a, key('g')),
         Action::RadioOpenGenre
     ));
+    // `f` stars the highlighted station (unified with favourite elsewhere).
     assert!(matches!(
         crate::keymap::map(&a, key('f')),
-        Action::RadioToggleFavorites
-    ));
-    assert!(matches!(
-        crate::keymap::map(&a, key('s')),
         Action::RadioStar
     ));
     assert!(matches!(
@@ -165,12 +440,66 @@ fn radio_favorites_star_persists_and_toggles() {
     // persisted to disk
     let loaded = crate::library::store::RadioFavorites::load(&a.config.dir);
     assert_eq!(loaded.len(), 1, "favorite written to radio_favorites.json");
-    // 'f' shows the saved list
-    a.update(Action::RadioToggleFavorites);
-    assert!(a.radio.fav_view && a.radio_view_list().len() == 1);
-    // star again removes it
+    // the Favorites section shows the saved list
+    a.radio.section = crate::app::RadioSection::Favorites;
+    assert_eq!(a.radio_view_list().len(), 1);
+    // star again (from the favorites list) removes it
     a.update(Action::RadioStar);
     assert!(a.radio.favorites.is_empty(), "unstarred");
+    let _ = std::fs::remove_dir_all(&a.config.dir);
+}
+
+#[test]
+fn radio_history_records_recent_and_most_played() {
+    use crate::app::RadioSection;
+    use crate::radio::Station;
+    let st = |name: &str, uuid: &str| Station {
+        name: name.into(),
+        url: format!("http://x/{uuid}"),
+        uuid: uuid.into(),
+        ..Default::default()
+    };
+    let mut a = demo();
+    a.config.dir = std::env::temp_dir().join("lyrfin_radio_hist_test");
+    let _ = std::fs::remove_dir_all(&a.config.dir);
+    // start clean: demo() loads the shared test dir's history at construction
+    a.radio.history.clear();
+    a.radio.recent.clear();
+    a.radio.most_played.clear();
+    a.layout = Layout::Radio;
+
+    // tune A, then B, then A again → A played twice (most-played), and A's last
+    // play is the newest, so both lists lead with A.
+    a.play_station(st("Alpha FM", "a"));
+    a.play_station(st("Beta FM", "b"));
+    a.play_station(st("Alpha FM", "a"));
+    assert_eq!(a.radio.history.len(), 2, "two distinct stations tracked");
+
+    a.radio.section = RadioSection::MostPlayed;
+    let mp: Vec<&str> = a
+        .radio_view_list()
+        .iter()
+        .map(|s| s.name.as_str())
+        .collect();
+    assert_eq!(mp, vec!["Alpha FM", "Beta FM"], "ranked by play count");
+
+    a.radio.section = RadioSection::Recent;
+    let rc: Vec<&str> = a
+        .radio_view_list()
+        .iter()
+        .map(|s| s.name.as_str())
+        .collect();
+    assert_eq!(rc, vec!["Alpha FM", "Beta FM"], "newest-played first");
+
+    // persisted to radio_history.json (survives a reload)
+    let loaded = crate::library::store::RadioHistory::load(&a.config.dir);
+    assert_eq!(loaded.len(), 2, "history written to disk");
+    assert!(
+        loaded
+            .iter()
+            .any(|e| e.station.name == "Alpha FM" && e.play_count == 2),
+        "Alpha FM's two plays persisted"
+    );
     let _ = std::fs::remove_dir_all(&a.config.dir);
 }
 
@@ -347,16 +676,26 @@ fn radio_picker_autoselects_closest_match() {
 }
 
 #[test]
-fn radio_tab_toggles_search_and_list_focus() {
+fn radio_tab_cycles_sidebar_and_list_focus() {
     use crate::action::{Action, Motion};
+    use crate::app::Focus;
     use crate::event::{Key, KeyCode, Mods};
     use crate::radio::Station;
     let tab = Key {
         code: KeyCode::Tab,
         mods: Mods::default(),
     };
+    let slash = Key {
+        code: KeyCode::Char('/'),
+        mods: Mods::default(),
+    };
+    let j = Key {
+        code: KeyCode::Char('j'),
+        mods: Mods::default(),
+    };
     let mut a = demo();
     a.layout = Layout::Radio;
+    a.focus = Focus::Main;
     a.radio.stations = vec![
         Station {
             name: "A".into(),
@@ -372,18 +711,26 @@ fn radio_tab_toggles_search_and_list_focus() {
         },
     ];
     a.radio.sel = 0;
-    // list focused by default: j moves the list, never the query
-    let j = Key {
-        code: KeyCode::Char('j'),
-        mods: Mods::default(),
-    };
+    // list focused: j moves the station list, never the query
     assert!(matches!(
         crate::keymap::map(&a, j),
         Action::Move(Motion::Down)
     ));
-    // Tab → search focus; now j edits the query instead of moving
+    // Tab cycles focus to the section sidebar; j then steps sections (still a Move,
+    // routed to the sidebar by navigation)
+    assert!(matches!(crate::keymap::map(&a, tab), Action::CyclePane));
+    a.update(Action::CyclePane);
+    assert_eq!(a.focus, Focus::Sidebar);
     assert!(matches!(
-        crate::keymap::map(&a, tab),
+        crate::keymap::map(&a, j),
+        Action::Move(Motion::Down)
+    ));
+    // Tab again returns to the station list
+    a.update(Action::CyclePane);
+    assert_eq!(a.focus, Focus::Main);
+    // '/' focuses the search box; only then does typing edit the query
+    assert!(matches!(
+        crate::keymap::map(&a, slash),
         Action::RadioFocusSearch
     ));
     a.update(Action::RadioFocusSearch);
@@ -392,14 +739,9 @@ fn radio_tab_toggles_search_and_list_focus() {
         Action::RadioInput(q) => assert_eq!(q, "j"),
         other => panic!("expected query edit while search-focused, got {other:?}"),
     }
-    // Tab again → back to the list (j moves again)
-    assert!(matches!(crate::keymap::map(&a, tab), Action::RadioCancel));
+    // Esc leaves search edit but stays in the view
     a.update(Action::RadioCancel);
     assert!(!a.radio.editing);
-    assert!(matches!(
-        crate::keymap::map(&a, j),
-        Action::Move(Motion::Down)
-    ));
 }
 
 #[test]
@@ -504,7 +846,7 @@ fn radio_overlay_keeps_local_context_in_local_views() {
         "Dashboard shows the local track, not the radio"
     );
     assert!(
-        !s.contains("📻"),
+        !s.contains("Cairo Jazz"),
         "no radio bleeds into the music-player view"
     );
     assert!(
@@ -560,7 +902,7 @@ fn radio_channel_change_updates_overlay() {
     assert_eq!(a.player.current, local_before, "local still preserved");
     // the Radio view's now-bar shows the station (no album-art block)
     let s = render_layout(&mut a, Layout::Radio, 100, 20);
-    assert!(s.contains("📻"), "radio now-bar");
+    assert!(s.contains("LIVE"), "radio now-bar");
     assert!(!s.contains("████████████"), "no album-art block for radio");
 }
 
@@ -659,10 +1001,7 @@ fn radio_icy_title_headlines_the_now_bar() {
         s.contains("Miles Davis - So What"),
         "ICY song is the headline"
     );
-    assert!(
-        s.contains("📻") && s.contains("Cairo Jazz"),
-        "station shown below"
-    );
+    assert!(s.contains("Cairo Jazz"), "station shown below the ICY song");
 }
 
 #[test]

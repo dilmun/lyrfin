@@ -4,18 +4,23 @@ use super::*;
 
 impl AppState {
     pub(crate) fn seek_to_fraction(&mut self, frac: f32) {
-        // A timeshifted live stream (DVR): a progress-bar scrub maps the fraction
-        // onto the window `[start, live]`. A live stream without a DVR buffer is
-        // forward-only (no-op).
-        if let Some(dvr) = self.rnow.dvr {
+        // The radio DVR window bar is only scrubbable from the Radio view; in every
+        // other view the radio is a background overlay whose stream must be left alone.
+        if self.showing_radio()
+            && let Some(dvr) = self.rnow.dvr
+        {
             let target = dvr.start + (dvr.live - dvr.start) * frac.clamp(0.0, 1.0) as f64;
             self.engine
                 .send(AudioCommand::Seek(Duration::from_secs_f64(target)));
             if let Some(d) = self.rnow.dvr.as_mut() {
                 d.pos = target;
+                // scrubbing to (or past) the live edge re-follows it; earlier detaches.
+                d.following = (d.live - target) < super::LIVE_EDGE_SECS;
             }
             return;
         }
+        // A live radio stream holds the engine → seek is a no-op (the shown position
+        // is the preserved local track's, and a live stream is not ours to scrub here).
         if self.rnow.is_live() {
             return;
         }
@@ -272,20 +277,23 @@ impl AppState {
     }
 
     pub(crate) fn seek_relative(&mut self, delta: i64) {
-        // A timeshifted live stream (DVR): seek within its window, clamped to
-        // `[start, live]`. Works whether the station is playing or paused — the
-        // buffer persists while paused.
-        if let Some(dvr) = self.rnow.dvr {
+        // The radio DVR window is only seekable from the Radio view; in every other
+        // view the radio is a background overlay and its window must be left alone.
+        if self.showing_radio()
+            && let Some(dvr) = self.rnow.dvr
+        {
             let target = (dvr.pos + delta as f64).clamp(dvr.start, dvr.live);
             self.engine
                 .send(AudioCommand::Seek(Duration::from_secs_f64(target)));
             if let Some(d) = self.rnow.dvr.as_mut() {
                 d.pos = target; // reflect immediately; Progress will confirm
+                d.following = (d.live - target) < super::LIVE_EDGE_SECS;
             }
             return;
         }
-        // A live stream with no DVR buffer is forward-only → seeking is a no-op (it
-        // can't be sought, and the shown position is the preserved local track's).
+        // A live radio stream holds the engine (any view) → seek is a no-op: the shown
+        // position is the preserved local track's, which must not be disturbed, and a
+        // live stream is forward-only / not ours to seek from here.
         if self.rnow.is_live() {
             return;
         }

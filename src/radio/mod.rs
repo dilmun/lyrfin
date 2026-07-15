@@ -51,6 +51,10 @@ pub struct Station {
     pub clickcount: u32,
     #[serde(default)]
     pub votes: u32,
+    /// Recent trend in tune-ins (Radio Browser `clicktrend`): positive = rising,
+    /// negative = falling. Drives the Trending section.
+    #[serde(default)]
+    pub clicktrend: i32,
 }
 
 impl Station {
@@ -71,6 +75,9 @@ impl Station {
         if !genre.is_empty() {
             parts.push(genre.to_string());
         }
+        if !self.codec.is_empty() {
+            parts.push(self.codec.to_uppercase());
+        }
         if self.bitrate > 0 {
             parts.push(format!("{}k", self.bitrate));
         }
@@ -78,14 +85,38 @@ impl Station {
     }
 }
 
+/// One entry in the radio listening history: a station, how many times it was
+/// tuned in, and when it was last played (unix seconds). Persisted to
+/// `radio_history.json`; drives the Recent + Most Played sidebar sections.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoryEntry {
+    pub station: Station,
+    #[serde(default)]
+    pub play_count: u32,
+    #[serde(default)]
+    pub last_played: u64,
+}
+
+/// A user-created named collection of stations (distinct from the single starred
+/// Favorites list). A station may belong to several playlists; stations are stored
+/// inline (self-contained value objects). Persisted to `radio_playlists.json`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Playlist {
+    pub id: u32,
+    pub name: String,
+    #[serde(default)]
+    pub stations: Vec<Station>,
+}
+
 /// Result ordering for a station search.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Sort {
     #[default]
     Popular, // most-clicked
-    Votes,   // most-voted
-    Name,    // A→Z
-    Bitrate, // highest bitrate
+    Trending, // biggest recent rise (clicktrend)
+    Votes,    // most-voted
+    Name,     // A→Z
+    Bitrate,  // highest bitrate
 }
 
 impl Sort {
@@ -93,6 +124,7 @@ impl Sort {
     fn params(self) -> (&'static str, bool) {
         match self {
             Sort::Popular => ("clickcount", true),
+            Sort::Trending => ("clicktrend", true),
             Sort::Votes => ("votes", true),
             Sort::Name => ("name", false),
             Sort::Bitrate => ("bitrate", true),
@@ -101,6 +133,7 @@ impl Sort {
     pub fn label(self) -> &'static str {
         match self {
             Sort::Popular => "popular",
+            Sort::Trending => "trending",
             Sort::Votes => "votes",
             Sort::Name => "name",
             Sort::Bitrate => "bitrate",
@@ -112,11 +145,14 @@ impl Sort {
             Sort::Votes => Sort::Name,
             Sort::Name => Sort::Bitrate,
             Sort::Bitrate => Sort::Popular,
+            // Trending is entered via its section, not the `o` cycle — fold it in.
+            Sort::Trending => Sort::Popular,
         }
     }
     /// Parse a persisted label back into a `Sort` (defaults to `Popular`).
     pub fn from_label(s: &str) -> Self {
         match s {
+            "trending" => Sort::Trending,
             "votes" => Sort::Votes,
             "name" => Sort::Name,
             "bitrate" => Sort::Bitrate,
@@ -231,6 +267,8 @@ struct RawStation {
     #[serde(default)]
     votes: u32,
     #[serde(default)]
+    clicktrend: i32,
+    #[serde(default)]
     hls: u8,
     #[serde(default)]
     lastcheckok: u8,
@@ -283,6 +321,7 @@ fn clean(rows: Vec<RawStation>) -> Vec<Station> {
                 uuid: r.stationuuid,
                 clickcount: r.clickcount,
                 votes: r.votes,
+                clicktrend: r.clicktrend,
             })
         })
         .collect()
@@ -631,6 +670,7 @@ mod tests {
             stationuuid: String::new(),
             clickcount: 0,
             votes: 0,
+            clicktrend: 0,
             hls: 0,
             lastcheckok: 0,
         }

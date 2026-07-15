@@ -182,6 +182,8 @@ impl Layout {
             Layout::FullPlayer => &[Panel::Visualizer, Panel::Queue],
             Layout::LyricsFocus => &[Panel::Visualizer, Panel::Queue],
             Layout::Spotify => &[Panel::Sidebar, Panel::Queue, Panel::Artist, Panel::Lyrics],
+            // Radio hosts only the section Sidebar (no queue/artist/lyrics panes).
+            Layout::Radio => &[Panel::Sidebar],
             _ => &[],
         }
     }
@@ -204,6 +206,7 @@ impl Layout {
             (Layout::Dashboard, Panel::Queue) => (true, Right),
             (Layout::Dashboard, Panel::Lyrics) => (true, Right),
             (Layout::Spotify, Panel::Sidebar) => (true, Left),
+            (Layout::Radio, Panel::Sidebar) => (true, Left),
             (_, Panel::Queue) => (false, Right),
             (Layout::LyricsFocus, Panel::Visualizer) => (false, Left),
             (Layout::FullPlayer, Panel::Visualizer) => (true, Top),
@@ -382,8 +385,8 @@ pub enum Setting {
 /// Settings overlay and the per-view `;` popup share this one vocabulary, so a
 /// group name means the same thing in both places (the popup just curates a
 /// subset per view). The overlay drops a group only when the current view has no
-/// rows for it — in practice only "Panes" (Radio/Concert host no movable panels);
-/// see [`crate::app::AppState::settings_tabs`].
+/// rows for it — in practice only "Panes" (Concert is chrome-less, hosting no
+/// movable panels); see [`crate::app::AppState::settings_tabs`].
 pub const SETTINGS_GROUPS: [&str; 11] = [
     "General",
     "Panes",

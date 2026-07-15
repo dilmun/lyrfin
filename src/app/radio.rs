@@ -16,6 +16,11 @@ pub struct RadioNow {
     pub dvr: Option<DvrState>,
 }
 
+/// Within this many seconds of the live edge, a DVR stream is treated as "at
+/// live": the play-head pins to the edge and the marker reads LIVE. Shared by the
+/// seek logic and the now-bar so both agree on when a stream is following live.
+pub const LIVE_EDGE_SECS: f64 = 4.0;
+
 /// The timeshift window + play position for a buffered live stream (seconds since
 /// tune-in): the stream can be sought anywhere in `[start, live]`.
 #[derive(Debug, Clone, Copy, Default)]
@@ -26,11 +31,20 @@ pub struct DvrState {
     pub start: f64,
     /// Live edge (newest buffered audio).
     pub live: f64,
+    /// Following the live edge: the play-head is pinned to `live` and the progress
+    /// bar stays stuck at the right end. `true` on tune-in and after "go live";
+    /// cleared once the user rewinds into the buffer. Keeps a fresh stream from
+    /// crawling up from the buffer start as the initial burst races ahead.
+    pub following: bool,
 }
 
 impl DvrState {
-    /// Seconds the play position sits behind the live edge (0 when at/near live).
+    /// Seconds the play position sits behind the live edge (0 when at/near live or
+    /// while following the live edge).
     pub fn behind_live(&self) -> f64 {
+        if self.following {
+            return 0.0;
+        }
         (self.live - self.pos).max(0.0)
     }
 }
@@ -53,8 +67,44 @@ impl AppState {
             self.engine.send(AudioCommand::GoLive);
             if let Some(d) = self.rnow.dvr.as_mut() {
                 d.pos = d.live;
+                d.following = true; // pin back to the live edge
             }
         }
+    }
+
+    /// Apply a live ICY "now playing" title from the stream. Many stations interleave
+    /// promo junk between song titles — the stream URL, a "Tracklist: https://…" plug,
+    /// or an empty frame — which makes the headline flip-flop; ignore those and keep
+    /// the last real title. No-op when no station is tuned.
+    pub(crate) fn on_icy_title(&mut self, t: &str) {
+        let t = t.trim();
+        let junk =
+            t.is_empty() || t.contains("://") || t.starts_with("http") || t.starts_with("www.");
+        if self.rnow.now_station.is_some() && !junk {
+            self.rnow.now_station_title = Some(t.to_string());
+        }
+    }
+
+    /// Apply an engine timeshift-window report `[start, live]` (seconds since
+    /// tune-in). A fresh window (first report after tuning in) starts pinned to the
+    /// live edge so the bar sits at the end, not crawling up from the buffer start as
+    /// the initial burst races ahead; while following, the play-head tracks `live`.
+    pub(crate) fn on_dvr_window(&mut self, start: f64, live: f64) {
+        if self.rnow.now_station.is_none() {
+            return;
+        }
+        let fresh = self.rnow.dvr.is_none();
+        let dvr = self.rnow.dvr.get_or_insert_with(Default::default);
+        if fresh {
+            dvr.following = true;
+        }
+        dvr.start = start;
+        dvr.live = live;
+        dvr.pos = if dvr.following {
+            live
+        } else {
+            dvr.pos.clamp(start, live)
+        };
     }
 
     /// Jump a timeshifted live stream to the oldest buffered audio (the start of the
@@ -67,6 +117,7 @@ impl AppState {
                 )));
             if let Some(d) = self.rnow.dvr.as_mut() {
                 d.pos = d.start;
+                d.following = false; // rewound to the buffer start — stop following
             }
         }
     }
@@ -77,6 +128,9 @@ impl AppState {
     /// Switch to the Radio view and load the default station list on first open.
     pub(crate) fn open_radio(&mut self) {
         self.set_layout(Layout::Radio);
+        // land on the station list (not the section sidebar) so j/k moves stations
+        // the moment the view opens, matching the pre-sidebar muscle memory.
+        self.set_focus(Focus::Main);
         // pull the full directory (cache or download) so everything is local;
         // until it's ready the live API search serves as the fallback.
         self.load_directory(false);
@@ -109,12 +163,26 @@ impl AppState {
         self.load_directory(true);
     }
 
-    /// The list currently shown in the Radio view: favorites or search results.
+    /// The station list the active sidebar section shows: the saved favorites, a
+    /// dedicated history/playlist list, or the shared search-results set.
     pub fn radio_view_list(&self) -> &[crate::radio::Station] {
-        if self.radio.fav_view {
-            &self.radio.favorites
-        } else {
-            &self.radio.stations
+        match self.radio.section {
+            RadioSection::Favorites => &self.radio.favorites,
+            RadioSection::Recent => &self.radio.recent,
+            RadioSection::MostPlayed => &self.radio.most_played,
+            // Drilled into a playlist → its stations; on the flat playlist list the
+            // main pane renders the names itself (not a station table), so → empty.
+            RadioSection::Playlists => match self.radio.pl.open {
+                Some(id) => self
+                    .radio
+                    .playlists
+                    .iter()
+                    .find(|p| p.id == id)
+                    .map_or(&[][..], |p| &p.stations),
+                None => &[],
+            },
+            // Everything else views the shared search-results set (see `shows_results`).
+            _ => &self.radio.stations,
         }
     }
 
@@ -211,7 +279,11 @@ impl AppState {
     /// then it falls back to a coalesced live API search.
     pub(crate) fn radio_search(&mut self, query: String) {
         self.radio.query = query.clone();
-        self.radio.fav_view = false;
+        // Typing implies you want results — leave a dedicated-list section
+        // (Favorites/Recent/…) for the results view so the matches are visible.
+        if !self.radio.section.shows_results() {
+            self.radio.section = RadioSection::AllStations;
+        }
         self.radio.sel = 0;
         if self.radio.local_ready {
             self.run_local_search();
@@ -239,10 +311,24 @@ impl AppState {
         self.radio_search(q);
     }
 
-    /// Enter: play the selected station, or apply the open picker's selection.
+    /// Enter: apply the open picker, activate the highlighted sidebar section, or
+    /// play the selected station (depending on what has focus).
     pub(crate) fn radio_activate(&mut self) {
         if self.radio.picker.is_some() {
             self.radio_apply_picker();
+            return;
+        }
+        if self.radio.pl.modal_open() {
+            self.radio_modal_confirm();
+            return;
+        }
+        if self.focus == Focus::Sidebar {
+            self.radio_activate_section();
+            return;
+        }
+        // Playlists section, flat list: Enter drills into the highlighted playlist.
+        if self.radio.section == RadioSection::Playlists && self.radio.pl.open.is_none() {
+            self.radio_playlist_open();
             return;
         }
         let pick = self.radio_view_list().get(self.radio.sel).cloned();
@@ -252,18 +338,49 @@ impl AppState {
         }
     }
 
-    /// Esc: close the picker, leave search edit, or leave favorites. In plain
-    /// browse it does nothing — Esc never drops you back to the local player
-    /// (switch views with 1–6 for that), so it can't be hit by accident.
-    pub(crate) fn radio_cancel(&mut self) {
+    /// Enter (or click) on a sidebar section: open its picker (Countries/Genres),
+    /// focus the query box (Search), apply its sort (Popular/Trending), else just
+    /// hand focus to the station list. Shared by the keymap and the mouse handler.
+    pub(crate) fn radio_activate_section(&mut self) {
+        use crate::radio::Sort;
+        match self.radio.section {
+            RadioSection::Countries => self.radio_open_picker(PickerKind::Country),
+            RadioSection::Genres => self.radio_open_picker(PickerKind::Genre),
+            RadioSection::Popular => {
+                self.radio.sort = Sort::Popular;
+                self.refresh_radio();
+                self.set_focus(Focus::Main);
+            }
+            RadioSection::Trending => {
+                self.radio.sort = Sort::Trending;
+                self.refresh_radio();
+                self.set_focus(Focus::Main);
+            }
+            _ => self.set_focus(Focus::Main),
+        }
+    }
+
+    /// Back out one level in the Radio view (Esc / Ctrl-O): close the picker, a
+    /// playlist modal, or the search box; leave a drilled-in playlist; else drop the
+    /// active section back to All Stations. Returns whether anything was backed out —
+    /// so the global `go_back` can chain it. In plain browse it does nothing (Esc
+    /// never drops you back to the local player; switch views with 1–6 for that).
+    pub(crate) fn radio_back(&mut self) -> bool {
         if self.radio.picker.is_some() {
             self.radio.picker = None;
+        } else if self.radio.pl.modal_open() {
+            self.radio_modal_cancel();
         } else if self.radio.editing {
             self.radio.editing = false;
-        } else if self.radio.fav_view {
-            self.radio.fav_view = false;
+        } else if self.radio.section == RadioSection::Playlists && self.radio.pl.open.is_some() {
+            self.radio_playlist_back();
+        } else if self.radio.section != RadioSection::AllStations {
+            self.radio.section = RadioSection::AllStations;
             self.radio.sel = 0;
+        } else {
+            return false;
         }
+        true
     }
 
     /// Open the country/genre picker, fetching its source list on first use.
@@ -343,17 +460,7 @@ impl AppState {
         self.refresh_radio();
     }
 
-    /// 'f': toggle between search results and the saved favorites list.
-    pub(crate) fn radio_toggle_favorites(&mut self) {
-        self.radio.editing = false;
-        self.radio.fav_view = !self.radio.fav_view;
-        self.radio.sel = 0;
-        if self.radio.fav_view && self.radio.favorites.is_empty() {
-            self.notify("No favorites yet — press s to star a station".into());
-        }
-    }
-
-    /// 's': star/unstar the highlighted station and persist the list.
+    /// 'f': star/unstar the highlighted station and persist the list.
     pub(crate) fn radio_star(&mut self) {
         let Some(st) = self.radio_view_list().get(self.radio.sel).cloned() else {
             return;
@@ -367,7 +474,7 @@ impl AppState {
         {
             self.radio.favorites.remove(pos);
             self.notify(format!("Unstarred: {}", st.name));
-            if self.radio.fav_view {
+            if self.radio.section == RadioSection::Favorites {
                 let len = self.radio.favorites.len();
                 if self.radio.sel >= len {
                     self.radio.sel = len.saturating_sub(1);
@@ -393,11 +500,12 @@ impl AppState {
         self.play_station(st);
     }
 
-    /// 'o': cycle the result sort order and re-search (no-op in favorites view).
+    /// 'o': cycle the result sort order and re-search (only the results sections
+    /// are sorted; favorites / history keep their own order).
     pub(crate) fn radio_cycle_sort(&mut self) {
         self.radio.sort = self.radio.sort.next();
         self.notify(format!("Sort: {}", self.radio.sort.label()));
-        if !self.radio.fav_view {
+        if self.radio.section.shows_results() {
             self.refresh_radio();
         }
     }
@@ -410,6 +518,7 @@ impl AppState {
 
     pub(crate) fn play_station(&mut self, st: crate::radio::Station) {
         let (url, name) = (st.url.clone(), st.name.clone());
+        self.record_station_play(&st); // history: bump count + last-played, persist
         self.rnow.now_station = Some(st);
         self.rnow.now_station_title = None; // ICY title arrives once the stream is up
         self.rnow.radio_paused = false;
@@ -428,6 +537,41 @@ impl AppState {
         self.engine.send(AudioCommand::LoadStream { url, dvr });
         self.engine.send(AudioCommand::Play);
         self.notify(format!("Tuning in: {name}"));
+    }
+
+    /// Record a tune-in: bump the station's play count + last-played in the history
+    /// (move-to-front, deduped by [`station_key`]), rebuild the Recent / Most Played
+    /// views, and persist to `radio_history.json`. Called from every play path so
+    /// n/p channel-hopping and Enter both count.
+    pub(crate) fn record_station_play(&mut self, st: &crate::radio::Station) {
+        let now = crate::datetime::now_unix();
+        let key = station_key(st).to_string();
+        if let Some(e) = self
+            .radio
+            .history
+            .iter_mut()
+            .find(|e| station_key(&e.station) == key)
+        {
+            e.play_count = e.play_count.saturating_add(1);
+            e.last_played = now;
+            e.station = st.clone(); // refresh metadata (name/bitrate may have changed)
+        } else {
+            self.radio.history.push(crate::radio::HistoryEntry {
+                station: st.clone(),
+                play_count: 1,
+                last_played: now,
+            });
+        }
+        // bound: keep the most-recently-played CAP entries
+        let cap = crate::library::store::RadioHistory::CAP;
+        if self.radio.history.len() > cap {
+            self.radio
+                .history
+                .sort_by_key(|e| std::cmp::Reverse(e.last_played));
+            self.radio.history.truncate(cap);
+        }
+        self.radio.rebuild_history_views();
+        crate::library::store::RadioHistory::save(&self.radio.history, &self.config.dir);
     }
 
     /// Apply a radio worker result (search results, picker lists, errors),
@@ -546,6 +690,8 @@ impl AppState {
         stations.sort_by_key(|b| std::cmp::Reverse(b.clickcount));
         self.radio.name_lc = stations.iter().map(|s| s.name.to_lowercase()).collect();
         self.radio.tags_lc = stations.iter().map(|s| s.tags.to_lowercase()).collect();
+        self.radio.country_lc = stations.iter().map(|s| s.country.to_lowercase()).collect();
+        self.radio.lang_lc = stations.iter().map(|s| s.language.to_lowercase()).collect();
         self.radio.all_countries = derive_countries(&stations);
         self.radio.all_tags = derive_genres(&stations, None);
         self.radio.genres_by_country.clear(); // re-derive per country on demand
@@ -563,11 +709,105 @@ impl AppState {
     }
 }
 
-/// Internet-radio view state: the live search query, the fetched stations, the
-/// active filters (country / genre / sort), the saved favorites, and any open
-/// filter picker. `key` tags the in-flight search so stale results are ignored.
+/// The Radio view's sidebar sections — the radio analogue of [`LocalSection`].
+/// A flat list navigated in the sidebar: some are station lists (All Stations,
+/// Favorites, …); Countries/Genres drill into a filter picker. Searching is the
+/// always-present query box atop the main pane, not a section. The active section
+/// drives [`AppState::radio_view_list`]. Icons are monochrome glyphs (theme-tinted
+/// by `section_list`), matching the local library sidebar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum RadioSection {
+    #[default]
+    AllStations,
+    Favorites,
+    Playlists,
+    Recent,
+    MostPlayed,
+    Countries,
+    Genres,
+    Popular,
+    Trending,
+}
+
+impl RadioSection {
+    /// All sections in sidebar order.
+    pub const ALL: [RadioSection; 9] = [
+        RadioSection::AllStations,
+        RadioSection::Favorites,
+        RadioSection::Playlists,
+        RadioSection::Recent,
+        RadioSection::MostPlayed,
+        RadioSection::Countries,
+        RadioSection::Genres,
+        RadioSection::Popular,
+        RadioSection::Trending,
+    ];
+    pub fn label(self) -> &'static str {
+        match self {
+            RadioSection::AllStations => "All Stations",
+            RadioSection::Favorites => "Favorites",
+            RadioSection::Playlists => "Playlists",
+            RadioSection::Recent => "Recent",
+            RadioSection::MostPlayed => "Most Played",
+            RadioSection::Countries => "Countries",
+            RadioSection::Genres => "Genres",
+            RadioSection::Popular => "Popular",
+            RadioSection::Trending => "Trending",
+        }
+    }
+    pub fn icon(self) -> &'static str {
+        match self {
+            RadioSection::AllStations => "♫",
+            RadioSection::Favorites => "♥",
+            RadioSection::Playlists => "≡",
+            RadioSection::Recent => "↻",
+            RadioSection::MostPlayed => "▲",
+            RadioSection::Countries => "⊕",
+            RadioSection::Genres => "⊞",
+            RadioSection::Popular => "★",
+            RadioSection::Trending => "↗",
+        }
+    }
+    /// Stable key for session persistence (independent of label/order).
+    pub fn key(self) -> &'static str {
+        match self {
+            RadioSection::AllStations => "all",
+            RadioSection::Favorites => "favorites",
+            RadioSection::Playlists => "playlists",
+            RadioSection::Recent => "recent",
+            RadioSection::MostPlayed => "most_played",
+            RadioSection::Countries => "countries",
+            RadioSection::Genres => "genres",
+            RadioSection::Popular => "popular",
+            RadioSection::Trending => "trending",
+        }
+    }
+    pub fn from_key(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|sec| sec.key() == s)
+    }
+    /// Whether this section's main list is the shared search-results set
+    /// (`radio.stations`) rather than a dedicated list (favorites / history /
+    /// playlists) — so a live search never has to clear the section to show hits.
+    pub fn shows_results(self) -> bool {
+        matches!(
+            self,
+            RadioSection::AllStations
+                | RadioSection::Countries
+                | RadioSection::Genres
+                | RadioSection::Popular
+                | RadioSection::Trending
+        )
+    }
+}
+
+/// Internet-radio view state: the active sidebar section, the live search query,
+/// the fetched stations, the active filters (country / genre / sort), the saved
+/// favorites, and any open filter picker. `key` tags the in-flight search so
+/// stale results are ignored.
 #[derive(Default)]
 pub struct Radio {
+    /// The selected sidebar section (drives which list `radio_view_list` returns).
+    pub section: RadioSection,
     pub query: String,
     pub sel: usize,
     /// Persisted sticky scroll offset of the station list — so clicking a visible
@@ -587,10 +827,21 @@ pub struct Radio {
     pub tag: Option<String>,
     /// Result ordering.
     pub sort: crate::radio::Sort,
-    /// Showing the saved favorites list instead of search results.
-    pub fav_view: bool,
     /// Starred stations (persisted to `radio_favorites.json`).
     pub favorites: Vec<crate::radio::Station>,
+    /// Listening history (persisted to `radio_history.json`) — the source of truth
+    /// for the Recent + Most Played sections; `recent`/`most_played` are derived
+    /// station lists rebuilt from it (see [`Radio::rebuild_history_views`]).
+    pub history: Vec<crate::radio::HistoryEntry>,
+    /// Derived: stations newest-played first (the Recent section).
+    pub recent: Vec<crate::radio::Station>,
+    /// Derived: stations by descending play count (the Most Played section).
+    pub most_played: Vec<crate::radio::Station>,
+    /// User-created named station collections (persisted to `radio_playlists.json`).
+    pub playlists: Vec<crate::radio::Playlist>,
+    /// Playlists-section drill + modal state (which list is open, name entry, the
+    /// add-to-playlist picker, delete confirm).
+    pub pl: RadioPlaylistUi,
     /// Open country/genre picker, if any.
     pub picker: Option<RadioPicker>,
     /// Cached picker source lists (fetched once, reused on reopen).
@@ -603,16 +854,79 @@ pub struct Radio {
     /// The full station directory, downloaded once and cached, so all searching /
     /// filtering / sorting happens locally with no per-keystroke API calls.
     pub all_stations: Vec<crate::radio::Station>,
-    /// Lowercased name / tags parallel to `all_stations` (built once) so local
-    /// filtering never allocates per row.
+    /// Lowercased name / tags / country / language parallel to `all_stations`
+    /// (built once) so the multi-field search never allocates per row.
     pub(crate) name_lc: Vec<String>,
     pub(crate) tags_lc: Vec<String>,
+    pub(crate) country_lc: Vec<String>,
+    pub(crate) lang_lc: Vec<String>,
     /// The local directory is loaded and in use (else we use live API search).
     pub local_ready: bool,
     /// A directory load/download is in flight.
     pub directory_loading: bool,
     /// Bytes downloaded so far for the in-progress directory fetch (0 = none).
     pub directory_progress: u64,
+}
+
+/// What a radio playlist name-entry is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RadioNameTarget {
+    /// Create a new playlist.
+    New,
+    /// Rename the playlist with this id.
+    Rename(u32),
+}
+
+/// Playlists-section UI: the drill-in cursor plus the transient modal states (name
+/// entry, the "add station to a playlist" picker, and the delete confirm). All
+/// `None`/empty means the flat playlist list is showing.
+#[derive(Default)]
+pub struct RadioPlaylistUi {
+    /// The playlist drilled into (its stations show in the main pane); `None` = the
+    /// flat list of playlists is showing.
+    pub open: Option<u32>,
+    /// Cursor within the flat playlist list.
+    pub sel: usize,
+    /// Sticky scroll offset of the flat playlist list (set during render).
+    pub list_off: std::cell::Cell<usize>,
+    /// Active name-entry (create / rename) + its live buffer; `None` = not naming.
+    pub naming: Option<RadioNameTarget>,
+    pub buffer: String,
+    /// A station being added to a playlist: the "pick a playlist" overlay is open.
+    pub adding: Option<crate::radio::Station>,
+    /// Cursor in the add-to-playlist picker (an extra trailing row = "New playlist").
+    pub add_sel: usize,
+    /// A playlist id pending the two-step delete confirm.
+    pub confirm_delete: Option<u32>,
+}
+
+impl RadioPlaylistUi {
+    /// Whether any radio-playlist modal (name entry, add picker, delete confirm) is
+    /// open — used to gate global keys and route input to the modal.
+    pub fn modal_open(&self) -> bool {
+        self.naming.is_some() || self.adding.is_some() || self.confirm_delete.is_some()
+    }
+}
+
+impl Radio {
+    /// Rebuild the derived `recent` (newest-played first) and `most_played` (by
+    /// descending play count) station lists from `history`. Cheap — the history is
+    /// bounded — so it runs on load and after every tune-in rather than per frame.
+    pub fn rebuild_history_views(&mut self) {
+        let mut recent: Vec<&crate::radio::HistoryEntry> = self.history.iter().collect();
+        recent.sort_by_key(|e| std::cmp::Reverse(e.last_played));
+        self.recent = recent.into_iter().map(|e| e.station.clone()).collect();
+
+        let mut most: Vec<&crate::radio::HistoryEntry> =
+            self.history.iter().filter(|e| e.play_count > 0).collect();
+        most.sort_by_key(|e| {
+            (
+                std::cmp::Reverse(e.play_count),
+                std::cmp::Reverse(e.last_played),
+            )
+        });
+        self.most_played = most.into_iter().map(|e| e.station.clone()).collect();
+    }
 }
 
 /// A modal filter picker overlaying the Radio view (country or genre): a list

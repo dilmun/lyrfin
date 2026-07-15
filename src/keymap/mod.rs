@@ -728,6 +728,33 @@ fn radio_view(app: &AppState, key: Key) -> Option<Action> {
     if app.layout != Layout::Radio {
         return None;
     }
+    // A playlist modal (name entry / add-to-playlist picker / delete confirm) is
+    // open — it captures every key so no browse command fires beneath it.
+    if app.radio.pl.modal_open() {
+        if app.radio.pl.naming.is_some() {
+            return Some(text_capture(
+                key,
+                &app.radio.pl.buffer,
+                Action::RadioNameInput,
+                Action::RadioModalConfirm,
+                Action::RadioModalCancel,
+            ));
+        }
+        if app.radio.pl.confirm_delete.is_some() {
+            return Some(match key.code {
+                KeyCode::Char('y') | KeyCode::Enter => Action::RadioModalConfirm,
+                _ => Action::RadioModalCancel,
+            });
+        }
+        // the add-to-playlist picker: j/k move, Enter adds (or opens New), Esc closes
+        return Some(match key.code {
+            KeyCode::Esc => Action::RadioModalCancel,
+            KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => Action::RadioModalConfirm,
+            KeyCode::Up | KeyCode::Char('k') => Action::Move(Motion::Up),
+            KeyCode::Down | KeyCode::Char('j') => Action::Move(Motion::Down),
+            _ => Action::Noop,
+        });
+    }
     // A country/genre picker is open. Like the station list, it defaults to
     // navigation (j/k/arrows move); '/' focuses its filter box for typing.
     if let Some(p) = &app.radio.picker {
@@ -767,19 +794,70 @@ fn radio_view(app: &AppState, key: Key) -> Option<Action> {
             Action::RadioCancel,
         ));
     }
-    // Browse mode: source-specific keys only (`n`/`p` change station, not the local
-    // queue). List navigation is left to the shared global table via the
-    // fall-through below.
+    // Modifier combos are never radio single-key commands — let the global table
+    // resolve them (ctrl-o = back, ctrl-q = queue …); ctrl-n/p are handled upstream
+    // by `universal_nav`.
+    if key.mods.ctrl || key.mods.alt {
+        return Some(global_binding(app, key));
+    }
+    // Browse mode. Keys common to both panes first, then pane-specific keys; Tab
+    // (cycle focus, sidebar ↔ list) and j/k (Move) fall through to the global table.
     match key.code {
         KeyCode::Esc => return Some(Action::RadioCancel),
-        KeyCode::Enter => return Some(Action::RadioActivate),
-        // Tab toggles focus to the search box (Tab again / Esc returns here)
-        KeyCode::Tab | KeyCode::BackTab => return Some(Action::RadioFocusSearch),
         KeyCode::Char('/') => return Some(Action::RadioFocusSearch),
+        // Enter plays a station on the list, or activates the section in the sidebar
+        // (radio_activate branches on focus).
+        KeyCode::Enter => return Some(Action::RadioActivate),
+        _ => {}
+    }
+    // Section sidebar focused: l/→ enters the section (opens a picker / focuses the
+    // list); h/← is a no-op; j/k + Tab fall through to the global bindings.
+    if app.focus == Focus::Sidebar {
+        return Some(match key.code {
+            KeyCode::Char('l') | KeyCode::Right => Action::RadioActivate,
+            KeyCode::Char('h') | KeyCode::Left => Action::Noop,
+            _ => global_binding(app, key),
+        });
+    }
+    // vim horizontal nav from the main pane: h/← jumps back to the section sidebar
+    // (its counterpart l/→ enters the main pane from the sidebar, above).
+    if matches!(key.code, KeyCode::Char('h') | KeyCode::Left) {
+        return Some(Action::FocusPane(Focus::Sidebar));
+    }
+    // Playlists section: the flat list (create/rename/delete, ⏎ drills in) vs a
+    // drilled-in playlist (its stations: d/x removes, a adds elsewhere, f stars).
+    if app.radio.section == crate::app::RadioSection::Playlists {
+        if app.radio.pl.open.is_none() {
+            return Some(match key.code {
+                KeyCode::Char('n') => Action::RadioNewPlaylist,
+                KeyCode::Char('d') => Action::RadioDeletePlaylist,
+                KeyCode::Char('r') | KeyCode::Char('e') => Action::RadioRenamePlaylist,
+                KeyCode::Char('l') | KeyCode::Right => Action::RadioActivate, // drill in
+                // no station under the cursor here — swallow the station operators so
+                // they can't fall through to the local-music add-to-playlist / mark
+                KeyCode::Char('a') | KeyCode::Char('x') => Action::Noop,
+                _ => global_binding(app, key), // j/k move, Tab, q…
+            });
+        }
+        match key.code {
+            KeyCode::Char('d') | KeyCode::Char('x') => {
+                return Some(Action::RadioRemoveFromPlaylist);
+            }
+            KeyCode::Char('a') => return Some(Action::RadioAddToPlaylist),
+            KeyCode::Char('f') => return Some(Action::RadioStar),
+            KeyCode::Char('n') => return Some(Action::RadioStation(1)),
+            KeyCode::Char('p') => return Some(Action::RadioStation(-1)),
+            _ => {}
+        }
+        return Some(global_binding(app, key));
+    }
+    // Station list focused: source-specific keys (`n`/`p` change station, not the
+    // local queue; `f` stars, `a` adds the station to a playlist).
+    match key.code {
         KeyCode::Char('c') => return Some(Action::RadioOpenCountry),
         KeyCode::Char('g') => return Some(Action::RadioOpenGenre),
-        KeyCode::Char('f') => return Some(Action::RadioToggleFavorites),
-        KeyCode::Char('s') => return Some(Action::RadioStar),
+        KeyCode::Char('f') => return Some(Action::RadioStar),
+        KeyCode::Char('a') => return Some(Action::RadioAddToPlaylist),
         KeyCode::Char('o') => return Some(Action::RadioCycleSort),
         KeyCode::Char('R') => return Some(Action::RadioRefresh), // re-download directory
         KeyCode::Char('n') => return Some(Action::RadioStation(1)), // next channel
@@ -1092,7 +1170,7 @@ fn parse_action(s: &str, app: &AppState) -> Action {
         "cycle_visualizer" => CycleVisualizer,
         "open_view_settings" => OpenViewSettings,
         "reset_layout" => ResetLayout,
-        "toggle_favorite" => app.player.current.map(ToggleFavorite).unwrap_or(Noop),
+        "toggle_favorite" => ToggleFavoriteSel,
         "edit_metadata" => BeginTagEdit,
         "open_radio" => OpenRadio,
         "open_spotify" => OpenSpotify,

@@ -91,6 +91,9 @@ impl AppState {
         // (the station list itself is re-fetched once the radio worker is ready —
         // see `set_radio_sender`). The station shows on the now-bar in a stopped
         // state; space / Enter re-tunes it, matching how a local track resumes.
+        if let Some(sec) = s.radio_section.as_deref().and_then(RadioSection::from_key) {
+            self.radio.section = sec;
+        }
         if let Some(q) = &s.radio_query {
             self.radio.query = q.clone();
         }
@@ -316,6 +319,7 @@ impl AppState {
                     .collect(),
             ),
             // internet radio: filters + the last-tuned station (None if not on radio)
+            radio_section: Some(self.radio.section.key().to_string()),
             radio_query: (!self.radio.query.is_empty()).then(|| self.radio.query.clone()),
             radio_country: self.radio.country.clone(),
             radio_tag: self.radio.tag.clone(),

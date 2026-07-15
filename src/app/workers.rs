@@ -336,20 +336,18 @@ impl AppState {
                         self.last_audio_progress = self.tick;
                         self.enforce_ab_loop();
                     } else if let Some(dvr) = self.rnow.dvr.as_mut() {
-                        // a timeshifted live stream: track the play position within
-                        // the DVR window (the local player stays frozen).
-                        dvr.pos = d.as_secs_f64();
+                        // a timeshifted live stream: while following the live edge the
+                        // play-head stays pinned to `live`; once rewound, track the
+                        // real play position within the DVR window (local stays frozen).
+                        if dvr.following {
+                            dvr.pos = dvr.live;
+                        } else {
+                            dvr.pos = d.as_secs_f64();
+                        }
                         self.last_audio_progress = self.tick;
                     }
                 }
-                AudioEvent::DvrWindow { start, live } => {
-                    if self.rnow.now_station.is_some() {
-                        let dvr = self.rnow.dvr.get_or_insert_with(Default::default);
-                        dvr.start = start;
-                        dvr.live = live;
-                        dvr.pos = dvr.pos.clamp(start, live);
-                    }
-                }
+                AudioEvent::DvrWindow { start, live } => self.on_dvr_window(start, live),
                 AudioEvent::Duration(d) => {
                     if self.spov.sp_stream {
                         if !d.is_zero() {
@@ -374,12 +372,7 @@ impl AppState {
                 }
                 AudioEvent::Advanced => self.soft_advance(),
                 AudioEvent::Spectrum(s) => self.player.spectrum = s,
-                AudioEvent::IcyTitle(t) => {
-                    // the live "now playing" title from a radio stream
-                    if self.rnow.now_station.is_some() {
-                        self.rnow.now_station_title = Some(t);
-                    }
-                }
+                AudioEvent::IcyTitle(t) => self.on_icy_title(&t),
                 AudioEvent::Error(e) => {
                     if self.spov.sp_stream {
                         // the episode's stream couldn't open/decode — stop the spinner

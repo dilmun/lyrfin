@@ -99,9 +99,18 @@ impl AppState {
         let q = self.radio.query.trim().to_lowercase();
         let code = self.radio.country.as_ref().map(|(_, c)| c.clone());
         let tag = self.radio.tag.as_ref().map(|t| t.to_lowercase());
+        // the free-text query matches across name / genre-tags / country / language;
+        // the country + genre *filters* (from the pickers) stay separate AND clauses.
+        let matches_query = |i: usize| {
+            q.is_empty()
+                || self.radio.name_lc[i].contains(&q)
+                || self.radio.tags_lc[i].contains(&q)
+                || self.radio.country_lc[i].contains(&q)
+                || self.radio.lang_lc[i].contains(&q)
+        };
         let mut matched: Vec<usize> = (0..self.radio.all_stations.len())
             .filter(|&i| {
-                (q.is_empty() || self.radio.name_lc[i].contains(&q))
+                matches_query(i)
                     && code.as_deref().is_none_or(|c| {
                         self.radio.all_stations[i]
                             .countrycode
@@ -116,6 +125,9 @@ impl AppState {
         let st = &self.radio.all_stations;
         match self.radio.sort {
             crate::radio::Sort::Popular => {}
+            crate::radio::Sort::Trending => {
+                matched.sort_by(|&a, &b| st[b].clicktrend.cmp(&st[a].clicktrend))
+            }
             crate::radio::Sort::Votes => matched.sort_by(|&a, &b| st[b].votes.cmp(&st[a].votes)),
             crate::radio::Sort::Bitrate => {
                 matched.sort_by(|&a, &b| st[b].bitrate.cmp(&st[a].bitrate))
@@ -157,7 +169,6 @@ impl AppState {
     /// Set the query and run a local search (used after the directory loads).
     pub(crate) fn run_local_search_with(&mut self, query: String) {
         self.radio.query = query;
-        self.radio.fav_view = false;
         self.run_local_search();
     }
 

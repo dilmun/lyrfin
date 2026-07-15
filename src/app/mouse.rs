@@ -219,15 +219,32 @@ impl AppState {
                     self.radio_apply_picker();
                 }
             }
-            MouseTarget::RadioChip(c) => match c {
-                0 => {
-                    self.radio.fav_view = false;
-                    self.radio.editing = true;
+            MouseTarget::RadioSectionRow(i) => {
+                // a radio sidebar section row: focus the sidebar and select it; a
+                // double-click activates it (opens the picker / focuses search).
+                self.focus = Focus::Sidebar;
+                if let Some(&sec) = crate::app::RadioSection::ALL.get(i) {
+                    self.radio.section = sec;
+                    self.radio.sel = 0;
+                    self.radio.pl.open = None; // leaving the section drops any drill
+                    if double {
+                        self.radio_activate_section();
+                    }
                 }
+            }
+            MouseTarget::RadioPlaylistRow(i) => {
+                // a row in the flat playlist list: select it; double-click drills in
+                self.focus = Focus::Main;
+                self.radio.pl.sel = i;
+                if double {
+                    self.radio_playlist_open();
+                }
+            }
+            MouseTarget::RadioChip(c) => match c {
+                0 => self.radio.editing = true,
                 1 => self.radio_open_picker(PickerKind::Country),
                 2 => self.radio_open_picker(PickerKind::Genre),
                 3 => self.radio_cycle_sort(),
-                4 => self.radio_toggle_favorites(),
                 _ => {}
             },
             MouseTarget::PaletteRow(pos) => {
@@ -371,7 +388,9 @@ impl AppState {
                 self.focus = Focus::Main;
                 self.scroll_main(m);
             }
-            MouseTarget::Tree(_) | MouseTarget::Scroll(ScrollBox::Tree) => {
+            MouseTarget::Tree(_)
+            | MouseTarget::RadioSectionRow(_)
+            | MouseTarget::Scroll(ScrollBox::Tree) => {
                 self.focus = Focus::Sidebar;
                 self.move_selection(m);
             }
@@ -389,8 +408,9 @@ impl AppState {
             }
             MouseTarget::RadioRow(_)
             | MouseTarget::RadioPick(_)
+            | MouseTarget::RadioPlaylistRow(_)
             | MouseTarget::Scroll(ScrollBox::Radio) => {
-                // move_selection routes to the open picker or the station list
+                // move_selection routes to the open picker / flat playlist / station list
                 self.move_selection(m);
             }
             MouseTarget::SpotifyQueueRow(_) | MouseTarget::Scroll(ScrollBox::SpotifyQueue) => {

@@ -135,8 +135,8 @@ impl AppState {
 
     /// The global Settings overlay's visible group tabs: every [`SETTINGS_GROUPS`]
     /// entry the current view actually has rows for. Only "Panes" is ever dropped
-    /// (Radio and Concert host no movable panels), so the overlay never shows a
-    /// blank tab. `settings.group` indexes into this list, not the raw const.
+    /// (the chrome-less Concert view hosts no movable panels), so the overlay never
+    /// shows a blank tab. `settings.group` indexes into this list, not the raw const.
     pub fn settings_tabs(&self) -> Vec<&'static str> {
         let present: std::collections::HashSet<&'static str> =
             self.settings_items().iter().map(|s| s.group()).collect();
