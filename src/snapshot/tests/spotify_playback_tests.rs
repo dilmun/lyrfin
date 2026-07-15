@@ -4,6 +4,50 @@
 use super::*;
 
 #[test]
+fn spotify_visual_select_bulk_add_to_playlist() {
+    use crate::action::{Action, Motion};
+    use crate::app::Focus;
+    use crate::spotify::api::{Item, Kind};
+    let mk = |name: &str| Item {
+        uri: format!("spotify:track:{name}"),
+        name: name.into(),
+        kind: Kind::Track,
+        ..Default::default()
+    };
+    let mut a = demo();
+    a.layout = Layout::Spotify;
+    a.focus = Focus::Main;
+    a.spotify.items = vec![mk("T1"), mk("T2"), mk("T3"), mk("T4")];
+    a.spotify.sel = 1;
+
+    // V + j → a visual range over rows 1..=2 (T2, T3).
+    a.update(Action::VisualSelect);
+    a.update(Action::Move(Motion::Down));
+    assert_eq!(a.visual_range(), Some((1, 2)));
+    assert_eq!(
+        a.selected_spotify_uris(),
+        vec![
+            "spotify:track:T2".to_string(),
+            "spotify:track:T3".to_string()
+        ],
+    );
+
+    // `a` opens the add-to-playlist picker pre-loaded with the selected URIs.
+    a.update(Action::SpotifyAddToPlaylist);
+    let modal = a.spotify.pl_modal.as_ref().expect("picker opened");
+    assert_eq!(modal.add_uris.len(), 2, "both selected tracks pending add");
+    assert!(
+        modal.subject.contains("2 tracks"),
+        "subject: {}",
+        modal.subject
+    );
+    assert!(
+        a.marks.anchor.is_none(),
+        "selection consumed by the bulk op"
+    );
+}
+
+#[test]
 fn spotify_drill_in_pushes_and_back_restores_the_parent_list() {
     use crate::spotify::Tokens;
     use crate::spotify::api::{Item, Kind};

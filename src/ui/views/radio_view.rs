@@ -217,10 +217,15 @@ fn radio_playlist_modal(f: &mut Frame, area: Rect, app: &AppState) {
     }
 
     // add-to-playlist picker (a trailing "New playlist" row)
-    if pl.adding.is_some() {
+    if !pl.adding.is_empty() {
         let playlists = app.radio_playlists_sorted();
         let rows = playlists.len() + 1;
         let h = (rows as u16 + 4).clamp(6, area.height);
+        let title = if pl.adding.len() == 1 {
+            "ADD TO PLAYLIST".to_string()
+        } else {
+            format!("ADD {} STATIONS TO PLAYLIST", pl.adding.len())
+        };
         let body = components::overlay_frame(
             f,
             area,
@@ -228,7 +233,7 @@ fn radio_playlist_modal(f: &mut Frame, area: Rect, app: &AppState) {
             48,
             h,
             &components::FrameSpec::dialog(
-                "ADD TO PLAYLIST",
+                &title,
                 &[("⏎", "add"), ("↑↓", "move"), ("esc", "cancel")],
             ),
         );
@@ -568,9 +573,24 @@ fn radio_station_list(f: &mut Frame, list: Rect, app: &AppState) {
         SCol::Votes,
     ];
 
+    // multi-select: the live visual range (over the passed cursor) + the marked
+    // station keys, gathered once so the row loop stays allocation-free.
+    let vis = app.marks.anchor.map(|a| (a.min(sel), a.max(sel)));
+    let marked_keys: std::collections::HashSet<&str> = app
+        .marks
+        .ids
+        .iter()
+        .filter_map(|k| match k {
+            crate::app::MarkKey::Station(s) => Some(s.as_str()),
+            _ => None,
+        })
+        .collect();
+
     let mut rows: Vec<TableRow> = Vec::new();
     for (i, st) in stations.iter().enumerate().skip(off).take(body_h) {
         let on = i == sel;
+        let marked = marked_keys.contains(crate::app::station_key(st))
+            || vis.is_some_and(|(lo, hi)| i >= lo && i <= hi);
         let playing = app
             .rnow
             .now_station
@@ -586,10 +606,17 @@ fn radio_station_list(f: &mut Frame, list: Rect, app: &AppState) {
             .iter()
             .map(|c| match c {
                 SCol::Mark => {
-                    let play = if playing { "▶" } else { " " };
+                    // ✓ (selected) takes the play slot over ▶; the star keeps its slot.
+                    let (lead, lead_fg) = if marked {
+                        ("✓", th.marked_color())
+                    } else if playing {
+                        ("▶", th.accent[0])
+                    } else {
+                        (" ", th.accent[0])
+                    };
                     let star = if fav { "★" } else { " " };
                     let cell = Cell::from(Line::from(vec![
-                        Span::styled(play, Style::default().fg(th.accent[0].into())),
+                        Span::styled(lead, Style::default().fg(lead_fg.into())),
                         Span::styled(star, Style::default().fg(th.accent[1].into())),
                     ]));
                     TableCell::new(cell, 2)
@@ -617,6 +644,8 @@ fn radio_station_list(f: &mut Frame, list: Rect, app: &AppState) {
             .collect();
         let bg: Option<Color> = if on {
             Some(th.selection.into())
+        } else if marked {
+            Some(th.marked_color().mix(th.bg, 0.82).into())
         } else if playing {
             Some(th.panel.mix(th.selection, 0.4).into())
         } else {

@@ -734,6 +734,13 @@ fn spotify_view(app: &AppState, key: Key) -> Option<Action> {
             KeyCode::Char('f') => return Some(Action::SpotifyLike),
             KeyCode::Char('F') => return Some(Action::SpotifyFollow),
             KeyCode::Char('c') => return Some(Action::SpotifyWriteConfig),
+            // multi-select on a flat track list: V starts a visual range, x marks —
+            // f/a then apply to the whole selection. Gated on a focused track list
+            // so grids keep V for the visualizer toggle.
+            KeyCode::Char('V') if app.sel_cursor().is_some() => {
+                return Some(Action::VisualSelect);
+            }
+            KeyCode::Char('x') if app.sel_cursor().is_some() => return Some(Action::ToggleMark),
             _ => {}
         }
     }
@@ -874,9 +881,12 @@ fn radio_view(app: &AppState, key: Key) -> Option<Action> {
             });
         }
         match key.code {
+            // d/x remove the selected station(s); V starts a visual range so a/f/d
+            // apply to the whole selection.
             KeyCode::Char('d') | KeyCode::Char('x') => {
                 return Some(Action::RadioRemoveFromPlaylist);
             }
+            KeyCode::Char('V') => return Some(Action::VisualSelect),
             KeyCode::Char('a') => return Some(Action::RadioAddToPlaylist),
             KeyCode::Char('f') => return Some(Action::RadioStar),
             KeyCode::Char('n') => return Some(Action::RadioStation(1)),
@@ -890,6 +900,9 @@ fn radio_view(app: &AppState, key: Key) -> Option<Action> {
     // country / genre is the Countries / Genres sidebar sections (⏎ opens the
     // picker) — no `c`/`g` shortcut, so `g`/`G` stay vim jump-to-top/bottom.
     match key.code {
+        // multi-select: V starts a visual range, x marks (via the global fall-through
+        // below) — f/a then apply to the whole selection.
+        KeyCode::Char('V') => return Some(Action::VisualSelect),
         KeyCode::Char('f') => return Some(Action::RadioStar),
         KeyCode::Char('a') => return Some(Action::RadioAddToPlaylist),
         KeyCode::Char('o') => return Some(Action::RadioCycleSort),
@@ -899,6 +912,7 @@ fn radio_view(app: &AppState, key: Key) -> Option<Action> {
         _ => {}
     }
     // list navigation + anything else → the (shuffle/repeat-filtered) global bindings
+    // (x = toggle_mark resolves here)
     Some(radio_global(app, key))
 }
 
@@ -1060,7 +1074,7 @@ fn queue_keys(key: Key) -> Option<Action> {
 /// local library list or the search results. Claimed only when such a list is
 /// focused, so every other view keeps `V` for its visualizer toggle.
 fn visual_select(app: &AppState, key: Key) -> Option<Action> {
-    if key.code == KeyCode::Char('V') && app.active_track_cursor().is_some() {
+    if key.code == KeyCode::Char('V') && app.sel_cursor().is_some() {
         Some(Action::VisualSelect)
     } else {
         None

@@ -242,6 +242,44 @@ impl AppState {
         });
     }
 
+    /// `f`: like the selection. With nothing multi-selected this is the single-track
+    /// now-playing toggle above; with a marked set / visual range it *adds* every
+    /// selected track to Liked Songs (bulk like is add-only — we don't track each
+    /// row's saved state).
+    pub(crate) fn spotify_like_selection(&mut self) {
+        if self.marks.ids.is_empty() && self.marks.anchor.is_none() {
+            self.spotify_toggle_saved();
+            return;
+        }
+        let uris = self.selected_spotify_uris();
+        if uris.is_empty() {
+            return;
+        }
+        if let (Some(tokens), Some(tx)) =
+            (self.spotify.tokens.as_ref(), self.workers.spotify.as_ref())
+        {
+            let token = tokens.access_token.clone();
+            for uri in &uris {
+                let _ = tx.send(crate::spotify::api::SpRequest::SetSaved {
+                    uri: uri.clone(),
+                    saved: true,
+                    token: token.clone(),
+                });
+            }
+            if self
+                .spov
+                .now_spotify
+                .as_ref()
+                .is_some_and(|t| uris.contains(&t.uri))
+            {
+                self.spov.sp_saved = true;
+            }
+        }
+        let noun = if uris.len() == 1 { "track" } else { "tracks" };
+        self.notify(format!("♥ Added {} {noun} to Liked Songs", uris.len()));
+        self.clear_marks();
+    }
+
     /// The `(uri, kind, display name)` to follow for the selected Spotify row: a Show
     /// or Artist directly, or a track's primary artist. `None` for anything that isn't
     /// followable (a track with no artist uri, a playlist, an empty list).

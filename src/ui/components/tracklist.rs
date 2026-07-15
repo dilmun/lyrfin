@@ -888,7 +888,8 @@ pub fn track_table(
         let meta = Style::default().fg(col(th.meta_text()));
 
         // marked set + the live visual range (both against this list's cursor)
-        let marked = app.marks.ids.contains(id) || vis.is_some_and(|(lo, hi)| i >= lo && i <= hi);
+        let marked = app.marks.ids.contains(&crate::app::MarkKey::Track(*id))
+            || vis.is_some_and(|(lo, hi)| i >= lo && i <= hi);
         let cells: Vec<TableCell> = active
             .iter()
             .map(|c| {
@@ -995,7 +996,8 @@ pub fn track_rows(
         app.register_click(row, MouseTarget::Track(i));
         let is_now = app.player.current == Some(*id);
         let is_sel = i == sel;
-        let marked = app.marks.ids.contains(id) || vis.is_some_and(|(lo, hi)| i >= lo && i <= hi);
+        let marked = app.marks.ids.contains(&crate::app::MarkKey::Track(*id))
+            || vis.is_some_and(|(lo, hi)| i >= lo && i <= hi);
         // leading 1-wide status glyph: ▶ playing · ✓ marked · else blank — the
         // rows-layout stand-in for the table's index-column markers.
         let lead = if is_now {

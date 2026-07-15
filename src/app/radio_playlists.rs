@@ -81,13 +81,13 @@ impl AppState {
         let target = self.radio.pl.naming.take();
         self.radio.pl.buffer.clear();
         if name.is_empty() {
-            self.radio.pl.adding = None; // drop the bridged station too
+            self.radio.pl.adding.clear(); // drop the bridged station(s) too
             return;
         }
         match target {
             Some(RadioNameTarget::New) => {
                 let id = self.next_radio_playlist_id();
-                let stations = self.radio.pl.adding.take().into_iter().collect();
+                let stations = std::mem::take(&mut self.radio.pl.adding);
                 self.radio.playlists.push(Playlist { id, name, stations });
                 self.save_radio_playlists();
                 self.notify("Playlist created".into());
@@ -126,18 +126,22 @@ impl AppState {
     }
 
     // ---- add / remove stations ------------------------------------------
-    /// `a` on a station: open the "add to playlist" picker for the highlighted
-    /// station (a no-op when the current list has no station under the cursor).
+    /// `a` on a station: open the "add to playlist" picker for the selection
+    /// (marked set / visual range, else the cursor station). A no-op when the
+    /// current list has no station under the cursor.
     pub(crate) fn radio_add_current_to_playlist(&mut self) {
-        if let Some(st) = self.radio_view_list().get(self.radio.sel).cloned() {
-            self.radio.pl.adding = Some(st);
-            self.radio.pl.add_sel = 0;
+        let sel = self.selected_stations();
+        if sel.is_empty() {
+            return;
         }
+        self.radio.pl.adding = sel;
+        self.radio.pl.add_sel = 0;
+        self.clear_marks(); // captured into `adding`; drop the on-list highlight
     }
 
-    /// Commit the add-picker: add the pending station to the chosen playlist, or —
-    /// on the trailing "New playlist" row — open name entry to create one first
-    /// (keeping the pending station so `radio_confirm_name` seeds the new list).
+    /// Commit the add-picker: add the pending station(s) to the chosen playlist,
+    /// or — on the trailing "New playlist" row — open name entry to create one
+    /// first (keeping the pending stations so `radio_confirm_name` seeds the list).
     pub(crate) fn radio_confirm_add(&mut self) {
         let ids: Vec<u32> = self.radio_playlists_sorted().iter().map(|p| p.id).collect();
         if self.radio.pl.add_sel >= ids.len() {
@@ -146,36 +150,31 @@ impl AppState {
             return;
         }
         let id = ids[self.radio.pl.add_sel];
-        if let Some(st) = self.radio.pl.adding.take() {
-            self.radio_playlist_add(id, st);
-        }
+        let stations = std::mem::take(&mut self.radio.pl.adding);
+        self.radio_playlist_add_many(id, stations);
     }
 
-    /// Add `st` to playlist `id`, deduped by [`station_key`]; persists on change.
-    fn radio_playlist_add(&mut self, id: u32, st: Station) {
-        let key = station_key(&st).to_string();
-        enum Outcome {
-            Added(String),
-            Dup(String),
-            Gone,
-        }
-        let outcome = match self.radio.playlists.iter_mut().find(|p| p.id == id) {
-            None => Outcome::Gone,
-            Some(p) if p.stations.iter().any(|s| station_key(s) == key) => {
-                Outcome::Dup(p.name.clone())
-            }
-            Some(p) => {
-                p.stations.push(st);
-                Outcome::Added(p.name.clone())
-            }
+    /// Add `stations` to playlist `id`, deduped by [`station_key`]; persists once
+    /// and reports how many were newly added (vs. already present).
+    fn radio_playlist_add_many(&mut self, id: u32, stations: Vec<Station>) {
+        let Some(p) = self.radio.playlists.iter_mut().find(|p| p.id == id) else {
+            return;
         };
-        match outcome {
-            Outcome::Added(name) => {
-                self.save_radio_playlists();
-                self.notify(format!("Added to {name}"));
+        let name = p.name.clone();
+        let mut added = 0usize;
+        for st in stations {
+            let key = station_key(&st).to_string();
+            if !p.stations.iter().any(|s| station_key(s) == key) {
+                p.stations.push(st);
+                added += 1;
             }
-            Outcome::Dup(name) => self.notify(format!("Already in {name}")),
-            Outcome::Gone => {}
+        }
+        if added > 0 {
+            self.save_radio_playlists();
+            let noun = if added == 1 { "station" } else { "stations" };
+            self.notify(format!("Added {added} {noun} to {name}"));
+        } else {
+            self.notify(format!("Already in {name}"));
         }
     }
 
@@ -184,19 +183,29 @@ impl AppState {
         let Some(id) = self.radio.pl.open else {
             return;
         };
-        let Some(st) = self.radio_view_list().get(self.radio.sel).cloned() else {
+        // the selection (marked set / visual range, else the cursor station)
+        let keys: std::collections::HashSet<String> = self
+            .selected_stations()
+            .iter()
+            .map(|s| station_key(s).to_string())
+            .collect();
+        if keys.is_empty() {
             return;
-        };
-        let key = station_key(&st).to_string();
+        }
+        let mut removed = 0usize;
         if let Some(p) = self.radio.playlists.iter_mut().find(|p| p.id == id) {
-            p.stations.retain(|s| station_key(s) != key);
+            let before = p.stations.len();
+            p.stations.retain(|s| !keys.contains(station_key(s)));
+            removed = before - p.stations.len();
         }
         let n = self.radio_view_list().len();
         if self.radio.sel >= n {
             self.radio.sel = n.saturating_sub(1);
         }
         self.save_radio_playlists();
-        self.notify(format!("Removed: {}", st.name));
+        self.clear_marks();
+        let noun = if removed == 1 { "station" } else { "stations" };
+        self.notify(format!("Removed {removed} {noun}"));
     }
 
     // ---- modal dispatch --------------------------------------------------
@@ -206,7 +215,7 @@ impl AppState {
             self.radio_confirm_name();
         } else if self.radio.pl.confirm_delete.is_some() {
             self.radio_confirm_delete();
-        } else if self.radio.pl.adding.is_some() {
+        } else if !self.radio.pl.adding.is_empty() {
             self.radio_confirm_add();
         }
     }
@@ -218,8 +227,8 @@ impl AppState {
             ui.naming = None;
             ui.buffer.clear();
             // a name entry opened from the add-picker keeps the picker open behind it
-        } else if ui.adding.is_some() {
-            ui.adding = None;
+        } else if !ui.adding.is_empty() {
+            ui.adding.clear();
         } else if ui.confirm_delete.is_some() {
             ui.confirm_delete = None;
         }

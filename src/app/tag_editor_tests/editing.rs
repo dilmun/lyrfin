@@ -128,7 +128,10 @@ fn visual_select_and_marks_track_the_local_cursor() {
     a.update(Action::ToggleMark);
     assert_eq!(a.mode(), Mode::View);
     assert_eq!(a.marks.ids.len(), 3);
-    assert!(want.iter().all(|t| a.marks.ids.contains(t)));
+    assert!(
+        want.iter()
+            .all(|t| a.marks.ids.contains(&crate::app::MarkKey::Track(*t)))
+    );
 
     // and a bulk operator (favourite) hits exactly the marked set.
     a.update(Action::ToggleFavoriteSel);

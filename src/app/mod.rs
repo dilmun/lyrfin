@@ -174,7 +174,7 @@ mod radio;
 pub use radio::{LIVE_EDGE_SECS, PickerKind, Radio, RadioNameTarget, RadioSection};
 mod radio_playlists;
 mod selection;
-pub use selection::MultiSelect;
+pub use selection::{MarkKey, MultiSelect};
 mod session_restore;
 mod settings;
 mod sorting;
@@ -528,7 +528,11 @@ pub fn keybindings_help() -> Vec<(&'static str, &'static str, HelpScope)> {
             "playlists tab: move to folder / delete (a folder row ungroups it)",
             Local,
         ),
-        ("x / V", "mark track / visual range select", Local),
+        (
+            "x / V",
+            "mark track / visual range — f, a, and tag-edit apply to the whole selection",
+            Local,
+        ),
         ("R", "play a random album", Local),
         (
             "B",
@@ -571,6 +575,11 @@ pub fn keybindings_help() -> Vec<(&'static str, &'static str, HelpScope)> {
             Spotify,
         ),
         ("s / r", "shuffle / repeat", Spotify),
+        (
+            "x / V",
+            "mark track / visual range (on a track list) — f likes and a adds the whole selection",
+            Spotify,
+        ),
         ("c", "paste your Spotify client id", Spotify),
         ("esc", "leave search / back out of a drill-in", Spotify),
         // --- Radio view ---
@@ -582,7 +591,12 @@ pub fn keybindings_help() -> Vec<(&'static str, &'static str, HelpScope)> {
         ("o", "cycle the result sort order", Radio),
         (
             "f",
-            "star / unstar the selected station (saved to Favorites)",
+            "star / unstar the selected station(s) (saved to Favorites)",
+            Radio,
+        ),
+        (
+            "x / V",
+            "mark station / visual range — f stars and a adds the whole selection",
             Radio,
         ),
         ("R", "re-download the station directory", Radio),
@@ -732,7 +746,7 @@ fn match_score(name: &str, code: &str, q: &str) -> Option<u8> {
 
 /// Stable identity for a station (favorites de-dup): its uuid, or the stream
 /// URL when the directory didn't supply one.
-fn station_key(st: &crate::radio::Station) -> &str {
+pub(crate) fn station_key(st: &crate::radio::Station) -> &str {
     if st.uuid.is_empty() {
         &st.url
     } else {

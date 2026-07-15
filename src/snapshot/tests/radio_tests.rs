@@ -52,10 +52,10 @@ fn radio_playlists_create_add_drill_remove_delete_persist() {
     a.radio.stations = vec![st("Cool Jazz", "cj")];
     a.radio.sel = 0;
     a.update(Action::RadioAddToPlaylist);
-    assert!(a.radio.pl.adding.is_some(), "add picker opened");
+    assert!(!a.radio.pl.adding.is_empty(), "add picker opened");
     a.radio.pl.add_sel = 0;
     a.update(Action::RadioModalConfirm);
-    assert!(a.radio.pl.adding.is_none(), "picker closed after add");
+    assert!(a.radio.pl.adding.is_empty(), "picker closed after add");
     assert_eq!(a.radio.playlists[0].stations.len(), 1, "station added");
     // dedup: adding the same station again is a no-op
     a.update(Action::RadioAddToPlaylist);
@@ -176,6 +176,77 @@ fn radio_vim_nav_ctrl_o_back_and_ctrl_np() {
 }
 
 #[test]
+fn radio_visual_select_bulk_stars_and_adds() {
+    use crate::action::{Action, Motion};
+    use crate::app::{Focus, RadioSection};
+    use crate::radio::Station;
+    let st = |name: &str, uuid: &str| Station {
+        name: name.into(),
+        url: format!("http://x/{uuid}"),
+        uuid: uuid.into(),
+        ..Default::default()
+    };
+    let mut a = demo();
+    a.config.dir = std::env::temp_dir().join("lyrfin_radio_ms_test");
+    let _ = std::fs::remove_dir_all(&a.config.dir);
+    a.radio.favorites.clear();
+    a.radio.playlists.clear();
+    a.layout = Layout::Radio;
+    a.focus = Focus::Main;
+    a.radio.section = RadioSection::AllStations;
+    a.radio.stations = vec![st("A", "a"), st("B", "b"), st("C", "c"), st("D", "d")];
+    a.radio.sel = 1;
+
+    // V anchors at the cursor; j extends the range down to rows 1..=2 (B, C).
+    a.update(Action::VisualSelect);
+    a.update(Action::Move(Motion::Down));
+    assert_eq!(a.visual_range(), Some((1, 2)));
+    let names: Vec<String> = a
+        .selected_stations()
+        .iter()
+        .map(|s| s.name.clone())
+        .collect();
+    assert_eq!(
+        names,
+        vec!["B", "C"],
+        "selection resolves to the ranged stations"
+    );
+
+    // f stars the whole selection and consumes it (leaves visual mode).
+    a.update(Action::RadioStar);
+    assert_eq!(a.radio.favorites.len(), 2, "both ranged stations starred");
+    assert!(
+        a.marks.anchor.is_none(),
+        "visual mode cleared after the bulk op"
+    );
+    assert!(a.radio_is_fav(&st("B", "b")) && a.radio_is_fav(&st("C", "c")));
+
+    // x marks individual rows; a then opens the picker on the marked set.
+    a.radio.sel = 0;
+    a.update(Action::ToggleMark); // mark A, cursor advances to B
+    a.radio.sel = 3;
+    a.update(Action::ToggleMark); // mark D
+    assert_eq!(a.marks.ids.len(), 2);
+    a.update(Action::RadioNewPlaylist);
+    a.update(Action::RadioNameInput("Mix".into()));
+    a.update(Action::RadioModalConfirm); // creates "Mix"
+    a.update(Action::RadioAddToPlaylist); // opens the picker on the 2 marked
+    assert_eq!(
+        a.radio.pl.adding.len(),
+        2,
+        "both marked stations pending add"
+    );
+    a.radio.pl.add_sel = 0;
+    a.update(Action::RadioModalConfirm);
+    assert_eq!(
+        a.radio.playlists[0].stations.len(),
+        2,
+        "both added to the playlist"
+    );
+    let _ = std::fs::remove_dir_all(&a.config.dir);
+}
+
+#[test]
 fn radio_swallows_shuffle_and_repeat_but_keeps_playlist_rename() {
     use crate::action::Action;
     use crate::app::{Focus, RadioSection};
@@ -291,7 +362,7 @@ fn radio_add_picker_does_not_steal_jk_in_local_view() {
     }];
     a.radio.sel = 0;
     a.update(Action::RadioAddToPlaylist);
-    assert!(a.radio.pl.adding.is_some(), "picker open");
+    assert!(!a.radio.pl.adding.is_empty(), "picker open");
     a.radio.pl.add_sel = 0;
 
     a.layout = Layout::Dashboard;

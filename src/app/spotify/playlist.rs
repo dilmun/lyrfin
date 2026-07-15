@@ -113,23 +113,42 @@ impl AppState {
     /// selection, the now-playing Spotify track — to one of the account's
     /// playlists. No-op with a hint when there's nothing addable.
     pub(crate) fn spotify_add_to_playlist_prompt(&mut self) {
-        let target = self
-            .spotify
-            .items
-            .get(self.spotify.sel)
-            .filter(|it| it.kind == Kind::Track)
-            .or(self.spov.now_spotify.as_ref())
-            .map(|it| (it.uri.clone(), it.name.clone()));
-        let Some((uri, title)) = target else {
+        // a multi-selection (marked set / visual range) → all its tracks; otherwise
+        // the cursor track — resolved directly so `a` works from any focus, like
+        // before — falling back to the now-playing track.
+        let mut uris = self.selected_spotify_uris();
+        if uris.is_empty() {
+            let cursor = self
+                .spotify
+                .items
+                .get(self.spotify.sel)
+                .filter(|it| it.kind == Kind::Track)
+                .or(self.spov.now_spotify.as_ref())
+                .map(|it| it.uri.clone());
+            uris.extend(cursor);
+        }
+        if uris.is_empty() {
             self.notify("Select a track to add to a playlist".into());
             return;
+        }
+        let subject = if uris.len() == 1 {
+            self.spotify
+                .items
+                .iter()
+                .chain(self.spov.now_spotify.iter())
+                .find(|it| it.uri == uris[0])
+                .map(|it| it.name.clone())
+                .unwrap_or_default()
+        } else {
+            format!("{} tracks", uris.len())
         };
         self.spotify.pl_modal = Some(SpPlaylistModal {
-            add_uris: vec![uri],
-            subject: title,
+            add_uris: uris,
+            subject,
             ..Default::default()
         });
         self.spotify_fetch_my_playlists();
+        self.clear_marks();
     }
 
     /// `n` in the Playlists section: open the create-a-new-playlist prompt (no
