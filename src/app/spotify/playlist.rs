@@ -19,7 +19,7 @@ use crate::spotify::session::SessionCommand;
 /// `events` module that drains session events.
 pub(super) const REMOVE_FETCH_KEY: &str = "@pl-remove";
 
-/// Largest playlist lyrfin will rebuild for a single-track remove. Spotify's replace
+/// Largest playlist lyrfin will rebuild for a track remove. Spotify's replace
 /// endpoint caps at 100 uris and librespot's raw fetch is capped at 100 (+1 to
 /// detect overflow), so a remove on a bigger playlist is refused rather than risk
 /// dropping the tracks beyond the cap. Keep in sync with `session::MAX_TRACKS`.
@@ -71,7 +71,8 @@ enum RemovePlan {
     /// The playlist is larger than `max` (the raw fetch returned `> max` uris, so
     /// we can't prove we have all of them) → refuse; change nothing.
     TooLarge,
-    /// The track isn't in the live list (already gone / stale cursor) → do nothing.
+    /// None of the targets are in the live list (already gone / stale cursor) → do
+    /// nothing.
     NotFound,
     /// Safe: replace the playlist's contents with exactly this list (the current
     /// tracks minus every occurrence of the target).
@@ -81,15 +82,21 @@ enum RemovePlan {
 /// Decide the remove action from the fresh RAW track uris. The ONLY safety logic
 /// for the destructive replace, kept pure so it can be exhaustively tested:
 /// - `> max` uris → [`RemovePlan::TooLarge`] (never rebuild a truncated list).
-/// - target absent → [`RemovePlan::NotFound`] (never a surprise no-op replace).
-/// - otherwise → [`RemovePlan::Replace`] with the target filtered out. The result
-///   is always strictly shorter than the input (we only ever remove), never longer.
-fn plan_remove(uris: Vec<String>, target: &str, max: usize) -> RemovePlan {
+/// - none of `targets` present → [`RemovePlan::NotFound`] (never a surprise no-op
+///   replace).
+/// - otherwise → [`RemovePlan::Replace`] with every occurrence of any target
+///   filtered out. The result is always strictly shorter than the input (we only
+///   ever remove), never longer.
+fn plan_remove(
+    uris: Vec<String>,
+    targets: &std::collections::HashSet<String>,
+    max: usize,
+) -> RemovePlan {
     if uris.len() > max {
         return RemovePlan::TooLarge;
     }
     let before = uris.len();
-    let remaining: Vec<String> = uris.into_iter().filter(|u| u != target).collect();
+    let remaining: Vec<String> = uris.into_iter().filter(|u| !targets.contains(u)).collect();
     if remaining.len() == before {
         RemovePlan::NotFound
     } else {
@@ -321,19 +328,15 @@ impl AppState {
     /// live track uris fresh (via librespot) and finish in [`Self::spotify_apply_remove`],
     /// which refuses anything it can't prove is complete.
     pub(crate) fn spotify_remove_from_playlist(&mut self) {
-        let track = self
-            .spotify
-            .items
-            .get(self.spotify.sel)
-            .filter(|it| it.kind == Kind::Track)
-            .map(|it| it.uri.clone());
+        // the selection (marked set / visual range, else the cursor track)
+        let track_uris = self.selected_spotify_uris();
         let playlist = self
             .spotify
             .open_item
             .as_ref()
             .filter(|it| it.kind == Kind::Playlist)
             .map(|it| (it.uri.clone(), it.name.clone()));
-        let (Some(track_uri), Some((pl_uri, pl_name))) = (track, playlist) else {
+        let (false, Some((pl_uri, pl_name))) = (track_uris.is_empty(), playlist) else {
             return;
         };
         // need the librespot session to read the raw list (Web API strips the uris)
@@ -344,12 +347,17 @@ impl AppState {
         let Some(cmd) = self.spov.session_cmd.as_ref() else {
             return;
         };
-        self.spotify.pl_pending_remove = Some((pl_uri.clone(), track_uri, pl_name));
+        let n = track_uris.len();
+        self.spotify.pl_pending_remove = Some((pl_uri.clone(), track_uris, pl_name));
         let _ = cmd.send(SessionCommand::FetchPlaylistUris {
             uri: pl_uri,
             key: REMOVE_FETCH_KEY.into(),
         });
-        self.notify("Removing from playlist…".into());
+        self.clear_marks();
+        self.notify(format!(
+            "Removing {n} {}…",
+            if n == 1 { "track" } else { "tracks" }
+        ));
     }
 
     /// The playlist's fresh RAW track uris arrived — do the completeness check and,
@@ -357,26 +365,29 @@ impl AppState {
     /// the ONLY place that issues the destructive replace, so all the guards live
     /// here. `ok` is false when the fetch itself failed (never treated as "empty").
     pub(crate) fn spotify_apply_remove(&mut self, uris: Vec<String>, ok: bool) {
-        let Some((pl_uri, track_uri, name)) = self.spotify.pl_pending_remove.take() else {
+        let Some((pl_uri, track_uris, name)) = self.spotify.pl_pending_remove.take() else {
             return;
         };
         if !ok {
             self.notify_error(format!(
-                "Couldn't read “{name}” to remove the track — try again"
+                "Couldn't read “{name}” to remove tracks — try again"
             ));
             return;
         }
         // All the safety guards live in `plan_remove` (pure + unit-tested): it
         // refuses a playlist too large to rebuild (>100 — a 120-track playlist
-        // lands here and NOTHING is changed) or a target that isn't in the live
-        // list, and only otherwise yields the exact current-minus-target contents.
-        match plan_remove(uris, &track_uri, SP_MAX_REBUILD) {
+        // lands here and NOTHING is changed) or targets that aren't in the live
+        // list, and only otherwise yields the exact current-minus-targets contents.
+        let targets: std::collections::HashSet<String> = track_uris.into_iter().collect();
+        match plan_remove(uris, &targets, SP_MAX_REBUILD) {
             RemovePlan::TooLarge => self.notify_error(format!(
-                "“{name}” has over {SP_MAX_REBUILD} tracks — removing a single track \
-                 isn't supported there (Spotify blocks track deletion for personal \
-                 apps; lyrfin's rebuild path is capped at {SP_MAX_REBUILD}). Nothing was changed."
+                "“{name}” has over {SP_MAX_REBUILD} tracks — removing isn't supported \
+                 there (Spotify blocks track deletion for personal apps; lyrfin's \
+                 rebuild path is capped at {SP_MAX_REBUILD}). Nothing was changed."
             )),
-            RemovePlan::NotFound => self.notify("That track isn't in the playlist anymore".into()),
+            RemovePlan::NotFound => {
+                self.notify("Those tracks aren't in the playlist anymore".into())
+            }
             RemovePlan::Replace(remaining) => {
                 if let Some((token, tx)) = self.spotify_worker() {
                     let _ = tx.send(SpRequest::ReplacePlaylistItems {
@@ -659,12 +670,16 @@ mod tests {
         (0..n).map(|i| format!("spotify:track:{i}")).collect()
     }
 
+    fn targets(ts: &[&str]) -> std::collections::HashSet<String> {
+        ts.iter().map(|s| s.to_string()).collect()
+    }
+
     #[test]
     fn remove_over_100_tracks_is_refused_and_changes_nothing() {
         // the 120-track case: the raw fetch returns 101 (capped at max+1), so we
         // can't prove completeness → refuse, never replace.
         assert_eq!(
-            plan_remove(uris(101), "spotify:track:5", 100),
+            plan_remove(uris(101), &targets(&["spotify:track:5"]), 100),
             RemovePlan::TooLarge
         );
     }
@@ -672,7 +687,7 @@ mod tests {
     #[test]
     fn remove_at_exactly_100_is_safe() {
         // exactly 100 means the raw fetch (take 101) returned 100 → complete list.
-        let plan = plan_remove(uris(100), "spotify:track:0", 100);
+        let plan = plan_remove(uris(100), &targets(&["spotify:track:0"]), 100);
         match plan {
             RemovePlan::Replace(r) => {
                 assert_eq!(r.len(), 99, "removed exactly one");
@@ -684,7 +699,7 @@ mod tests {
 
     #[test]
     fn remove_drops_only_the_target_and_keeps_order() {
-        let plan = plan_remove(uris(5), "spotify:track:2", 100);
+        let plan = plan_remove(uris(5), &targets(&["spotify:track:2"]), 100);
         assert_eq!(
             plan,
             RemovePlan::Replace(vec![
@@ -697,10 +712,43 @@ mod tests {
     }
 
     #[test]
+    fn remove_drops_every_selected_target_and_keeps_order() {
+        // bulk: several targets removed in one pass, remaining order preserved.
+        let plan = plan_remove(
+            uris(5),
+            &targets(&["spotify:track:1", "spotify:track:3"]),
+            100,
+        );
+        assert_eq!(
+            plan,
+            RemovePlan::Replace(vec![
+                "spotify:track:0".into(),
+                "spotify:track:2".into(),
+                "spotify:track:4".into(),
+            ])
+        );
+    }
+
+    #[test]
+    fn remove_ignores_targets_not_present_but_removes_the_rest() {
+        // a mix of present + stale targets still removes the present ones (Replace),
+        // never a surprise no-op.
+        let plan = plan_remove(
+            uris(3),
+            &targets(&["spotify:track:1", "spotify:track:99"]),
+            100,
+        );
+        assert_eq!(
+            plan,
+            RemovePlan::Replace(vec!["spotify:track:0".into(), "spotify:track:2".into()])
+        );
+    }
+
+    #[test]
     fn remove_missing_target_is_a_noop_not_a_replace() {
         // a stale cursor / already-removed track must NOT trigger a replace
         assert_eq!(
-            plan_remove(uris(3), "spotify:track:99", 100),
+            plan_remove(uris(3), &targets(&["spotify:track:99"]), 100),
             RemovePlan::NotFound
         );
     }
@@ -708,7 +756,11 @@ mod tests {
     #[test]
     fn remove_last_track_yields_empty_replace() {
         assert_eq!(
-            plan_remove(vec!["spotify:track:0".into()], "spotify:track:0", 100),
+            plan_remove(
+                vec!["spotify:track:0".into()],
+                &targets(&["spotify:track:0"]),
+                100
+            ),
             RemovePlan::Replace(vec![])
         );
     }
@@ -717,7 +769,9 @@ mod tests {
     fn remove_result_is_always_shorter_never_longer() {
         // safety invariant: a remove can only shrink the playlist
         for n in 0..=100 {
-            if let RemovePlan::Replace(r) = plan_remove(uris(n), "spotify:track:0", 100) {
+            if let RemovePlan::Replace(r) =
+                plan_remove(uris(n), &targets(&["spotify:track:0"]), 100)
+            {
                 assert!(r.len() < n, "replace never grows the playlist");
             }
         }

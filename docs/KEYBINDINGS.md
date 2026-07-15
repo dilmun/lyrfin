@@ -152,7 +152,7 @@ sidebar's **Countries** and **Genres** sections rather than on a shortcut key.
 | <kbd>n</kbd> (Playlists) | New playlist |
 | <kbd>e</kbd> / <kbd>r</kbd> | Rename the selected playlist |
 | <kbd>Shift</kbd>+<kbd>D</kbd> | Delete (unfollow) the selected playlist |
-| <kbd>d</kbd> (inside a playlist) | Remove the selected track |
+| <kbd>d</kbd> (inside a playlist) | Remove the selected track(s) from the playlist |
 
 ## Tag editor
 

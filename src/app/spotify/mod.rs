@@ -789,11 +789,12 @@ pub struct Spotify {
     /// A Spotify playlist awaiting unfollow ("delete") confirmation: `(uri, name)`.
     /// Inert (`None`) until the user asks; the confirm dialog clears it either way.
     pub pl_confirm_delete: Option<(String, String)>,
-    /// A remove-a-track in flight: `(playlist_uri, track_uri, playlist_name)`. Set
-    /// when the user hits `d`/`x`; consumed when the fresh raw track list arrives
-    /// (`spotify_apply_remove`), which does the completeness check + replace. See
-    /// the module docs for why removal goes through a fresh-fetch-then-replace.
-    pub pl_pending_remove: Option<(String, String, String)>,
+    /// A remove in flight: `(playlist_uri, track_uris, playlist_name)` — one or
+    /// more tracks (the selection). Set when the user hits `d`; consumed when the
+    /// fresh raw track list arrives (`spotify_apply_remove`), which does the
+    /// completeness check + replace. See the module docs for why removal goes
+    /// through a fresh-fetch-then-replace.
+    pub pl_pending_remove: Option<(String, Vec<String>, String)>,
 }
 
 /// Spotify's per-frame restore context for the shared drill-in stack: the search
