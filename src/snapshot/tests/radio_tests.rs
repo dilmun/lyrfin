@@ -176,6 +176,33 @@ fn radio_vim_nav_ctrl_o_back_and_ctrl_np() {
 }
 
 #[test]
+fn radio_swallows_shuffle_and_repeat_but_keeps_playlist_rename() {
+    use crate::action::Action;
+    use crate::app::{Focus, RadioSection};
+    use crate::event::{Key, KeyCode, Mods};
+    let mut a = demo();
+    a.layout = Layout::Radio;
+    a.focus = Focus::Main;
+    let k = |c| Key {
+        code: KeyCode::Char(c),
+        mods: Mods::default(),
+    };
+
+    // A live stream has no queue: s/r must NOT reach the frozen local player's
+    // shuffle/repeat (they'd otherwise leak through the global bindings).
+    a.radio.section = RadioSection::AllStations;
+    assert_eq!(crate::keymap::map(&a, k('s')), Action::Noop);
+    assert_eq!(crate::keymap::map(&a, k('r')), Action::Noop);
+
+    // …but r is still claimed for rename in the Playlists list (it's resolved
+    // before the shuffle/repeat-filtered fall-through, so it survives).
+    a.radio.section = RadioSection::Playlists;
+    a.radio.pl.open = None;
+    assert_eq!(crate::keymap::map(&a, k('r')), Action::RadioRenamePlaylist);
+    assert_eq!(crate::keymap::map(&a, k('s')), Action::Noop);
+}
+
+#[test]
 fn radio_dvr_starts_at_live_and_rewind_detaches() {
     use crate::radio::Station;
     let mut a = demo();

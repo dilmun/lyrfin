@@ -576,8 +576,11 @@ pub fn keybindings_help() -> Vec<(&'static str, &'static str, HelpScope)> {
         ("c", "filter by country", Radio),
         ("g", "filter by genre / tag", Radio),
         ("o", "cycle the result sort order", Radio),
-        ("f", "toggle the favorites (saved stations) view", Radio),
-        ("s", "star / unstar the selected station", Radio),
+        (
+            "f",
+            "star / unstar the selected station (saved to Favorites)",
+            Radio,
+        ),
         ("R", "re-download the station directory", Radio),
         ("esc", "close a picker / leave search", Radio),
     ]

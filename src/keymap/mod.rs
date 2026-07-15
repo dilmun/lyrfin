@@ -723,10 +723,23 @@ fn spotify_view(app: &AppState, key: Key) -> Option<Action> {
     Some(global_binding(app, key))
 }
 
+/// The radio view's global fall-through: like [`global_binding`], but shuffle and
+/// repeat are inert. A live stream has no queue to shuffle and no track to repeat,
+/// so `s`/`r` (or whatever the user bound those to) would only disturb the frozen
+/// local player behind the radio overlay — not something a radio browse should do.
+/// Matched by resolved *action*, so it holds regardless of how the keys are bound.
+fn radio_global(app: &AppState, key: Key) -> Action {
+    match global_binding(app, key) {
+        Action::ToggleShuffle | Action::CycleRepeat => Action::Noop,
+        other => other,
+    }
+}
+
 /// Radio view: the station list is focused by default with dedicated keys; the
 /// search box and the country/genre pickers are explicit sub-modes that capture
-/// typing while open. Unclaimed keys fall through to the global bindings (so `q`
-/// quits, space pauses, the number keys switch views, etc.).
+/// typing while open. Unclaimed keys fall through to [`radio_global`] (so `q`
+/// quits, space pauses, the number keys switch views — but shuffle/repeat stay
+/// inert, having no meaning for a queue-less live stream).
 fn radio_view(app: &AppState, key: Key) -> Option<Action> {
     if app.layout != Layout::Radio {
         return None;
@@ -819,7 +832,7 @@ fn radio_view(app: &AppState, key: Key) -> Option<Action> {
         return Some(match key.code {
             KeyCode::Char('l') | KeyCode::Right => Action::RadioActivate,
             KeyCode::Char('h') | KeyCode::Left => Action::Noop,
-            _ => global_binding(app, key),
+            _ => radio_global(app, key),
         });
     }
     // vim horizontal nav from the main pane: h/← jumps back to the section sidebar
@@ -839,7 +852,7 @@ fn radio_view(app: &AppState, key: Key) -> Option<Action> {
                 // no station under the cursor here — swallow the station operators so
                 // they can't fall through to the local-music add-to-playlist / mark
                 KeyCode::Char('a') | KeyCode::Char('x') => Action::Noop,
-                _ => global_binding(app, key), // j/k move, Tab, q…
+                _ => radio_global(app, key), // j/k move, Tab, q…
             });
         }
         match key.code {
@@ -852,7 +865,7 @@ fn radio_view(app: &AppState, key: Key) -> Option<Action> {
             KeyCode::Char('p') => return Some(Action::RadioStation(-1)),
             _ => {}
         }
-        return Some(global_binding(app, key));
+        return Some(radio_global(app, key));
     }
     // Station list focused: source-specific keys (`n`/`p` change station, not the
     // local queue; `f` stars, `a` adds the station to a playlist).
@@ -867,8 +880,8 @@ fn radio_view(app: &AppState, key: Key) -> Option<Action> {
         KeyCode::Char('p') => return Some(Action::RadioStation(-1)), // prev channel
         _ => {}
     }
-    // list navigation + anything else → the global bindings (quit / play-pause / …)
-    Some(global_binding(app, key))
+    // list navigation + anything else → the (shuffle/repeat-filtered) global bindings
+    Some(radio_global(app, key))
 }
 
 /// Context keys: browsing the Playlists section (Dashboard, main pane) exposes
