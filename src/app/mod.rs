@@ -483,6 +483,7 @@ pub fn keybindings_help() -> Vec<(&'static str, &'static str, HelpScope)> {
         ("space", "play / pause", Global),
         ("n / p", "next / previous (track / station)", Global),
         ("j / k", "move down / up", Global),
+        ("ctrl-d / ctrl-u", "scroll a page down / up", Global),
         ("g / G", "jump to top / bottom", Global),
         ("tab", "cycle focus / pane / column", Global),
         ("enter", "play / open the selection", Global),
@@ -523,7 +524,7 @@ pub fn keybindings_help() -> Vec<(&'static str, &'static str, HelpScope)> {
             Local,
         ),
         (
-            "m / d",
+            "m / ⇧D",
             "playlists tab: move to folder / delete (a folder row ungroups it)",
             Local,
         ),

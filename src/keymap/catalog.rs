@@ -93,9 +93,8 @@ pub const DEFAULT_BINDINGS: &[(&str, &str)] = &[
     ("B", "bookmark_search"), // shift-B: bookmark the search
     ("T", "cycle_sleep_timer"),
     ("o", "ab_loop"),
-    ("I", "toggle_stats"),         // shift-I: stats overlay
-    ("delete", "settings_remove"), // settings: delete the selected row
-    ("ctrl-d", "settings_remove"),
+    ("I", "toggle_stats"),          // shift-I: stats overlay
+    ("delete", "settings_remove"),  // settings: delete the selected row (ctrl-d is now half-page)
     ("ctrl-r", "restore_keybinds"), // Keys settings: reset to defaults
 ];
 

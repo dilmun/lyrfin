@@ -419,6 +419,62 @@ fn comma_period_nudge_lyric_sync_only_when_lyrics_focused() {
 }
 
 #[test]
+fn ctrl_d_u_scroll_everywhere_and_shift_d_deletes_playlist() {
+    use crate::action::{Action, Motion};
+    use crate::app::{Focus, Layout, LocalSection, Panel};
+    use crate::event::{Key, KeyCode, Mods};
+    let ctrl = |c| Key {
+        code: KeyCode::Char(c),
+        mods: Mods {
+            ctrl: true,
+            ..Mods::default()
+        },
+    };
+    let shift = |c| Key {
+        code: KeyCode::Char(c),
+        mods: Mods {
+            shift: true,
+            ..Mods::default()
+        },
+    };
+    let mut a = demo();
+
+    // ctrl-d / ctrl-u half-page scroll in a plain list,
+    a.layout = Layout::Dashboard;
+    a.focus = Focus::Main;
+    assert!(matches!(
+        crate::keymap::map(&a, ctrl('d')),
+        Action::Move(Motion::PageDown)
+    ));
+    assert!(matches!(
+        crate::keymap::map(&a, ctrl('u')),
+        Action::Move(Motion::PageUp)
+    ));
+    // …the radio station list (the reported gap)…
+    a.layout = Layout::Radio;
+    assert!(matches!(
+        crate::keymap::map(&a, ctrl('d')),
+        Action::Move(Motion::PageDown)
+    ));
+    // …and past a focused pane whose plain `d` means remove: ctrl-d isn't shadowed.
+    a.layout = Layout::Dashboard;
+    a.focus = Focus::Pane(Panel::Queue);
+    assert!(matches!(
+        crate::keymap::map(&a, ctrl('d')),
+        Action::Move(Motion::PageDown)
+    ));
+
+    // destructive delete-playlist moved off `d` to Shift+D (so plain `d` is free and
+    // ctrl-d can never be misread as a delete).
+    a.focus = Focus::Main;
+    a.local.section = LocalSection::Playlists;
+    assert!(matches!(
+        crate::keymap::map(&a, shift('d')),
+        Action::DeletePlaylist
+    ));
+}
+
+#[test]
 fn hjkl_navigate_seek_moves_to_comma_period_rate_to_parens() {
     use crate::action::{Action, Motion};
     use crate::app::{Focus, Layout};

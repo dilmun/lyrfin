@@ -61,6 +61,7 @@ on the focused pane or the active view (noted below where relevant).
 | <kbd>k</kbd> / <kbd>↑</kbd> | Move up |
 | <kbd>g</kbd> / <kbd>G</kbd> | Jump to top / bottom |
 | <kbd>Ctrl</kbd>+<kbd>N</kbd> / <kbd>Ctrl</kbd>+<kbd>P</kbd> | Move down / up (works in any context) |
+| <kbd>Ctrl</kbd>+<kbd>D</kbd> / <kbd>Ctrl</kbd>+<kbd>U</kbd> | Scroll a page down / up (any list) |
 | <kbd>PageDown</kbd> / <kbd>PageUp</kbd> | Page down / up |
 | <kbd>Enter</kbd> | Activate / play the selection |
 | <kbd>h</kbd> / <kbd>l</kbd> (and <kbd>←</kbd> / <kbd>→</kbd>) | Focus left / right — move between the sidebar, list, and panes. In the Library browser they switch column; in cover grids they move a card; in the Settings overlay they adjust the selected value |
@@ -118,7 +119,7 @@ on the focused pane or the active view (noted below where relevant).
 | <kbd>n</kbd> | New playlist |
 | <kbd>Shift</kbd>+<kbd>S</kbd> | New smart playlist (from a search) |
 | <kbd>e</kbd> / <kbd>r</kbd> | Rename playlist |
-| <kbd>d</kbd> | Delete playlist |
+| <kbd>Shift</kbd>+<kbd>D</kbd> | Delete playlist |
 | <kbd>a</kbd> | Add the now-playing track to the selected playlist |
 | <kbd>Shift</kbd>+<kbd>B</kbd> | Bookmark the current search |
 
@@ -148,7 +149,7 @@ sidebar's **Countries** and **Genres** sections rather than on a shortcut key.
 | <kbd>a</kbd> | Add to a playlist |
 | <kbd>n</kbd> (Playlists) | New playlist |
 | <kbd>e</kbd> / <kbd>r</kbd> | Rename the selected playlist |
-| <kbd>d</kbd> | Delete (unfollow) the selected playlist |
+| <kbd>Shift</kbd>+<kbd>D</kbd> | Delete (unfollow) the selected playlist |
 | <kbd>d</kbd> / <kbd>x</kbd> (inside a playlist) | Remove the selected track |
 
 ## Tag editor

@@ -40,6 +40,7 @@ pub fn map(app: &AppState, key: Key) -> Action {
         .or_else(|| tag_editor(app, key))
         .or_else(|| naming_input(app, key))
         .or_else(|| confirm_input(app, key))
+        .or_else(|| half_page(key))
         .or_else(|| modal_overlay(app, key))
         .or_else(|| pane_context(app, key))
         .or_else(|| spotify_view(app, key))
@@ -169,6 +170,23 @@ fn universal_nav(key: Key) -> Option<Action> {
             KeyCode::Char('p') => return Some(Action::NavUp),
             _ => {}
         }
+    }
+    None
+}
+
+/// Vim half-page scroll: `ctrl-d` / `ctrl-u` page the focused list down / up, in any
+/// list the motion keys reach. It sits after the text-input handlers — the Tag editor
+/// binds `ctrl-d`/`ctrl-u` to its own field ops, and a focused search box swallows
+/// them — but before the pane/view handlers, so a pane's plain-`d` key (queue remove,
+/// delete playlist) can't shadow it. The half-page counterpart to `universal_nav`'s
+/// `ctrl-n`/`ctrl-p`, one step later so those exceptions win first.
+fn half_page(key: Key) -> Option<Action> {
+    if key.mods.ctrl && !key.mods.alt {
+        return match key.code {
+            KeyCode::Char('d') => Some(Action::Move(Motion::PageDown)),
+            KeyCode::Char('u') => Some(Action::Move(Motion::PageUp)),
+            _ => None,
+        };
     }
     None
 }
@@ -456,7 +474,7 @@ fn spotify_playlist_keys(app: &AppState, key: Key) -> Option<Action> {
             KeyCode::Char('e') | KeyCode::Char('r') if on_pl => {
                 return Some(Action::SpotifyRenamePlaylist);
             }
-            KeyCode::Char('d') if on_pl => return Some(Action::SpotifyDeletePlaylist),
+            KeyCode::Char('D') if on_pl => return Some(Action::SpotifyDeletePlaylist),
             _ => {}
         }
     }
@@ -846,7 +864,7 @@ fn radio_view(app: &AppState, key: Key) -> Option<Action> {
         if app.radio.pl.open.is_none() {
             return Some(match key.code {
                 KeyCode::Char('n') => Action::RadioNewPlaylist,
-                KeyCode::Char('d') => Action::RadioDeletePlaylist,
+                KeyCode::Char('D') => Action::RadioDeletePlaylist,
                 KeyCode::Char('r') | KeyCode::Char('e') => Action::RadioRenamePlaylist,
                 KeyCode::Char('l') | KeyCode::Right => Action::RadioActivate, // drill in
                 // no station under the cursor here — swallow the station operators so
@@ -910,7 +928,7 @@ fn sidebar_playlists_context(app: &AppState, key: Key) -> Option<Action> {
     match key.code {
         KeyCode::Char('n') => Some(Action::BeginNewPlaylist),
         KeyCode::Char('S') => Some(Action::NewSmartPlaylist),
-        KeyCode::Char('d') => Some(Action::DeletePlaylist),
+        KeyCode::Char('D') => Some(Action::DeletePlaylist),
         KeyCode::Char('e') | KeyCode::Char('r') => Some(Action::BeginRenamePlaylist),
         KeyCode::Char('a') => Some(Action::AddCurrentToPlaylist),
         _ => None,

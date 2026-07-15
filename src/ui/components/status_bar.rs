@@ -512,7 +512,7 @@ fn dashboard_hint(app: &AppState) -> String {
         if app.current_local_playlist().is_some() {
             Some("⏎ play · d remove · esc back · tab panes · ? keys")
         } else {
-            Some("n new · e rename · d delete · a add · ⏎ open · tab panes · ? keys")
+            Some("n new · e rename · ⇧D delete · a add · ⏎ open · tab panes · ? keys")
         }
     } else if app.local.crumb.is_none()
         && matches!(
@@ -572,7 +572,7 @@ fn spotify_hint(app: &AppState) -> String {
         && app.spotify.section == Section::Playlists
     {
         // the Playlists list: create / rename / delete, or add the now-playing track
-        Some("n new · e rename · d delete · a add · ⏎ open · ? keys")
+        Some("n new · e rename · ⇧D delete · a add · ⏎ open · ? keys")
     } else if !app.spotify.in_search
         && app.spotify.crumb.is_none()
         && app.spotify.section == Section::Podcasts
