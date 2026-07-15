@@ -1056,11 +1056,11 @@ fn queue_keys(key: Key) -> Option<Action> {
     }
 }
 
-/// Vim-style visual selection on the tracklist (Shift+V). Only here, so the
-/// Lyrics view keeps `V` for its visualizer toggle.
+/// Vim-style visual selection (Shift+V) on whatever tracklist is focused — the
+/// local library list or the search results. Claimed only when such a list is
+/// focused, so every other view keeps `V` for its visualizer toggle.
 fn visual_select(app: &AppState, key: Key) -> Option<Action> {
-    if key.code == KeyCode::Char('V') && app.focus == Focus::Main && app.layout == Layout::Dashboard
-    {
+    if key.code == KeyCode::Char('V') && app.active_track_cursor().is_some() {
         Some(Action::VisualSelect)
     } else {
         None

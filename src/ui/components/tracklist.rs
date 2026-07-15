@@ -848,6 +848,10 @@ pub fn track_table(
 ) {
     let th = &app.theme;
     let sel = sel_raw.min(ids.len().saturating_sub(1));
+    // live visual range over THIS list's cursor (`sel`), computed once — the app
+    // side resolves marks/bulk-ops against the same anchor+cursor, so what's shaded
+    // is exactly what an operator would act on.
+    let vis = app.marks.anchor.map(|a| (a.min(sel), a.max(sel)));
 
     let active: Vec<Col> = tracklist_cols(&app.config.columns).into_iter().collect();
 
@@ -883,8 +887,8 @@ pub fn track_table(
         };
         let meta = Style::default().fg(col(th.meta_text()));
 
-        // marked set + the live visual range (visual only on the main tracklist)
-        let marked = app.marks.ids.contains(id) || app.in_visual_range(i);
+        // marked set + the live visual range (both against this list's cursor)
+        let marked = app.marks.ids.contains(id) || vis.is_some_and(|(lo, hi)| i >= lo && i <= hi);
         let cells: Vec<TableCell> = active
             .iter()
             .map(|c| {
@@ -979,6 +983,7 @@ pub fn track_rows(
         return;
     }
     let sel = sel_raw.min(total - 1);
+    let vis = app.marks.anchor.map(|a| (a.min(sel), a.max(sel)));
     let body_h = inner.height as usize;
     let off = sticky_off(&app.scroll.list, sel, total, body_h);
     let meta_style = Style::default().fg(col(th.meta_text()));
@@ -990,7 +995,7 @@ pub fn track_rows(
         app.register_click(row, MouseTarget::Track(i));
         let is_now = app.player.current == Some(*id);
         let is_sel = i == sel;
-        let marked = app.marks.ids.contains(id) || app.in_visual_range(i);
+        let marked = app.marks.ids.contains(id) || vis.is_some_and(|(lo, hi)| i >= lo && i <= hi);
         // leading 1-wide status glyph: ▶ playing · ✓ marked · else blank — the
         // rows-layout stand-in for the table's index-column markers.
         let lead = if is_now {

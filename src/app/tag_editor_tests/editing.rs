@@ -89,6 +89,56 @@ fn visual_mode_reported() {
 }
 
 #[test]
+fn visual_select_and_marks_track_the_local_cursor() {
+    use crate::action::Motion;
+    let mut a = app();
+    a.layout = Layout::Dashboard;
+    a.focus = Focus::Main;
+    // seed_demo's default (AllTracks) list is a flat run of tracks — the case that
+    // used to silently mis-target because the operators read `self.selection`, not
+    // the Dashboard's `local.sel`.
+    assert!(a.local.items.len() >= 4 && a.local.items.iter().all(|i| i.is_track()));
+    let want: Vec<_> = (1..=3)
+        .map(|i| match a.local.items[i] {
+            crate::app::LocalItem::Track(t) => t,
+            _ => unreachable!("all tracks"),
+        })
+        .collect();
+    a.local.sel = 1;
+    // a stale, unrelated `self.selection` must NOT be what visual selection uses.
+    a.selection = 9;
+
+    // V anchors at the Dashboard cursor; extending down covers rows 1..=3.
+    a.update(Action::VisualSelect);
+    assert_eq!(a.mode(), Mode::Visual);
+    a.update(Action::Move(Motion::Down));
+    a.update(Action::Move(Motion::Down));
+    assert_eq!(
+        a.visual_range(),
+        Some((1, 3)),
+        "range follows local.sel, not selection"
+    );
+    assert_eq!(
+        a.selected_track_ids(),
+        want,
+        "bulk-op target is the live range"
+    );
+
+    // x commits the range to the marked set and leaves visual mode.
+    a.update(Action::ToggleMark);
+    assert_eq!(a.mode(), Mode::View);
+    assert_eq!(a.marks.ids.len(), 3);
+    assert!(want.iter().all(|t| a.marks.ids.contains(t)));
+
+    // and a bulk operator (favourite) hits exactly the marked set.
+    a.update(Action::ToggleFavoriteSel);
+    assert!(
+        want.iter()
+            .all(|t| a.library.track(*t).is_some_and(|tk| tk.favorite))
+    );
+}
+
+#[test]
 fn caret_edits_mid_string() {
     use crate::action::Caret;
     let mut a = app();
