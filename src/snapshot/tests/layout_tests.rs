@@ -394,9 +394,9 @@ fn comma_period_nudge_lyric_sync_only_when_lyrics_focused() {
         mods: Mods::default(),
     };
 
-    // default (Dashboard, Main focus): `,`/`.` keep their global rating role
-    assert!(matches!(crate::keymap::map(&a, k('.')), Action::Rate(_, _)));
-    assert!(matches!(crate::keymap::map(&a, k(',')), Action::Rate(_, _)));
+    // default (Dashboard, Main focus): `,`/`.` are the global seek keys
+    assert!(matches!(crate::keymap::map(&a, k('.')), Action::Seek(5)));
+    assert!(matches!(crate::keymap::map(&a, k(',')), Action::Seek(-5)));
 
     // Lyrics pane focused → they nudge the sync offset (later / earlier)
     a.focus = Focus::Pane(Panel::Lyrics);
@@ -415,6 +415,62 @@ fn comma_period_nudge_lyric_sync_only_when_lyrics_focused() {
     assert!(matches!(
         crate::keymap::map(&a, k('.')),
         Action::LyricsOffset(50)
+    ));
+}
+
+#[test]
+fn hjkl_navigate_seek_moves_to_comma_period_rate_to_parens() {
+    use crate::action::{Action, Motion};
+    use crate::app::{Focus, Layout};
+    use crate::event::{Key, KeyCode, Mods};
+    let mut a = demo();
+    let k = |c| Key {
+        code: KeyCode::Char(c),
+        mods: Mods::default(),
+    };
+    let arrow = |code| Key {
+        code,
+        mods: Mods::default(),
+    };
+
+    // A plain player view (no 2-D main content): h/l and ←/→ shift focus through
+    // the pane ring — they no longer seek.
+    a.layout = Layout::FullPlayer;
+    a.focus = Focus::Main;
+    assert!(matches!(
+        crate::keymap::map(&a, k('h')),
+        Action::FocusDir(-1)
+    ));
+    assert!(matches!(
+        crate::keymap::map(&a, k('l')),
+        Action::FocusDir(1)
+    ));
+    assert!(matches!(
+        crate::keymap::map(&a, arrow(KeyCode::Left)),
+        Action::FocusDir(-1)
+    ));
+    assert!(matches!(
+        crate::keymap::map(&a, arrow(KeyCode::Right)),
+        Action::FocusDir(1)
+    ));
+
+    // seek is now the `,`/`.` transport pair (universal), and rate moved to the parens
+    assert!(matches!(crate::keymap::map(&a, k(',')), Action::Seek(-5)));
+    assert!(matches!(crate::keymap::map(&a, k('.')), Action::Seek(5)));
+    assert!(matches!(crate::keymap::map(&a, k(')')), Action::Rate(_, _)));
+    assert!(matches!(crate::keymap::map(&a, k('(')), Action::Rate(_, _)));
+
+    // The 2-D views keep their column/card meaning for h/l: the Library browser
+    // still switches the active column rather than shifting focus.
+    a.layout = Layout::LibraryFocus;
+    a.focus = Focus::Main;
+    assert!(matches!(
+        crate::keymap::map(&a, k('h')),
+        Action::Move(Motion::Left)
+    ));
+    assert!(matches!(
+        crate::keymap::map(&a, k('l')),
+        Action::Move(Motion::Right)
     ));
 }
 

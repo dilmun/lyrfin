@@ -77,9 +77,9 @@ fn normalize_shift(key: Key) -> Key {
     key
 }
 
-/// Library (#2) 3-column browser: while a column is focused, h/l/←/→ switch the
-/// active column (otherwise they'd `seek`). Vertical motion, Enter, and every
-/// global binding fall through unchanged.
+/// Library (#2) 3-column browser: while the columns are focused, h/l/←/→ switch the
+/// active column (otherwise they'd shift focus between panes). Vertical motion,
+/// Enter, and every global binding fall through unchanged.
 fn library_view(app: &AppState, key: Key) -> Option<Action> {
     if app.layout != Layout::LibraryFocus || app.focus != Focus::Main || app.is_searching() {
         return None;
@@ -597,7 +597,8 @@ fn modal_overlay(app: &AppState, key: Key) -> Option<Action> {
         return None;
     }
     // the tabbed Settings overlay + per-view popup: Tab / Shift-Tab switch tabs,
-    // `f` (or `=`/`+`) cycles the overlay size up
+    // `f` (or `=`/`+`) cycles the overlay size up, and h/l (←/→) step the selected
+    // row's value (j/k move between rows via the global `move` binding below).
     if app.settings.overlay || app.settings.popup.is_some() {
         match key.code {
             KeyCode::Tab => return Some(Action::OverlayTab(1)),
@@ -605,6 +606,8 @@ fn modal_overlay(app: &AppState, key: Key) -> Option<Action> {
             KeyCode::Char('f') | KeyCode::Char('=') | KeyCode::Char('+') => {
                 return Some(Action::CycleOverlaySize);
             }
+            KeyCode::Char('h') | KeyCode::Left => return Some(Action::SettingsAdjust(-1)),
+            KeyCode::Char('l') | KeyCode::Right => return Some(Action::SettingsAdjust(1)),
             _ => {}
         }
     }
@@ -974,11 +977,11 @@ fn pane_context(app: &AppState, key: Key) -> Option<Action> {
 /// canonical label, so a rebound key is classified by where it lands, not its glyph.
 fn is_universal_key(key: Key) -> bool {
     const UNIVERSAL: &[&str] = &[
-        // navigation
-        "up", "down", "left", "right", "pageup", "pagedown", "home", "end", "enter", "esc", "tab",
-        "backtab", "j", "k", "g", "G",
+        // navigation (move within / between regions)
+        "up", "down", "left", "right", "h", "l", "pageup", "pagedown", "home", "end", "enter",
+        "esc", "tab", "backtab", "j", "k", "g", "G",
         // playback transport (seek / volume / speed / shuffle / repeat)
-        "space", "n", "p", "h", "l", "+", "=", "-", "[", "]", "s", "r",
+        "space", "n", "p", ",", ".", "+", "=", "-", "[", "]", "s", "r",
         // app chrome: quit / back / palette / help / search / copy-error / switch view
         "q", "Q", "ctrl-c", "ctrl-o", ":", "?", "/", "y", "1", "2", "3", "4", "5", "6", "7",
         // the focused pane's own geometry: resize (>< }{ ), move edge (m), fit/reset (zZ)
@@ -990,8 +993,8 @@ fn is_universal_key(key: Key) -> bool {
 /// Lyrics pane keys: `F` cycles the lyric format (plain → karaoke → teleprompter);
 /// `,` / `.` nudge the synced-lyric offset earlier / later (the unshifted `<` / `>`,
 /// so the direction reads naturally — and it dodges macOS reserving ctrl+arrows for
-/// Spaces). Everything else falls through, leaving the global `,` / `.` rating keys
-/// untouched outside the lyrics view.
+/// Spaces). This is the one place `,` / `.` don't seek: in the lyrics view/pane they
+/// adjust the sync, everywhere else they're the global seek keys.
 fn lyrics_keys(key: Key) -> Option<Action> {
     match key.code {
         KeyCode::Char('F') => Some(Action::CycleLyricsFormat),
@@ -1097,6 +1100,11 @@ fn parse_action(s: &str, app: &AppState) -> Action {
                 _ => return Noop,
             }),
             "seek" => arg.parse::<i64>().map(Seek).unwrap_or(Noop),
+            "focus" => match arg {
+                "left" => FocusDir(-1),
+                "right" => FocusDir(1),
+                _ => Noop,
+            },
             "resize_pane" => arg.parse::<i32>().map(ResizeFocusedPane).unwrap_or(Noop),
             "resize_pane_h" => arg.parse::<i32>().map(ResizePaneHeight).unwrap_or(Noop),
             "volume" => arg.parse::<i8>().map(VolumeDelta).unwrap_or(Noop),

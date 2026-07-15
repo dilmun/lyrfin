@@ -157,6 +157,7 @@ impl AppState {
             TagToggleAlbum => self.toggle_tag_album(),
             TagSource(d) => self.tag_source(d),
             FocusPane(p) => self.set_focus(p),
+            FocusDir(d) => self.focus_dir(d),
             CyclePane => self.cycle_pane(),
             CyclePaneRev => self.cycle_pane_rev(),
             NavDown => self.nav(Motion::Down),
@@ -173,15 +174,11 @@ impl AppState {
             PlayCurrentAlbum => self.play_current_album(),
             PlayCurrentArtist => self.play_current_artist(),
             Seek(delta) => {
-                // h/l (and ←/→): an open settings popup/overlay adjusts the
-                // selected row (must win over playback, even with Spotify
-                // streaming); else browser columns / sidebar tabs / seek.
-                if self.settings.popup.is_some() {
-                    self.settings_adjust(delta.signum() as i32); // popup is a detail
-                } else if self.settings.overlay {
-                    // a group tab is always active — h/l adjust the selected row
-                    self.settings_adjust(delta.signum() as i32);
-                } else if self.layout == Layout::Spotify && self.spov.now_spotify.is_some() {
+                // `,`/`.`: seek the active audio source. Spotify routes to its own
+                // (accelerating, debounced) seek while it's the playing source; every
+                // other case — local playback, a timeshifted radio DVR — goes through
+                // `seek_relative`, which is itself gated to the right view.
+                if self.layout == Layout::Spotify && self.spov.now_spotify.is_some() {
                     self.spotify_seek(delta);
                 } else {
                     self.seek_relative(delta);
@@ -233,6 +230,7 @@ impl AppState {
             MoveFocusedPane => self.move_focused_pane(),
             ToggleSidebar => self.toggle_panel(Panel::Sidebar),
             SettingsRemove => self.settings_remove(),
+            SettingsAdjust(d) => self.settings_adjust(d),
             RebindKey(label) => {
                 if let Some(action) = self.settings.rebinding.take() {
                     self.config.keymap.rebind(&action, &label);

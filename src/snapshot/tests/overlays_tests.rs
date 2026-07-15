@@ -81,9 +81,21 @@ fn open_overlay_swallows_global_one_key_commands() {
     // view switching (number keys) must NOT leak through either
     assert!(matches!(crate::keymap::map(&a, key('2')), Action::Noop));
     assert!(matches!(crate::keymap::map(&a, key('5')), Action::Noop));
-    // …but the overlay's own navigation/adjust/cancel keys still work
+    // …but the overlay's own navigation/adjust/cancel keys still work: j/k move
+    // between rows, h/l step the selected row's value.
     assert!(matches!(crate::keymap::map(&a, key('j')), Action::Move(_)));
-    assert!(matches!(crate::keymap::map(&a, key('l')), Action::Seek(_)));
+    assert!(matches!(
+        crate::keymap::map(&a, key('l')),
+        Action::SettingsAdjust(1)
+    ));
+    assert!(matches!(
+        crate::keymap::map(&a, key('h')),
+        Action::SettingsAdjust(-1)
+    ));
+    // seek transport (`,`/`.`) is NOT one of the overlay's keys — swallowed, so it
+    // can't seek playback from behind the popup.
+    assert!(matches!(crate::keymap::map(&a, key(',')), Action::Noop));
+    assert!(matches!(crate::keymap::map(&a, key('.')), Action::Noop));
     // `f` is the overlay's own resize key (steps the size up), not a leaked global
     assert!(matches!(
         crate::keymap::map(&a, key('f')),

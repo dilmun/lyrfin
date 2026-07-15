@@ -44,8 +44,7 @@ on the focused pane or the active view (noted below where relevant).
 |-----|--------|
 | <kbd>Space</kbd> | Play / pause |
 | <kbd>n</kbd> / <kbd>p</kbd> | Next / previous track |
-| <kbd>→</kbd> / <kbd>l</kbd> | Seek forward (+5s) |
-| <kbd>←</kbd> / <kbd>h</kbd> | Seek backward (−5s) |
+| <kbd>.</kbd> / <kbd>,</kbd> | Seek forward / backward (±5s) — in the Lyrics view/pane these nudge the lyric sync instead |
 | <kbd>+</kbd> / <kbd>=</kbd> | Volume up (+5%) |
 | <kbd>-</kbd> | Volume down (−5%) |
 | <kbd>s</kbd> | Toggle shuffle |
@@ -64,7 +63,7 @@ on the focused pane or the active view (noted below where relevant).
 | <kbd>Ctrl</kbd>+<kbd>N</kbd> / <kbd>Ctrl</kbd>+<kbd>P</kbd> | Move down / up (works in any context) |
 | <kbd>PageDown</kbd> / <kbd>PageUp</kbd> | Page down / up |
 | <kbd>Enter</kbd> | Activate / play the selection |
-| <kbd>h</kbd> / <kbd>l</kbd> | In grids: move left / right (2-D grid navigation) |
+| <kbd>h</kbd> / <kbd>l</kbd> (and <kbd>←</kbd> / <kbd>→</kbd>) | Focus left / right — move between the sidebar, list, and panes. In the Library browser they switch column; in cover grids they move a card; in the Settings overlay they adjust the selected value |
 
 ## Library, search & views
 
@@ -100,7 +99,7 @@ on the focused pane or the active view (noted below where relevant).
 | Key | Action |
 |-----|--------|
 | <kbd>f</kbd> | Toggle favorite |
-| <kbd>.</kbd> / <kbd>,</kbd> | Rate up / down (0–5★) |
+| <kbd>)</kbd> / <kbd>(</kbd> | Rate up / down (0–5★) |
 
 ## Queue (when the Queue pane is focused)
 

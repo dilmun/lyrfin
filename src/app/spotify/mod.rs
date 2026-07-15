@@ -123,7 +123,7 @@ pub struct SpOverlay {
     /// Debounce deadline for a pending manual skip: each press pushes it out, so the
     /// load fires only once the user stops skipping.
     pub sp_skip_at: Option<std::time::Instant>,
-    /// Debounce deadline for a pending seek on a STREAMED episode: holding h/l scrubs
+    /// Debounce deadline for a pending seek on a STREAMED episode: holding `,`/`.` scrubs
     /// the bar (`sp_pos`) every key-repeat, but each engine seek is a ranged HTTP
     /// re-open, so the actual re-open fires only once scrubbing settles — otherwise a
     /// burst of seeks queues dozens of re-buffers and the stream stalls.
@@ -132,7 +132,7 @@ pub struct SpOverlay {
     /// it: the engine's live progress (which lags behind the scrub) is ignored so the
     /// bar can't jump back, until the engine re-opens and reaches the target.
     pub sp_seek_target: Option<f64>,
-    /// Consecutive-seek count + timestamp, so a held h/l ACCELERATES the step (with a
+    /// Consecutive-seek count + timestamp, so a held `,`/`.` ACCELERATES the step (with a
     /// cap that scales to the episode length) instead of crawling 5s at a time.
     pub sp_seek_streak: u32,
     pub sp_seek_streak_at: Option<std::time::Instant>,

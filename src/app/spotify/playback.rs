@@ -25,7 +25,7 @@ const SP_KEY_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis
 /// the ~1–2s librespot buffer (so a single deliberate skip feels immediate).
 const SP_SKIP_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(250);
 /// How long a streamed-episode seek waits for scrubbing to settle before the engine
-/// re-opens the stream — so holding h/l coalesces into one ranged re-open instead of
+/// re-opens the stream — so holding `,`/`.` coalesces into one ranged re-open instead of
 /// a burst that stalls the stream. Short enough that a single seek feels immediate.
 const SP_SEEK_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(160);
 /// A seek counts as a "continued hold" (ramping the step) when the next press lands
@@ -306,9 +306,9 @@ impl AppState {
         self.spotify_seek_engine_or_librespot(pos);
     }
 
-    /// Seek the current Spotify track (h/l, ←/→). No-op until playback has actually
+    /// Seek the current Spotify track (`,`/`.`). No-op until playback has actually
     /// started (can't seek mid-buffer). The `delta` sign gives the direction; the
-    /// magnitude is lyrfin's own **accelerating** step (grows while h/l is held, scaled
+    /// magnitude is lyrfin's own **accelerating** step (grows while `,`/`.` is held, scaled
     /// to the episode length) so scrubbing a multi-hour podcast isn't a 5s-at-a-time
     /// crawl.
     pub(crate) fn spotify_seek(&mut self, delta: i64) {
@@ -344,7 +344,7 @@ impl AppState {
     /// HTTP re-open); a librespot track seeks via the session.
     ///
     /// The streamed re-open is **debounced** ([`SP_SEEK_DEBOUNCE`]): the bar (`sp_pos`)
-    /// has already moved, but the actual re-open is deferred so a held h/l coalesces
+    /// has already moved, but the actual re-open is deferred so a held `,`/`.` coalesces
     /// into one ranged request instead of a burst that queues dozens of re-buffers and
     /// stalls the stream. [`Self::spotify_tick_seek`] fires it once scrubbing settles.
     /// A librespot seek is cheap (no re-buffer), so it fires immediately.
@@ -361,7 +361,7 @@ impl AppState {
         }
     }
 
-    /// Fire a debounced streamed-episode seek once scrubbing (holding h/l) stops:
+    /// Fire a debounced streamed-episode seek once scrubbing (holding `,`/`.`) stops:
     /// re-open the stream at the settled bar position. Driven by `pump_spotify` each
     /// frame. Coalescing the burst means one ranged re-open instead of dozens.
     pub(super) fn spotify_tick_seek(&mut self) {

@@ -489,7 +489,12 @@ pub fn keybindings_help() -> Vec<(&'static str, &'static str, HelpScope)> {
         ("/", "search", Global),
         (
             "h / l",
-            "seek back / forward (Library: switch column)",
+            "focus left / right — sidebar · list · panes (Library: switch column)",
+            Global,
+        ),
+        (
+            ", / .",
+            "seek back / forward (Lyrics view: nudge sync)",
             Global,
         ),
         ("+ / -", "volume up / down", Global),
@@ -507,7 +512,7 @@ pub fn keybindings_help() -> Vec<(&'static str, &'static str, HelpScope)> {
             Local,
         ),
         ("f", "toggle favorite", Local),
-        (". / ,", "rate up / down", Local),
+        (") / (", "rate the current track up / down (stars)", Local),
         ("s / r", "shuffle / repeat (off / one / all)", Local),
         ("[ / ]", "speed down / up", Local),
         ("o", "A-B loop: set A, set B, then clear", Local),
