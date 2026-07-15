@@ -365,6 +365,23 @@ impl AppState {
         }
     }
 
+    /// Shift focus one region left (`dir < 0`) or right (`dir > 0`) through the
+    /// view's focus ring — the horizontal counterpart to Tab, driven by `h`/`l`
+    /// (and ←/→). Clamped at the ends (unlike Tab's wrap) so the direction reads
+    /// literally: `h` walks toward the sidebar, `l` toward the panes, and neither
+    /// wraps past the edge. Views whose main content is 2-D (the Library columns,
+    /// the cover grid, the Radio sidebar) intercept `h`/`l` earlier in the keymap,
+    /// so this only runs where horizontal movement means "change focused region".
+    pub(crate) fn focus_dir(&mut self, dir: i32) {
+        let ring = self.focus_order();
+        if ring.is_empty() {
+            return;
+        }
+        let i = ring.iter().position(|&f| f == self.focus).unwrap_or(0) as i32;
+        let j = (i + dir).clamp(0, ring.len() as i32 - 1) as usize;
+        self.set_focus(ring[j]);
+    }
+
     /// Move focus by `dir` (+1 next / -1 prev) through the view's focus ring
     /// (Tab / BackTab). One engine for every source view.
     pub(crate) fn cycle_focus(&mut self, dir: i32) {

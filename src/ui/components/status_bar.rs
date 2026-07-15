@@ -512,7 +512,7 @@ fn dashboard_hint(app: &AppState) -> String {
         if app.current_local_playlist().is_some() {
             Some("⏎ play · d remove · esc back · tab panes · ? keys")
         } else {
-            Some("n new · e rename · d delete · a add · ⏎ open · tab panes · ? keys")
+            Some("n new · e rename · ⇧D delete · a add · ⏎ open · tab panes · ? keys")
         }
     } else if app.local.crumb.is_none()
         && matches!(
@@ -572,7 +572,7 @@ fn spotify_hint(app: &AppState) -> String {
         && app.spotify.section == Section::Playlists
     {
         // the Playlists list: create / rename / delete, or add the now-playing track
-        Some("n new · e rename · d delete · a add · ⏎ open · ? keys")
+        Some("n new · e rename · ⇧D delete · a add · ⏎ open · ? keys")
     } else if !app.spotify.in_search
         && app.spotify.crumb.is_none()
         && app.spotify.section == Section::Podcasts
@@ -638,11 +638,9 @@ fn nav_hint(app: &AppState) -> Line<'static> {
         // Transient input sub-modes (search boxes, pickers) keep their own
         // functional prompt since `?` isn't reachable while typing.
         match app.layout {
-            AppLayout::FullPlayer => "space ⏯ · h/l seek · tab panes · ; settings · ? keys".into(),
-            AppLayout::LyricsFocus => {
-                "space ⏯ · h/l seek · F format · , . sync · V viz · ? keys".into()
-            }
-            AppLayout::Concert => "space ⏯ · h/l seek · ; settings · ? keys".into(),
+            AppLayout::FullPlayer => "space ⏯ · , . seek · tab panes · ; settings · ? keys".into(),
+            AppLayout::LyricsFocus => "space ⏯ · F format · , . sync · V viz · ? keys".into(),
+            AppLayout::Concert => "space ⏯ · , . seek · ; settings · ? keys".into(),
             AppLayout::Radio => {
                 if let Some(p) = &app.radio.picker {
                     if p.editing {
@@ -654,7 +652,7 @@ fn nav_hint(app: &AppState) -> Line<'static> {
                     "type to filter · ↑↓ pick · esc".into()
                 } else if app.rnow.dvr.is_some() {
                     // timeshifted live stream — seekable within the DVR window
-                    "space ⏯ · h/l seek · 0 start · $ live · / search · ? keys".into()
+                    "space ⏯ · , . seek · 0 start · $ live · / search · ? keys".into()
                 } else {
                     // forward-only live stream — no seek
                     "space ⏯ · / search · j/k move · ; settings · ? keys".into()
@@ -663,7 +661,7 @@ fn nav_hint(app: &AppState) -> Line<'static> {
             AppLayout::Spotify => spotify_hint(app),
             AppLayout::Dashboard => dashboard_hint(app),
             _ => {
-                "space ⏯ · h/l seek · / search · j/k move · tab panes · ; settings · ? keys".into()
+                "space ⏯ · , . seek · / search · j/k move · tab panes · ; settings · ? keys".into()
             }
         }
     };

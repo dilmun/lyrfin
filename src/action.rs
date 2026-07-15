@@ -54,11 +54,12 @@ pub enum Action {
     /// Toggle the error-log / health overlay.
     ToggleErrorLog,
     FocusPane(Focus),
-    CyclePane,            // Tab — focus the next active pane
-    CyclePaneRev,         // Shift-Tab — focus the previous active pane
-    NavDown,              // ctrl-n — move down in whatever list/menu is focused
-    NavUp,                // ctrl-p — move up in whatever list/menu is focused
-    SwitchView(View),     // jump to a top-level view
+    FocusDir(i32), // h/l (and ←/→): shift focus one region left/right through the ring
+    CyclePane,     // Tab — focus the next active pane
+    CyclePaneRev,  // Shift-Tab — focus the previous active pane
+    NavDown,       // ctrl-n — move down in whatever list/menu is focused
+    NavUp,         // ctrl-p — move up in whatever list/menu is focused
+    SwitchView(View), // jump to a top-level view
     SwitchLayout(Layout), // instant layout swap (1..8)
 
     // ---- transport ----
@@ -188,29 +189,30 @@ pub enum Action {
     TagEditAlbumCancel, // dismiss the album confirmation
     TagEditSaveAlbum,   // confirmed: write the manual-edit draft to the whole album
     TagEditCancel,
-    SettingsRemove,     // delete the selected settings row (e.g. a music directory)
-    RebindKey(String),  // bind the pending action to this key label
-    RestoreKeybinds,    // reset all keybindings to their defaults
-    OpenSettings,       // open the full Settings overlay (command palette only)
-    OpenTags,           // open the unified Tag Edit modal (Edit tab)
-    OpenCoverSearch,    // open the album-art search popup (command palette only)
-    CoverMove(Motion),  // move the candidate selection in the cover popup
-    CoverInput(String), // edit the cover popup's search query
-    CoverActivate,      // enter: re-search (editing) or embed the selection
-    OpenTagSearch,      // open the online tag/metadata search (command palette only)
-    TagMove(Motion),    // move the candidate / track selection in the tag popup
-    TagInput(String),   // edit the tag popup's search query
-    TagActivate,        // enter: re-search (editing) or apply the active mode
-    TagApplyAlbum,      // apply album-level fields to every album track
-    TagToggleAlbum,     // toggle single ⇄ album compare mode
-    TagSource(i32),     // album mode: cycle the matched source (±1)
-    TagConfirm,         // confirm the staged tag apply
-    CoverConfirm,       // confirm the staged cover embed
-    CoverToggleScope,   // cover: embed to whole album ⇄ current song
-    QueryInsert(char),  // insert a char at the tag/cover query caret
-    QueryBackspace,     // delete before the query caret
-    QueryDelete,        // delete at the query caret
-    QueryCaret(Caret),  // move the query caret (←/→/Home/End)
+    SettingsRemove,      // delete the selected settings row (e.g. a music directory)
+    SettingsAdjust(i32), // h/l (and ←/→): step the selected settings row's value
+    RebindKey(String),   // bind the pending action to this key label
+    RestoreKeybinds,     // reset all keybindings to their defaults
+    OpenSettings,        // open the full Settings overlay (command palette only)
+    OpenTags,            // open the unified Tag Edit modal (Edit tab)
+    OpenCoverSearch,     // open the album-art search popup (command palette only)
+    CoverMove(Motion),   // move the candidate selection in the cover popup
+    CoverInput(String),  // edit the cover popup's search query
+    CoverActivate,       // enter: re-search (editing) or embed the selection
+    OpenTagSearch,       // open the online tag/metadata search (command palette only)
+    TagMove(Motion),     // move the candidate / track selection in the tag popup
+    TagInput(String),    // edit the tag popup's search query
+    TagActivate,         // enter: re-search (editing) or apply the active mode
+    TagApplyAlbum,       // apply album-level fields to every album track
+    TagToggleAlbum,      // toggle single ⇄ album compare mode
+    TagSource(i32),      // album mode: cycle the matched source (±1)
+    TagConfirm,          // confirm the staged tag apply
+    CoverConfirm,        // confirm the staged cover embed
+    CoverToggleScope,    // cover: embed to whole album ⇄ current song
+    QueryInsert(char),   // insert a char at the tag/cover query caret
+    QueryBackspace,      // delete before the query caret
+    QueryDelete,         // delete at the query caret
+    QueryCaret(Caret),   // move the query caret (←/→/Home/End)
 
     // ---- ui chrome ----
     ToggleLyrics,
@@ -286,13 +288,13 @@ impl Action {
             Noop | Redraw
                 | Tick
                 | Move(_)
-                | Seek(_)
                 | Activate
                 | Back
                 | QuitOrBack
                 | NavUp
                 | NavDown
                 | SettingsRemove
+                | SettingsAdjust(_)
                 | RestoreKeybinds
                 | Quit
                 | OpenViewSettings

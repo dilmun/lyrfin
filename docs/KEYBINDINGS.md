@@ -44,8 +44,7 @@ on the focused pane or the active view (noted below where relevant).
 |-----|--------|
 | <kbd>Space</kbd> | Play / pause |
 | <kbd>n</kbd> / <kbd>p</kbd> | Next / previous track |
-| <kbd>→</kbd> / <kbd>l</kbd> | Seek forward (+5s) |
-| <kbd>←</kbd> / <kbd>h</kbd> | Seek backward (−5s) |
+| <kbd>.</kbd> / <kbd>,</kbd> | Seek forward / backward (±5s) — in the Lyrics view/pane these nudge the lyric sync instead |
 | <kbd>+</kbd> / <kbd>=</kbd> | Volume up (+5%) |
 | <kbd>-</kbd> | Volume down (−5%) |
 | <kbd>s</kbd> | Toggle shuffle |
@@ -62,9 +61,10 @@ on the focused pane or the active view (noted below where relevant).
 | <kbd>k</kbd> / <kbd>↑</kbd> | Move up |
 | <kbd>g</kbd> / <kbd>G</kbd> | Jump to top / bottom |
 | <kbd>Ctrl</kbd>+<kbd>N</kbd> / <kbd>Ctrl</kbd>+<kbd>P</kbd> | Move down / up (works in any context) |
+| <kbd>Ctrl</kbd>+<kbd>D</kbd> / <kbd>Ctrl</kbd>+<kbd>U</kbd> | Scroll a page down / up (any list) |
 | <kbd>PageDown</kbd> / <kbd>PageUp</kbd> | Page down / up |
 | <kbd>Enter</kbd> | Activate / play the selection |
-| <kbd>h</kbd> / <kbd>l</kbd> | In grids: move left / right (2-D grid navigation) |
+| <kbd>h</kbd> / <kbd>l</kbd> (and <kbd>←</kbd> / <kbd>→</kbd>) | Focus left / right — move between the sidebar, list, and panes. In the Library browser they switch column; in cover grids they move a card; in the Settings overlay they adjust the selected value |
 
 ## Library, search & views
 
@@ -100,7 +100,7 @@ on the focused pane or the active view (noted below where relevant).
 | Key | Action |
 |-----|--------|
 | <kbd>f</kbd> | Toggle favorite |
-| <kbd>.</kbd> / <kbd>,</kbd> | Rate up / down (0–5★) |
+| <kbd>)</kbd> / <kbd>(</kbd> | Rate up / down (0–5★) |
 
 ## Queue (when the Queue pane is focused)
 
@@ -119,7 +119,7 @@ on the focused pane or the active view (noted below where relevant).
 | <kbd>n</kbd> | New playlist |
 | <kbd>Shift</kbd>+<kbd>S</kbd> | New smart playlist (from a search) |
 | <kbd>e</kbd> / <kbd>r</kbd> | Rename playlist |
-| <kbd>d</kbd> | Delete playlist |
+| <kbd>Shift</kbd>+<kbd>D</kbd> | Delete playlist |
 | <kbd>a</kbd> | Add the now-playing track to the selected playlist |
 | <kbd>Shift</kbd>+<kbd>B</kbd> | Bookmark the current search |
 
@@ -129,12 +129,14 @@ on the focused pane or the active view (noted below where relevant).
 |-----|--------|
 | <kbd>/</kbd> | Search stations |
 | <kbd>n</kbd> / <kbd>p</kbd> | Next / previous station |
-| <kbd>c</kbd> | Filter by country |
-| <kbd>g</kbd> | Filter by genre / tag |
-| <kbd>f</kbd> | Toggle results ↔ starred stations |
-| <kbd>s</kbd> | Star / unstar the selected station |
+| <kbd>f</kbd> | Star / unstar the selected station (saved to Favorites) |
+| <kbd>a</kbd> | Add the selected station to a playlist |
 | <kbd>o</kbd> | Cycle sort order |
 | <kbd>Shift</kbd>+<kbd>R</kbd> | Refresh the station directory |
+| <kbd>Enter</kbd> on **Countries** / **Genres** | Browse / filter by country or genre (sidebar sections) |
+
+`g` / `G` are jump-to-top / bottom here too — country and genre live in the
+sidebar's **Countries** and **Genres** sections rather than on a shortcut key.
 
 ## Spotify view
 
@@ -147,7 +149,7 @@ on the focused pane or the active view (noted below where relevant).
 | <kbd>a</kbd> | Add to a playlist |
 | <kbd>n</kbd> (Playlists) | New playlist |
 | <kbd>e</kbd> / <kbd>r</kbd> | Rename the selected playlist |
-| <kbd>d</kbd> | Delete (unfollow) the selected playlist |
+| <kbd>Shift</kbd>+<kbd>D</kbd> | Delete (unfollow) the selected playlist |
 | <kbd>d</kbd> / <kbd>x</kbd> (inside a playlist) | Remove the selected track |
 
 ## Tag editor

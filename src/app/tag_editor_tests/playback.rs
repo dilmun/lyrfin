@@ -21,10 +21,10 @@ fn settings_crossfade_changes_via_enter_and_adjust() {
     a.update(Action::Activate);
     assert_eq!(a.config.crossfade_ms, 4000);
 
-    // h/l (Seek) fine-adjust by 250 ms
-    a.update(Action::Seek(5));
+    // h/l (SettingsAdjust) fine-adjust by 250 ms
+    a.update(Action::SettingsAdjust(1));
     assert_eq!(a.config.crossfade_ms, 4250);
-    a.update(Action::Seek(-5));
+    a.update(Action::SettingsAdjust(-1));
     assert_eq!(a.config.crossfade_ms, 4000);
 
     let _ = std::fs::remove_dir_all(std::env::temp_dir().join("lyrfin_xfade_test"));

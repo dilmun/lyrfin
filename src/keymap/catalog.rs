@@ -23,10 +23,14 @@ pub const DEFAULT_BINDINGS: &[(&str, &str)] = &[
     ("p", "previous"),
     ("s", "toggle_shuffle"),
     ("r", "cycle_repeat"),
-    ("right", "seek:+5"),
-    ("left", "seek:-5"),
-    ("h", "seek:-5"),
-    ("l", "seek:+5"),
+    // h/l (and ←/→) are navigation: shift focus one region left/right through the
+    // view's pane ring (views with 2-D content — the Library columns, the cover
+    // grid, the Radio sidebar — remap them to column/card moves in the keymap).
+    // Seek lives on `,`/`.` (below).
+    ("right", "focus:right"),
+    ("left", "focus:left"),
+    ("h", "focus:left"),
+    ("l", "focus:right"),
     ("$", "go_live"),
     ("0", "go_stream_start"),
     ("+", "volume:+5"),
@@ -55,8 +59,13 @@ pub const DEFAULT_BINDINGS: &[(&str, &str)] = &[
     ("7", "open_spotify"),         // Spotify (librespot)
     ("f", "toggle_favorite"),
     ("a", "add_to_playlist"),
-    (".", "rate:+1"),
-    (",", "rate:-1"),
+    // seek: the `<`/`>` glyphs read as rewind / fast-forward. Universal transport —
+    // works in every view (the Lyrics view/pane remaps them to sync-offset nudges).
+    (".", "seek:+5"),
+    (",", "seek:-5"),
+    // rate the current track (0..=5 stars); relocated off `,`/`.` when seek took them.
+    (")", "rate:+1"),
+    ("(", "rate:-1"),
     ("C", "clear_queue"),
     ("x", "toggle_mark"),
     ("L", "toggle_lyrics"),
@@ -84,9 +93,8 @@ pub const DEFAULT_BINDINGS: &[(&str, &str)] = &[
     ("B", "bookmark_search"), // shift-B: bookmark the search
     ("T", "cycle_sleep_timer"),
     ("o", "ab_loop"),
-    ("I", "toggle_stats"),         // shift-I: stats overlay
-    ("delete", "settings_remove"), // settings: delete the selected row
-    ("ctrl-d", "settings_remove"),
+    ("I", "toggle_stats"),          // shift-I: stats overlay
+    ("delete", "settings_remove"),  // settings: delete the selected row (ctrl-d is now half-page)
     ("ctrl-r", "restore_keybinds"), // Keys settings: reset to defaults
 ];
 
@@ -114,6 +122,15 @@ pub const RETIRED_BINDINGS: &[(&str, &str)] = &[
     // `F` moved from a global binding to a Lyrics-pane key; drop a stale full-dump
     // pin so it doesn't resurrect the global binding and shadow the pane scope.
     ("F", "cycle_lyrics_format"),
+    // seek moved off h/l/←/→ (now focus navigation) onto `,`/`.`; rate moved off
+    // `,`/`.` onto `(`/`)`. Drop the stale full-dump pins so the keys pick up their
+    // new roles instead of staying frozen on the old ones.
+    ("h", "seek:-5"),
+    ("l", "seek:+5"),
+    ("left", "seek:-5"),
+    ("right", "seek:+5"),
+    (",", "rate:-1"),
+    (".", "rate:+1"),
 ];
 
 /// Distinct, user-configurable actions (one row per action in the Keys settings),
@@ -139,6 +156,8 @@ pub fn keybind_desc(action: &str) -> String {
         "command_palette" => "Command palette",
         "cycle_pane" => "Focus next pane",
         "cycle_pane_rev" => "Focus previous pane",
+        "focus:left" => "Focus left (pane / column)",
+        "focus:right" => "Focus right (pane / column)",
         "begin_search" => "Search",
         "cycle_theme" => "Cycle theme",
         "toggle_play" => "Play / pause",
@@ -188,8 +207,8 @@ pub fn keybind_desc(action: &str) -> String {
         "move:bottom" => "Jump to bottom",
         "move:pageup" => "Page up",
         "move:pagedown" => "Page down",
-        "seek:+5" => "Seek forward / column right",
-        "seek:-5" => "Seek back / column left",
+        "seek:+5" => "Seek forward",
+        "seek:-5" => "Seek back",
         "volume:+5" => "Volume up",
         "volume:-5" => "Volume down",
         "speed:+0.25" => "Speed up",

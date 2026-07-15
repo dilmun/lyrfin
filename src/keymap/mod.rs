@@ -40,6 +40,7 @@ pub fn map(app: &AppState, key: Key) -> Action {
         .or_else(|| tag_editor(app, key))
         .or_else(|| naming_input(app, key))
         .or_else(|| confirm_input(app, key))
+        .or_else(|| half_page(key))
         .or_else(|| modal_overlay(app, key))
         .or_else(|| pane_context(app, key))
         .or_else(|| spotify_view(app, key))
@@ -77,9 +78,9 @@ fn normalize_shift(key: Key) -> Key {
     key
 }
 
-/// Library (#2) 3-column browser: while a column is focused, h/l/←/→ switch the
-/// active column (otherwise they'd `seek`). Vertical motion, Enter, and every
-/// global binding fall through unchanged.
+/// Library (#2) 3-column browser: while the columns are focused, h/l/←/→ switch the
+/// active column (otherwise they'd shift focus between panes). Vertical motion,
+/// Enter, and every global binding fall through unchanged.
 fn library_view(app: &AppState, key: Key) -> Option<Action> {
     if app.layout != Layout::LibraryFocus || app.focus != Focus::Main || app.is_searching() {
         return None;
@@ -169,6 +170,23 @@ fn universal_nav(key: Key) -> Option<Action> {
             KeyCode::Char('p') => return Some(Action::NavUp),
             _ => {}
         }
+    }
+    None
+}
+
+/// Vim half-page scroll: `ctrl-d` / `ctrl-u` page the focused list down / up, in any
+/// list the motion keys reach. It sits after the text-input handlers — the Tag editor
+/// binds `ctrl-d`/`ctrl-u` to its own field ops, and a focused search box swallows
+/// them — but before the pane/view handlers, so a pane's plain-`d` key (queue remove,
+/// delete playlist) can't shadow it. The half-page counterpart to `universal_nav`'s
+/// `ctrl-n`/`ctrl-p`, one step later so those exceptions win first.
+fn half_page(key: Key) -> Option<Action> {
+    if key.mods.ctrl && !key.mods.alt {
+        return match key.code {
+            KeyCode::Char('d') => Some(Action::Move(Motion::PageDown)),
+            KeyCode::Char('u') => Some(Action::Move(Motion::PageUp)),
+            _ => None,
+        };
     }
     None
 }
@@ -456,7 +474,7 @@ fn spotify_playlist_keys(app: &AppState, key: Key) -> Option<Action> {
             KeyCode::Char('e') | KeyCode::Char('r') if on_pl => {
                 return Some(Action::SpotifyRenamePlaylist);
             }
-            KeyCode::Char('d') if on_pl => return Some(Action::SpotifyDeletePlaylist),
+            KeyCode::Char('D') if on_pl => return Some(Action::SpotifyDeletePlaylist),
             _ => {}
         }
     }
@@ -597,7 +615,8 @@ fn modal_overlay(app: &AppState, key: Key) -> Option<Action> {
         return None;
     }
     // the tabbed Settings overlay + per-view popup: Tab / Shift-Tab switch tabs,
-    // `f` (or `=`/`+`) cycles the overlay size up
+    // `f` (or `=`/`+`) cycles the overlay size up, and h/l (←/→) step the selected
+    // row's value (j/k move between rows via the global `move` binding below).
     if app.settings.overlay || app.settings.popup.is_some() {
         match key.code {
             KeyCode::Tab => return Some(Action::OverlayTab(1)),
@@ -605,6 +624,8 @@ fn modal_overlay(app: &AppState, key: Key) -> Option<Action> {
             KeyCode::Char('f') | KeyCode::Char('=') | KeyCode::Char('+') => {
                 return Some(Action::CycleOverlaySize);
             }
+            KeyCode::Char('h') | KeyCode::Left => return Some(Action::SettingsAdjust(-1)),
+            KeyCode::Char('l') | KeyCode::Right => return Some(Action::SettingsAdjust(1)),
             _ => {}
         }
     }
@@ -720,10 +741,23 @@ fn spotify_view(app: &AppState, key: Key) -> Option<Action> {
     Some(global_binding(app, key))
 }
 
+/// The radio view's global fall-through: like [`global_binding`], but shuffle and
+/// repeat are inert. A live stream has no queue to shuffle and no track to repeat,
+/// so `s`/`r` (or whatever the user bound those to) would only disturb the frozen
+/// local player behind the radio overlay — not something a radio browse should do.
+/// Matched by resolved *action*, so it holds regardless of how the keys are bound.
+fn radio_global(app: &AppState, key: Key) -> Action {
+    match global_binding(app, key) {
+        Action::ToggleShuffle | Action::CycleRepeat => Action::Noop,
+        other => other,
+    }
+}
+
 /// Radio view: the station list is focused by default with dedicated keys; the
 /// search box and the country/genre pickers are explicit sub-modes that capture
-/// typing while open. Unclaimed keys fall through to the global bindings (so `q`
-/// quits, space pauses, the number keys switch views, etc.).
+/// typing while open. Unclaimed keys fall through to [`radio_global`] (so `q`
+/// quits, space pauses, the number keys switch views — but shuffle/repeat stay
+/// inert, having no meaning for a queue-less live stream).
 fn radio_view(app: &AppState, key: Key) -> Option<Action> {
     if app.layout != Layout::Radio {
         return None;
@@ -816,7 +850,7 @@ fn radio_view(app: &AppState, key: Key) -> Option<Action> {
         return Some(match key.code {
             KeyCode::Char('l') | KeyCode::Right => Action::RadioActivate,
             KeyCode::Char('h') | KeyCode::Left => Action::Noop,
-            _ => global_binding(app, key),
+            _ => radio_global(app, key),
         });
     }
     // vim horizontal nav from the main pane: h/← jumps back to the section sidebar
@@ -830,13 +864,13 @@ fn radio_view(app: &AppState, key: Key) -> Option<Action> {
         if app.radio.pl.open.is_none() {
             return Some(match key.code {
                 KeyCode::Char('n') => Action::RadioNewPlaylist,
-                KeyCode::Char('d') => Action::RadioDeletePlaylist,
+                KeyCode::Char('D') => Action::RadioDeletePlaylist,
                 KeyCode::Char('r') | KeyCode::Char('e') => Action::RadioRenamePlaylist,
                 KeyCode::Char('l') | KeyCode::Right => Action::RadioActivate, // drill in
                 // no station under the cursor here — swallow the station operators so
                 // they can't fall through to the local-music add-to-playlist / mark
                 KeyCode::Char('a') | KeyCode::Char('x') => Action::Noop,
-                _ => global_binding(app, key), // j/k move, Tab, q…
+                _ => radio_global(app, key), // j/k move, Tab, q…
             });
         }
         match key.code {
@@ -849,13 +883,13 @@ fn radio_view(app: &AppState, key: Key) -> Option<Action> {
             KeyCode::Char('p') => return Some(Action::RadioStation(-1)),
             _ => {}
         }
-        return Some(global_binding(app, key));
+        return Some(radio_global(app, key));
     }
     // Station list focused: source-specific keys (`n`/`p` change station, not the
-    // local queue; `f` stars, `a` adds the station to a playlist).
+    // local queue; `f` stars, `a` adds the station to a playlist). Filtering by
+    // country / genre is the Countries / Genres sidebar sections (⏎ opens the
+    // picker) — no `c`/`g` shortcut, so `g`/`G` stay vim jump-to-top/bottom.
     match key.code {
-        KeyCode::Char('c') => return Some(Action::RadioOpenCountry),
-        KeyCode::Char('g') => return Some(Action::RadioOpenGenre),
         KeyCode::Char('f') => return Some(Action::RadioStar),
         KeyCode::Char('a') => return Some(Action::RadioAddToPlaylist),
         KeyCode::Char('o') => return Some(Action::RadioCycleSort),
@@ -864,8 +898,8 @@ fn radio_view(app: &AppState, key: Key) -> Option<Action> {
         KeyCode::Char('p') => return Some(Action::RadioStation(-1)), // prev channel
         _ => {}
     }
-    // list navigation + anything else → the global bindings (quit / play-pause / …)
-    Some(global_binding(app, key))
+    // list navigation + anything else → the (shuffle/repeat-filtered) global bindings
+    Some(radio_global(app, key))
 }
 
 /// Context keys: browsing the Playlists section (Dashboard, main pane) exposes
@@ -894,7 +928,7 @@ fn sidebar_playlists_context(app: &AppState, key: Key) -> Option<Action> {
     match key.code {
         KeyCode::Char('n') => Some(Action::BeginNewPlaylist),
         KeyCode::Char('S') => Some(Action::NewSmartPlaylist),
-        KeyCode::Char('d') => Some(Action::DeletePlaylist),
+        KeyCode::Char('D') => Some(Action::DeletePlaylist),
         KeyCode::Char('e') | KeyCode::Char('r') => Some(Action::BeginRenamePlaylist),
         KeyCode::Char('a') => Some(Action::AddCurrentToPlaylist),
         _ => None,
@@ -974,11 +1008,11 @@ fn pane_context(app: &AppState, key: Key) -> Option<Action> {
 /// canonical label, so a rebound key is classified by where it lands, not its glyph.
 fn is_universal_key(key: Key) -> bool {
     const UNIVERSAL: &[&str] = &[
-        // navigation
-        "up", "down", "left", "right", "pageup", "pagedown", "home", "end", "enter", "esc", "tab",
-        "backtab", "j", "k", "g", "G",
+        // navigation (move within / between regions)
+        "up", "down", "left", "right", "h", "l", "pageup", "pagedown", "home", "end", "enter",
+        "esc", "tab", "backtab", "j", "k", "g", "G",
         // playback transport (seek / volume / speed / shuffle / repeat)
-        "space", "n", "p", "h", "l", "+", "=", "-", "[", "]", "s", "r",
+        "space", "n", "p", ",", ".", "+", "=", "-", "[", "]", "s", "r",
         // app chrome: quit / back / palette / help / search / copy-error / switch view
         "q", "Q", "ctrl-c", "ctrl-o", ":", "?", "/", "y", "1", "2", "3", "4", "5", "6", "7",
         // the focused pane's own geometry: resize (>< }{ ), move edge (m), fit/reset (zZ)
@@ -990,8 +1024,8 @@ fn is_universal_key(key: Key) -> bool {
 /// Lyrics pane keys: `F` cycles the lyric format (plain → karaoke → teleprompter);
 /// `,` / `.` nudge the synced-lyric offset earlier / later (the unshifted `<` / `>`,
 /// so the direction reads naturally — and it dodges macOS reserving ctrl+arrows for
-/// Spaces). Everything else falls through, leaving the global `,` / `.` rating keys
-/// untouched outside the lyrics view.
+/// Spaces). This is the one place `,` / `.` don't seek: in the lyrics view/pane they
+/// adjust the sync, everywhere else they're the global seek keys.
 fn lyrics_keys(key: Key) -> Option<Action> {
     match key.code {
         KeyCode::Char('F') => Some(Action::CycleLyricsFormat),
@@ -1097,6 +1131,11 @@ fn parse_action(s: &str, app: &AppState) -> Action {
                 _ => return Noop,
             }),
             "seek" => arg.parse::<i64>().map(Seek).unwrap_or(Noop),
+            "focus" => match arg {
+                "left" => FocusDir(-1),
+                "right" => FocusDir(1),
+                _ => Noop,
+            },
             "resize_pane" => arg.parse::<i32>().map(ResizeFocusedPane).unwrap_or(Noop),
             "resize_pane_h" => arg.parse::<i32>().map(ResizePaneHeight).unwrap_or(Noop),
             "volume" => arg.parse::<i8>().map(VolumeDelta).unwrap_or(Noop),
