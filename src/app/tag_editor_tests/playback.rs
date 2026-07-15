@@ -61,9 +61,10 @@ fn seek_is_a_noop_while_a_live_station_plays() {
 }
 
 #[test]
-fn dvr_seek_moves_within_the_window_not_the_local_track() {
+fn dvr_seek_is_scoped_to_the_radio_view() {
     use crate::app::radio::DvrState;
     let mut a = app();
+    a.layout = Layout::Radio; // the DVR window is only seekable while showing radio
     a.player.status = Status::Paused;
     a.player.elapsed = Duration::from_secs(42); // the preserved local position
     a.rnow.now_station = Some(crate::radio::Station::default());
@@ -76,7 +77,8 @@ fn dvr_seek_moves_within_the_window_not_the_local_track() {
         following: false,
     });
 
-    a.update(Action::Seek(-5)); // rewind 5 s within the DVR window
+    // in the Radio view, seek moves within the DVR window (not the local track)
+    a.update(Action::Seek(-5));
     assert_eq!(
         a.rnow.dvr.unwrap().pos,
         95.0,
@@ -87,11 +89,23 @@ fn dvr_seek_moves_within_the_window_not_the_local_track() {
         Duration::from_secs(42),
         "the preserved local track position is untouched"
     );
-
     // rewinding past the window start clamps to it (can't go before the buffer)
     a.rnow.dvr.as_mut().unwrap().pos = 3.0;
     a.update(Action::Seek(-5));
     assert_eq!(a.rnow.dvr.unwrap().pos, 0.0, "clamped to the buffer start");
+
+    // leaving the Radio view: seek must NOT reach the background radio's window from
+    // any other view (Dashboard, Spotify, …) — the leak we're fixing.
+    a.rnow.dvr.as_mut().unwrap().pos = 100.0;
+    for view in [Layout::Dashboard, Layout::Spotify, Layout::FullPlayer] {
+        a.layout = view;
+        a.update(Action::Seek(-5));
+        assert_eq!(
+            a.rnow.dvr.unwrap().pos,
+            100.0,
+            "{view:?} must not seek the background radio"
+        );
+    }
 }
 
 #[test]
