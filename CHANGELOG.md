@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.2.0](https://github.com/dilmun/lyrfin/compare/v0.1.0...v0.2.0) (2026-07-15)
+
+
+### Features
+
+* guided command palette and focus-scoped keybindings ([#2](https://github.com/dilmun/lyrfin/issues/2)) ([358ff6e](https://github.com/dilmun/lyrfin/commit/358ff6eee756bf97225c66ad379530068aa4a6e1))
+* **keymap:** app-wide vim navigation, ,/. seek and half-page scroll ([c5456f8](https://github.com/dilmun/lyrfin/commit/c5456f8394016b4ef4b6a4af3b711851e42fb1d9))
+* **radio:** sidebar sections, favourites, history, named playlists and richer search ([d2e1cc6](https://github.com/dilmun/lyrfin/commit/d2e1cc632717a87b68e0b2b98c2eefa8bc7088b9))
+* **selection:** multi-select tracks across all views for bulk actions ([4671b38](https://github.com/dilmun/lyrfin/commit/4671b38dda830c13dfb27d6455a473f6c43d9da2))
+
+
+### Bug Fixes
+
+* **status-bar:** unify shuffle/repeat feedback and fix the Next: hint ([#5](https://github.com/dilmun/lyrfin/issues/5)) ([96fe5cc](https://github.com/dilmun/lyrfin/commit/96fe5cc3709c474f7e7adbeb534df588b7a266df))
+
+## Changelog
+
 All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims to
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
