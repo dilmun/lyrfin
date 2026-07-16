@@ -22,19 +22,23 @@ detection instead of fingerprinting.
 
 ## Now — near-term
 
-The active list. Ordered by priority.
+The active list — the road to the next release. Ordered by priority.
 
 - [ ] **Terminal compatibility.** Developed and tested only on
   [**Ghostty**](https://ghostty.org). Verify and tune rendering — truecolor,
   inline-image protocols (Kitty/sixel/iTerm2), Unicode / RTL shaping, mouse — on
   Kitty, WezTerm, iTerm2, Alacritty, foot, and Windows Terminal, and document
   what's supported per terminal.
-- [ ] **Audio listening checks.** Gapless, pitch-preserved speed, and crossfade
-  are implemented and adjustable but only bench-verified — confirm them on real
-  hardware (including a Bluetooth sink, for latency compensation). Closes the
-  last verification gap on M5.
-- [ ] **Silence-skip** (final M5 item) — trim leading/trailing silence between
-  tracks. Optional polish; needs real-audio verification.
+- [ ] **Audio listening checks.** Gapless, pitch-preserved speed, crossfade, and
+  silence-skip are implemented, adjustable, and confirmed by ear on the desktop
+  output; the remaining case is a **Bluetooth sink** — output-latency
+  compensation for A/V sync and crossfade timing. Closes the last M5 gap.
+- [ ] **Multi-select coverage.** v0.2.0 turned marks (`x`) + visual range (`V`)
+  into a view-aware selection for bulk favourite / add-to-playlist / edit /
+  remove across the local library, radio, and Spotify track lists. Extend it to
+  the three surfaces it doesn't reach yet: the Library (Miller) **Tracks**
+  column, the **queue** pane, and Spotify **search** track results (the
+  mixed-carousel render path).
 - [ ] **OS "Now Playing" polish.** The integration shipped and is verified on
   macOS (Control Center) + Linux (MPRIS). Two follow-ups: (1) a background `.app`
   bundle (`Info.plist` `LSUIElement`) so the macOS tile shows a proper lyrfin icon
@@ -62,15 +66,18 @@ The one milestone not yet started.
 + artist images + cover-art grid · synced/plain lyrics · 6 visualizer modes ·
 fuzzy search + live filter · queue + playlists (CRUD, persistent, folders) ·
 shuffle/repeat · library cache + incremental indexing + instant startup ·
-rating/favorite/play count + listening history · session resume · mouse + vim
-motions · first-run onboarding.
+rating/favorite/play count + listening history · session resume · mouse +
+app-wide vim navigation · cross-view multi-select (marks + visual range) for bulk
+actions · first-run onboarding.
 
 ### Online layer
 - **Spotify** — OAuth PKCE login, librespot playback (Premium required),
   browse/search/library/playlists/artist pages, podcast browse hub. Rate-limited
   on the shared default client ID; users can set their own.
-- **Internet radio** — Radio Browser directory: search, country/genre filters,
-  sort, favorites.
+- **Internet radio** — Radio Browser directory with a sectioned sidebar
+  (Favourites, Recent, Most Played, Trending, Countries, Genres, Playlists):
+  multi-field search, country / genre browse, sort, play history, favourites, and
+  named station playlists.
 - **Podcasts** — episode → public RSS feed → open MP3 stream (Spotify-exclusive
   DRM audio can't play in a third-party client).
 - **Online metadata** — lyrics (LRCLIB → NetEase → JioSaavn + machine
@@ -89,9 +96,10 @@ motions · first-run onboarding.
 - **M4 — Queue & playlist.** Key-driven reorder/remove/clear; real play history
   (Previous as a back button); smart shuffle; dynamic (rule-based) smart
   playlists; collapsible playlist folders.
-- **M5 — Audio engine** *(effectively done — see near-term for the last item)*.
-  Sleep timer; A-B loop; ReplayGain/normalization; gapless (next-track preload,
-  seamless append); pitch-preserved speed (WSOLA time-stretch); crossfade.
+- **M5 — Audio engine** *(effectively done — pending only a Bluetooth-sink
+  listening check)*. Sleep timer; A-B loop; ReplayGain/normalization; gapless
+  (next-track preload, seamless append); pitch-preserved speed (WSOLA
+  time-stretch); crossfade; silence-skip.
 - **M6 — Lyrics+.** Word-level karaoke; dual/translated lyrics + machine
   translation; teleprompter mode; precise ~20 Hz sync with output-latency
   compensation; manual sync offset (`,`/`.`); NetEase + JioSaavn providers.
