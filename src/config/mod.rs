@@ -299,9 +299,13 @@ pub struct Config {
     /// special font. `nerd` is opt-in.
     pub icon_set: String,
     /// Use Powerline glyphs (U+E0B6/U+E0B4) for the rounded selection pill.
-    /// Separate from `icon_set` because Powerline and Font Awesome coverage are
-    /// independent — plenty of fonts carry the Powerline range but not the
-    /// Nerd Font icons — and off by default for the same reason `icon_set` is.
+    ///
+    /// Separate from `icon_set` because the two ranges travel independently, and
+    /// Powerline is by far the safer bet: most coding fonts carry it, and the
+    /// common terminals (iTerm2's "Draw Powerline Glyphs", Kitty, WezTerm,
+    /// Ghostty) draw these box shapes *themselves* regardless of the font. So
+    /// unlike `icon_set = "nerd"` this is on by default — and it degrades to
+    /// ◖◗ (ordinary Unicode) rather than boxes when turned off.
     pub powerline: bool,
     /// Per-glyph custom icon overrides (the `[icons]` table).
     pub icons: crate::icons::IconOverrides,
@@ -417,7 +421,7 @@ impl Default for Config {
             spotify_bitrate: 160,
             spotify_show_account: true,
             icon_set: "outline".into(),
-            powerline: false,
+            powerline: true,
             icons: crate::icons::IconOverrides::default(),
             player_viz: true,
             player_viz_mode: 0,

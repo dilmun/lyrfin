@@ -29,7 +29,7 @@ wipe your settings).
 | `grid_card_size` | `small`\|`medium`\|`large` | `medium` | Cover-grid card size. |
 | `track_columns` | bool | `true` | Show tracks as a column table (default) instead of compact rows. |
 | `icon_set` | string | `"outline"` | Transport icon preset: `outline`, `triangles`, `skip`, `ascii`, `nerd`. |
-| `powerline` | bool | `false` | Powerline glyphs (U+E0Bx) for the rounded selection pill. |
+| `powerline` | bool | `true` | Powerline glyphs (U+E0Bx) for the rounded selection pill; off falls back to ◖◗. |
 | `arabic_shaping` | bool | `true` | Pre-shape Arabic text; disable on terminals that shape natively. |
 
 ### Audio & playback
@@ -152,14 +152,17 @@ them — and that is exactly where Nerd Font icons live.
 So with this setting on, keep your non-ASCII font and simply avoid the two PUA
 features:
 
-| Setting | Value | Why |
-|---------|-------|-----|
-| `icon_set` | anything but `nerd` | `nerd` is the only PUA preset |
-| `powerline` | `false` | U+E0Bx is PUA too |
+`icon_set` just needs to be anything but `nerd` — the only preset in the PUA — and
+that is already the default.
 
-Those are already the defaults. If a plain preset renders as colour emoji or the
-transport row misaligns (some terminals resolve `⏸ ⏮ ⏭` to an emoji font, which
-is double-width), pick `triangles` or `ascii` instead.
+`powerline` is PUA as well, but it stays **on** by default because these two box
+shapes are a special case: iTerm2 ("Draw Powerline Glyphs"), Kitty, WezTerm and
+Ghostty all draw them natively, whatever font you use. Turn it off if the
+selection pill's end caps show as boxes; it falls back to ◖◗.
+
+If a plain preset renders as colour emoji or the transport row misaligns (some
+terminals resolve `⏸ ⏮ ⏭` to an emoji font, which is double-width), pick
+`triangles` or `ascii` instead.
 
 This is also why lyrfin can't detect any of it: the font a terminal reports, and
 even the font it's configured with, is not necessarily the font it draws a given
