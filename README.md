@@ -199,15 +199,15 @@ Essentials (all rebindable — full list in [`docs/KEYBINDINGS.md`](docs/KEYBIND
 
 | Key | Action | | Key | Action |
 |-----|--------|-|-----|--------|
-| <kbd>Space</kbd> | Play / pause | | <kbd>1</kbd>–<kbd>7</kbd> | Switch layout |
+| <kbd>Space</kbd> | Play / pause | | <kbd>1</kbd>–<kbd>7</kbd> | Switch view |
 | <kbd>n</kbd> / <kbd>p</kbd> | Next / previous | | <kbd>/</kbd> | Search |
-| <kbd>←</kbd> / <kbd>→</kbd> | Seek | | <kbd>Tab</kbd> | Cycle pane focus |
+| <kbd>,</kbd> / <kbd>.</kbd> | Seek back / forward | | <kbd>Tab</kbd> | Cycle pane focus |
 | <kbd>-</kbd> / <kbd>+</kbd> | Volume | | <kbd>Enter</kbd> | Play / open |
 | <kbd>j</kbd> / <kbd>k</kbd> | Move down / up | | <kbd>e</kbd> | Equalizer |
-| <kbd>s</kbd> / <kbd>r</kbd> | Shuffle / repeat | | <kbd>t</kbd> | Cycle theme |
-| <kbd>f</kbd> | Favorite | | <kbd>v</kbd> | Visualizer mode |
-| <kbd>.</kbd> / <kbd>,</kbd> | Rate up / down | | <kbd>;</kbd> | Settings |
-| <kbd>?</kbd> | Help | | <kbd>q</kbd> | Quit |
+| <kbd>h</kbd> / <kbd>l</kbd> | Focus pane left / right | | <kbd>t</kbd> | Cycle theme |
+| <kbd>s</kbd> / <kbd>r</kbd> | Shuffle / repeat | | <kbd>v</kbd> | Visualizer mode |
+| <kbd>f</kbd> | Favorite | | <kbd>;</kbd> | Settings |
+| <kbd>(</kbd> / <kbd>)</kbd> | Rate down / up | | <kbd>?</kbd> / <kbd>q</kbd> | Help / quit |
 
 ---
 
