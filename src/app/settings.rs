@@ -840,6 +840,8 @@ impl AppState {
     pub(crate) fn apply_theme(&mut self, name: &str) {
         self.theme = self.resolve_theme(name);
         self.apply_accent();
+        // Protocols that flatten art onto the panel colour baked in the *old* one.
+        self.rebuild_art_for_theme();
     }
 
     pub(crate) fn set_theme(&mut self, name: &str) {

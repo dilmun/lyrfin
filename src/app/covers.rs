@@ -16,6 +16,54 @@ pub struct CoverArt {
 }
 
 impl AppState {
+    /// Does this terminal's image protocol need art flattened onto an opaque
+    /// background before encoding?
+    ///
+    /// Kitty places an image *per cell*, so its transparent pixels blend with the
+    /// cell behind them — the panel colour the grid already paints — and a theme
+    /// switch is then a free recolour with no re-encode. Every other protocol
+    /// (iTerm2, sixel) hands the terminal one whole image, whose transparency
+    /// composites against the *terminal* background instead. With a circle-cropped
+    /// cover that paints the corners in the terminal bg, so a faint square shows
+    /// inside the panel — invisible in dark themes where the two nearly match,
+    /// obvious in light ones.
+    fn art_needs_opaque_bg(&self) -> bool {
+        self.art
+            .picker
+            .as_ref()
+            .is_some_and(|p| protocol_needs_opaque_bg(p.protocol_type()))
+    }
+
+    /// Point the picker's underlay at the current panel colour (or clear it on
+    /// Kitty, which must keep real transparency). Protocols bake this in at encode
+    /// time, so anything already built keeps the old colour — call
+    /// [`Self::rebuild_art_for_theme`] after a theme change, not this alone.
+    pub(crate) fn sync_art_background(&mut self) {
+        let panel = self.theme.panel;
+        let opaque = self.art_needs_opaque_bg();
+        let Some(picker) = self.art.picker.as_mut() else {
+            return;
+        };
+        picker
+            .set_background_color(opaque.then_some(image::Rgba([panel.0, panel.1, panel.2, 255])));
+    }
+
+    /// Re-encode cached art after a theme change, so the baked-in background
+    /// matches the new panel colour. A no-op on Kitty, where transparency does the
+    /// work and the cache stays valid — which is what keeps a theme switch free
+    /// there. Elsewhere the grid cache is dropped and refilled lazily as cards come
+    /// back on screen; thumbnails are disk-cached, so that's a local decode rather
+    /// than a re-fetch. The persistent covers retain their source image, so they
+    /// rebuild in place with no reload at all.
+    pub(crate) fn rebuild_art_for_theme(&mut self) {
+        if !self.art_needs_opaque_bg() {
+            return;
+        }
+        self.sync_art_background();
+        self.grid_art.borrow_mut().clear();
+        self.rebuild_persistent_covers();
+    }
+
     /// (Re)load the current track's embedded cover into the inline-image
     /// protocols, honouring the `album_art` setting. `None` → gradient fallback.
     /// Called on track change and when the album-art toggle flips.
@@ -307,6 +355,13 @@ pub struct CoverSearch {
     pub qcaret: usize,
 }
 
+/// Which protocols need art flattened onto an opaque background — everything
+/// except Kitty, the only one that places images per *cell* and so blends their
+/// transparency with the cell behind them. See [`AppState::art_needs_opaque_bg`].
+pub(crate) fn protocol_needs_opaque_bg(p: ratatui_image::picker::ProtocolType) -> bool {
+    p != ratatui_image::picker::ProtocolType::Kitty
+}
+
 #[derive(PartialEq)]
 pub enum CoverStatus {
     Searching,
@@ -314,4 +369,22 @@ pub enum CoverStatus {
     Empty,
     Embedding,
     Error(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::protocol_needs_opaque_bg;
+    use ratatui_image::picker::ProtocolType;
+
+    /// Kitty blends with the cell behind the image, so it must keep real
+    /// transparency — that's what makes a theme switch a free recolour there.
+    /// Every other protocol composites against the terminal background instead
+    /// and needs the art flattened onto the panel colour first.
+    #[test]
+    fn only_kitty_keeps_transparency() {
+        assert!(!protocol_needs_opaque_bg(ProtocolType::Kitty));
+        assert!(protocol_needs_opaque_bg(ProtocolType::Iterm2));
+        assert!(protocol_needs_opaque_bg(ProtocolType::Sixel));
+        assert!(protocol_needs_opaque_bg(ProtocolType::Halfblocks));
+    }
 }

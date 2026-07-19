@@ -1468,9 +1468,12 @@ fn popular_track_meta_is_artist_album_year() {
 
 #[test]
 fn circle_crop_makes_corners_transparent() {
-    // circle art masks its corners to transparent (not a baked bg colour), so the
-    // panel behind shows through and a theme change needs no re-crop — the new panel
-    // simply shows through the same unchanged image.
+    // circle art masks its corners to transparent (not a baked bg colour) so the
+    // panel behind shows through. Under Kitty that also makes a theme change free:
+    // the same unchanged image simply shows the new panel, no re-crop. Other
+    // protocols composite against the *terminal* background rather than the cell,
+    // so there the picker underlays the panel colour at encode time instead — see
+    // `AppState::art_needs_opaque_bg`.
     use image::{DynamicImage, Rgba, RgbaImage};
     let src = DynamicImage::ImageRgba8(RgbaImage::from_pixel(20, 20, Rgba([200, 100, 50, 255])));
     let out = crate::spotify::artwork::circle_crop(src).to_rgba8();
