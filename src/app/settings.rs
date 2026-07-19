@@ -18,6 +18,7 @@ impl AppState {
         // General — app-wide behaviour
         let mut v = vec![
             IconSet,
+            Powerline,
             Mouse,
             NextHint,
             OsMediaControls,
@@ -465,6 +466,7 @@ impl AppState {
             Some(Setting::OverlaySize) => self.cycle_overlay_size(1),
             Some(Setting::ReducedMotion) => self.toggle_setting(|c| &mut c.reduced_motion),
             Some(Setting::PeakCaps) => self.toggle_setting(|c| &mut c.peak_caps),
+            Some(Setting::Powerline) => self.toggle_setting(|c| &mut c.powerline),
             Some(Setting::ArabicShaping) => self.toggle_setting(|c| &mut c.arabic_shaping),
             Some(Setting::RadioDvr) => self.toggle_setting(|c| &mut c.radio_dvr),
             Some(Setting::Gapless) => {
@@ -611,6 +613,7 @@ impl AppState {
             Some(Setting::OverlaySize) => self.cycle_overlay_size(dir.signum()),
             Some(Setting::ReducedMotion) => self.set_setting(|c| &mut c.reduced_motion, dir > 0),
             Some(Setting::PeakCaps) => self.set_setting(|c| &mut c.peak_caps, dir > 0),
+            Some(Setting::Powerline) => self.set_setting(|c| &mut c.powerline, dir > 0),
             Some(Setting::ArabicShaping) => self.set_setting(|c| &mut c.arabic_shaping, dir > 0),
             Some(Setting::RadioDvr) => self.set_setting(|c| &mut c.radio_dvr, dir > 0),
             Some(Setting::Gapless) => {

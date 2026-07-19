@@ -41,8 +41,10 @@ pub struct IconOverrides {
 }
 
 impl Icons {
-    /// Selectable built-in preset names (in cycle order).
-    pub const PRESETS: [&'static str; 4] = ["outline", "triangles", "skip", "nerd"];
+    /// Selectable built-in preset names (in cycle order). `outline` leads because
+    /// it is the safe default; `nerd` is last because it is the only one that
+    /// needs a font the user may not have.
+    pub const PRESETS: [&'static str; 5] = ["outline", "triangles", "skip", "ascii", "nerd"];
 
     fn make(g: [&str; 11]) -> Icons {
         Icons {
@@ -75,9 +77,29 @@ impl Icons {
                 "▶", "❚❚", "▏◀", "▶▏", "⤨", "↻", "↻", "◀◀", "▶▶", "VOL", "MUT",
             ]),
             "skip" => Self::make(["▶", "❚❚", "↞", "↠", "⤭", "⟳", "⟳", "↶", "↷", "VOL", "MUT"]),
+            // pure ASCII — the last-resort set. Every other preset still relies on
+            // Unicode symbols that a sparse font or an old terminal can miss; this
+            // one cannot fail, so it's the answer to "everything renders as boxes".
+            "ascii" => Self::make([
+                ">", "||", "|<", ">|", "><", "()", "()", "<<", ">>", "VOL", "MUT",
+            ]),
             // outline: standard media symbols; prev/next carry the bar at the tip.
             _ => Self::make(["▶", "⏸", "⏮", "⏭", "⇄", "↻", "↻", "⏪", "⏩", "VOL", "MUT"]),
         }
+    }
+
+    /// A one-line sample of the transport glyphs, for the settings picker.
+    ///
+    /// Whether a font has a given glyph can't be queried from a terminal, so the
+    /// only honest way to choose an icon set is to *look* at it: this renders each
+    /// preset inline in the value list, and the one showing boxes is the one this
+    /// font can't display.
+    pub fn sample(name: &str) -> String {
+        let i = Self::preset(name);
+        format!(
+            "{} {} {} {} {} {}",
+            i.play, i.pause, i.prev, i.next, i.shuffle, i.repeat
+        )
     }
 
     /// Resolve a preset with custom overrides applied (empty overrides ignored).
@@ -115,6 +137,50 @@ mod tests {
         let b = Icons::preset("outline");
         assert_eq!(a.play, b.play);
         assert_eq!(a.prev, "⏮");
+    }
+
+    /// Every glyph in `ascii` must be plain ASCII — it is the last-resort set for
+    /// "everything renders as boxes", so it cannot itself depend on font coverage.
+    #[test]
+    fn ascii_preset_needs_no_special_font() {
+        let i = Icons::preset("ascii");
+        for g in [
+            &i.play,
+            &i.pause,
+            &i.prev,
+            &i.next,
+            &i.shuffle,
+            &i.repeat,
+            &i.repeat_one,
+            &i.seek_back,
+            &i.seek_fwd,
+            &i.volume,
+            &i.volume_mute,
+        ] {
+            assert!(g.is_ascii(), "{g:?} is not ASCII");
+        }
+    }
+
+    /// The shipped default must render without a Nerd Font installed. A terminal
+    /// can't be asked which glyphs its font has, so an undetectable dependency
+    /// must never be the out-of-box choice — `nerd` is opt-in only.
+    #[test]
+    fn default_icon_set_needs_no_nerd_font() {
+        let c = crate::config::Config::default();
+        assert_ne!(c.icon_set, "nerd");
+        assert!(
+            Icons::PRESETS.contains(&c.icon_set.as_str()),
+            "default {:?} is not a known preset",
+            c.icon_set
+        );
+        assert!(!c.powerline, "Powerline glyphs are a font dependency too");
+    }
+
+    #[test]
+    fn sample_renders_every_preset() {
+        for p in Icons::PRESETS {
+            assert!(!Icons::sample(p).is_empty(), "{p} has no sample");
+        }
     }
 
     #[test]

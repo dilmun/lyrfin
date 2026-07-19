@@ -293,8 +293,16 @@ pub struct Config {
     /// recording); the account is still shown in the Info overlay either way.
     /// On by default.
     pub spotify_show_account: bool,
-    /// Transport icon preset: outline / triangles / skip / nerd.
+    /// Transport icon preset: outline / triangles / skip / ascii / nerd.
+    /// Defaults to `outline` (plain Unicode): a terminal can't be asked which
+    /// glyphs its font has, so the shipped default must be one that needs no
+    /// special font. `nerd` is opt-in.
     pub icon_set: String,
+    /// Use Powerline glyphs (U+E0B6/U+E0B4) for the rounded selection pill.
+    /// Separate from `icon_set` because Powerline and Font Awesome coverage are
+    /// independent — plenty of fonts carry the Powerline range but not the
+    /// Nerd Font icons — and off by default for the same reason `icon_set` is.
+    pub powerline: bool,
     /// Per-glyph custom icon overrides (the `[icons]` table).
     pub icons: crate::icons::IconOverrides,
     /// Show a visualizer in the playback bar (taller box; auto-hidden if short).
@@ -408,7 +416,8 @@ impl Default for Config {
             spotify_client_id: String::new(),
             spotify_bitrate: 160,
             spotify_show_account: true,
-            icon_set: "nerd".into(),
+            icon_set: "outline".into(),
+            powerline: false,
             icons: crate::icons::IconOverrides::default(),
             player_viz: true,
             player_viz_mode: 0,
@@ -543,6 +552,7 @@ struct ConfigFile {
     spotify_bitrate: Option<u16>,
     spotify_show_account: Option<bool>,
     icon_set: Option<String>,
+    powerline: Option<bool>,
     icons: Option<crate::icons::IconOverrides>,
     player_viz: Option<bool>,
     player_viz_mode: Option<u8>,

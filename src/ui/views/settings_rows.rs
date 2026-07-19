@@ -64,7 +64,17 @@ pub(crate) fn setting_label_value(app: &AppState, item: &Setting) -> (String, Se
         ),
         Setting::IconSet => (
             "Transport icons".into(),
-            Text(format!("{}  {}", app.config.icon_set, app.icons.play)),
+            // Show the whole glyph run, not just `play`: the point of this row is
+            // to reveal which glyphs this font is missing, and one icon can't.
+            Text(format!(
+                "{}  {}",
+                app.config.icon_set,
+                crate::icons::Icons::sample(&app.config.icon_set)
+            )),
+        ),
+        Setting::Powerline => (
+            "Powerline selection caps".into(),
+            Toggle(app.config.powerline),
         ),
         Setting::PlayerViz => ("Playback visualizer".into(), Toggle(app.config.player_viz)),
         Setting::PanesLayout => (

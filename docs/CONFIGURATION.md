@@ -28,7 +28,8 @@ wipe your settings).
 | `grid_circle` | bool | `true` | Render grid cards as circles (vs rounded squares). |
 | `grid_card_size` | `small`\|`medium`\|`large` | `medium` | Cover-grid card size. |
 | `track_columns` | bool | `true` | Show tracks as a column table (default) instead of compact rows. |
-| `icon_set` | string | `"nerd"` | Icon preset: `outline`, `triangles`, `skip`, `nerd`. |
+| `icon_set` | string | `"outline"` | Transport icon preset: `outline`, `triangles`, `skip`, `ascii`, `nerd`. |
+| `powerline` | bool | `false` | Powerline glyphs (U+E0Bx) for the rounded selection pill. |
 | `arabic_shaping` | bool | `true` | Pre-shape Arabic text; disable on terminals that shape natively. |
 
 ### Audio & playback
@@ -104,6 +105,33 @@ Booleans that toggle each column of the track table (`track_columns = true`):
 Override individual glyphs (`play`, `pause`, `prev`, `next`, `shuffle`,
 `repeat`, `repeat_one`, `seek_back`, `seek_fwd`, `volume`, `volume_mute`) with
 your own strings.
+
+### Symbols showing as boxes?
+
+A terminal offers **no way to ask which glyphs its font actually has** — a
+missing glyph occupies exactly the same width as a present one, so lyrfin cannot
+detect this and pick for you. Instead it defaults to glyphs that need no special
+font, and lets you *look* at the alternatives:
+
+<kbd>;</kbd> → **Transport icons** renders every preset inline, so you pick the
+row that displays correctly:
+
+| Preset | Needs | Glyphs |
+|--------|-------|--------|
+| `outline` (default) | plain Unicode | ▶ ⏸ ⏮ ⏭ ⇄ ↻ |
+| `triangles` | plain Unicode | ▶ ❚❚ ▏◀ ▶▏ ⤨ ↻ |
+| `skip` | plain Unicode | ▶ ❚❚ ↞ ↠ ⤭ ⟳ |
+| `ascii` | nothing — pure ASCII | `>` `\|\|` `\|<` `>\|` `><` `()` |
+| `nerd` | a [Nerd Font](https://www.nerdfonts.com) | Font Awesome media icons |
+
+If even `outline` shows boxes, use `ascii` — it cannot fail. `powerline` is a
+separate toggle because Powerline (U+E0Bx) and Nerd Font (U+F0xx) coverage are
+independent: many fonts have one without the other.
+
+> Note this is a *font* question, not only a terminal one. iTerm2, for example,
+> won't substitute another installed font for these codepoints, so a Nerd Font
+> that works in Ghostty can still render as boxes there unless it's the font the
+> profile actually uses.
 
 ### `[spotify]` / client ID
 

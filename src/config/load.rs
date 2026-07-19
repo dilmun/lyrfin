@@ -122,6 +122,9 @@ impl Config {
         if let Some(v) = f.icon_set {
             self.icon_set = v;
         }
+        if let Some(v) = f.powerline {
+            self.powerline = v;
+        }
         if let Some(v) = f.icons {
             self.icons = v;
         }
@@ -404,6 +407,7 @@ impl Config {
              spotify_bitrate = {}\n\
              spotify_show_account = {}\n\
              icon_set = {:?}\n\
+             powerline = {}\n\
              player_viz = {}\n\
              player_viz_mode = {}\n\
              mouse = {}\n\
@@ -472,6 +476,7 @@ impl Config {
             self.spotify_bitrate,
             self.spotify_show_account,
             self.icon_set,
+            self.powerline,
             self.player_viz,
             self.player_viz_mode,
             self.mouse,

@@ -21,11 +21,14 @@ use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
 
 /// Rounded end-cap glyphs `(left, right)` for a selection pill. Seamless
-/// Powerline half-circles with the Nerd Font preset (lyrfin's default icon set),
-/// else Unicode half-black-circles so a plain-font terminal still rounds the
-/// corners instead of showing a box glyph.
+/// Powerline half-circles when `powerline` is on, else Unicode half-black-circles
+/// so a plain-font terminal still rounds the corners instead of showing a box.
+///
+/// Keyed on its own setting rather than `icon_set`: Powerline (U+E0Bx) and Nerd
+/// Font icon (U+F0xx) coverage are independent, so a font can have these caps
+/// without the transport glyphs, or the reverse.
 pub(crate) fn sel_caps(app: &AppState) -> (&'static str, &'static str) {
-    if app.config.icon_set == "nerd" {
+    if app.config.powerline {
         ("\u{e0b6}", "\u{e0b4}") //
     } else {
         ("\u{25d6}", "\u{25d7}") // ◖ ◗
