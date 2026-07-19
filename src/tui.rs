@@ -116,9 +116,7 @@ pub fn run(mut app: AppState) -> Result<()> {
     // picker is always created so the album-art toggle can take effect live; the
     // `album_art` setting governs whether covers are actually loaded/rendered.
     {
-        let picker =
-            ratatui_image::picker::Picker::from_query_stdio().unwrap_or_else(|_| guess_picker());
-        app.set_picker(picker);
+        app.set_picker(build_picker());
         // tmux can't reliably forward large inline-image transmissions, so the UI
         // caps the biggest covers to a tmux-safe size — but only inside tmux.
         app.in_tmux = std::env::var_os("TMUX").is_some();
@@ -432,11 +430,83 @@ fn event_loop(
     Ok(())
 }
 
-/// Fallback when the terminal's protocol handshake (`from_query_stdio`) fails —
-/// it's a racy stdin round-trip, so on an unlucky run it errors and we'd
-/// otherwise drop to blocky halfblocks. Guess the graphics protocol from the
-/// environment instead: Ghostty and Kitty speak the Kitty protocol; iTerm2 and
-/// WezTerm speak iTerm2. Only genuinely unknown terminals fall back to halfblocks.
+/// Is this iTerm2? `TERM_PROGRAM` is the usual signal, but a multiplexer
+/// overwrites it with its own name (`tmux`), so `LC_TERMINAL` — which iTerm2
+/// also sets and which survives tmux and ssh — is checked as well.
+fn is_iterm2() -> bool {
+    iterm2_from(
+        std::env::var("TERM_PROGRAM").ok().as_deref(),
+        std::env::var("LC_TERMINAL").ok().as_deref(),
+    )
+}
+
+/// Pure half of [`is_iterm2`], so the env-var precedence is unit-testable.
+fn iterm2_from(term_program: Option<&str>, lc_terminal: Option<&str>) -> bool {
+    term_program.is_some_and(|p| p.contains("iTerm"))
+        || lc_terminal.is_some_and(|t| t.contains("iTerm"))
+}
+
+/// Resolve the inline-image protocol for this terminal.
+///
+/// The stdin handshake is authoritative *except* on terminals that answer the
+/// Kitty support query affirmatively but don't implement the half of the Kitty
+/// protocol ratatui-image actually renders with — **unicode placeholders**. On
+/// those, images transmit successfully and are then never placed: album art
+/// silently renders as nothing at all (not even a fallback), while the rest of
+/// the UI looks perfect.
+///
+/// iTerm2 ≥ 3.6 is exactly that case — it replies `ESC _Gi=31;OK ESC \` to the
+/// Kitty query, so detection picks Kitty and every cover disappears. Its own
+/// (iTerm2) protocol renders correctly, so we override the queried protocol
+/// there. ratatui-image handles WezTerm and Konsole (same broken-placeholder
+/// story) via `QueryStdioOptions::blacklist_protocols`, but that route doesn't
+/// work for iTerm2: its device attributes also advertise sixel, so removing
+/// Kitty alone selects Sixel — a palette-quantised renderer with binary rather
+/// than alpha transparency, which the round cover art depends on — and removing
+/// both makes the query fail outright, falling back to halfblocks *and* losing
+/// the queried font size (which sizes every image rect). Overriding after a
+/// normal query keeps that font size and picks the one protocol that works.
+fn build_picker() -> ratatui_image::picker::Picker {
+    use ratatui_image::picker::{Picker, ProtocolType};
+
+    let mut picker = Picker::from_query_stdio().unwrap_or_else(|_| guess_picker());
+    if is_iterm2() {
+        picker.set_protocol_type(ProtocolType::Iterm2);
+    }
+
+    // Escape hatch for terminals whose self-reported capabilities are wrong (or
+    // that we haven't characterised yet): LYRFIN_IMAGE_PROTOCOL=kitty|iterm2|
+    // sixel|halfblocks. Applied over the detected picker so the queried font
+    // size — which sizes every image rect — is preserved.
+    if let Some(proto) = forced_protocol() {
+        picker.set_protocol_type(proto);
+    }
+    picker
+}
+
+/// The `LYRFIN_IMAGE_PROTOCOL` override, if set to a name we recognise.
+/// An unset/empty/`auto`/unknown value means "trust detection".
+fn forced_protocol() -> Option<ratatui_image::picker::ProtocolType> {
+    protocol_from_name(&std::env::var("LYRFIN_IMAGE_PROTOCOL").ok()?)
+}
+
+/// Pure half of [`forced_protocol`], so the accepted names are unit-testable.
+fn protocol_from_name(name: &str) -> Option<ratatui_image::picker::ProtocolType> {
+    use ratatui_image::picker::ProtocolType;
+    match name.trim().to_ascii_lowercase().as_str() {
+        "kitty" => Some(ProtocolType::Kitty),
+        "iterm2" => Some(ProtocolType::Iterm2),
+        "sixel" => Some(ProtocolType::Sixel),
+        "halfblocks" => Some(ProtocolType::Halfblocks),
+        _ => None,
+    }
+}
+
+/// Fallback when the terminal's protocol handshake fails — it's a racy stdin
+/// round-trip, so on an unlucky run it errors and we'd otherwise drop to blocky
+/// halfblocks. Guess the graphics protocol from the environment instead: Ghostty
+/// and Kitty speak the Kitty protocol; iTerm2 and WezTerm speak iTerm2. Only
+/// genuinely unknown terminals fall back to halfblocks.
 fn guess_picker() -> ratatui_image::picker::Picker {
     use ratatui_image::picker::{Picker, ProtocolType};
     // `halfblocks()` seeds the same 10×20 fallback font size and tmux detection;
@@ -444,15 +514,17 @@ fn guess_picker() -> ratatui_image::picker::Picker {
     let mut p = Picker::halfblocks();
     let term = std::env::var("TERM").unwrap_or_default();
     let prog = std::env::var("TERM_PROGRAM").unwrap_or_default();
-    if std::env::var_os("KITTY_WINDOW_ID").is_some()
+    // iTerm2 first: it also answers the Kitty query, but only its own protocol
+    // actually places images (see `build_picker`).
+    if is_iterm2() || prog == "WezTerm" {
+        p.set_protocol_type(ProtocolType::Iterm2);
+    } else if std::env::var_os("KITTY_WINDOW_ID").is_some()
         || std::env::var_os("GHOSTTY_RESOURCES_DIR").is_some()
         || prog.eq_ignore_ascii_case("ghostty")
         || term.contains("kitty")
         || term.contains("ghostty")
     {
         p.set_protocol_type(ProtocolType::Kitty);
-    } else if prog == "iTerm.app" || prog == "WezTerm" {
-        p.set_protocol_type(ProtocolType::Iterm2);
     }
     p
 }
@@ -490,7 +562,45 @@ fn convert_key(k: ratatui::crossterm::event::KeyEvent) -> Key {
 
 #[cfg(test)]
 mod tests {
-    use super::osc22_seq;
+    use super::{iterm2_from, osc22_seq, protocol_from_name};
+    use ratatui_image::picker::ProtocolType;
+
+    #[test]
+    fn detects_iterm2_from_term_program() {
+        assert!(iterm2_from(Some("iTerm.app"), None));
+    }
+
+    #[test]
+    fn detects_iterm2_through_tmux_via_lc_terminal() {
+        // The regression this guards: inside tmux, TERM_PROGRAM is overwritten
+        // with "tmux", so LC_TERMINAL is the only surviving iTerm2 signal.
+        assert!(iterm2_from(Some("tmux"), Some("iTerm2")));
+    }
+
+    #[test]
+    fn other_terminals_are_not_iterm2() {
+        assert!(!iterm2_from(Some("ghostty"), None));
+        assert!(!iterm2_from(Some("WezTerm"), None));
+        assert!(!iterm2_from(None, None));
+    }
+
+    #[test]
+    fn protocol_override_names() {
+        assert_eq!(protocol_from_name("iterm2"), Some(ProtocolType::Iterm2));
+        assert_eq!(protocol_from_name("Kitty"), Some(ProtocolType::Kitty));
+        assert_eq!(protocol_from_name(" sixel "), Some(ProtocolType::Sixel));
+        assert_eq!(
+            protocol_from_name("halfblocks"),
+            Some(ProtocolType::Halfblocks)
+        );
+    }
+
+    #[test]
+    fn unknown_protocol_override_falls_back_to_detection() {
+        assert_eq!(protocol_from_name(""), None);
+        assert_eq!(protocol_from_name("auto"), None);
+        assert_eq!(protocol_from_name("nonsense"), None);
+    }
 
     #[test]
     fn osc22_is_raw_outside_tmux() {
