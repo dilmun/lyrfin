@@ -128,10 +128,28 @@ If even `outline` shows boxes, use `ascii` — it cannot fail. `powerline` is a
 separate toggle because Powerline (U+E0Bx) and Nerd Font (U+F0xx) coverage are
 independent: many fonts have one without the other.
 
-> Note this is a *font* question, not only a terminal one. iTerm2, for example,
-> won't substitute another installed font for these codepoints, so a Nerd Font
-> that works in Ghostty can still render as boxes there unless it's the font the
-> profile actually uses.
+#### iTerm2: check "Use a different font for non-ASCII text"
+
+If symbols are boxes in iTerm2 **even though your profile uses a Nerd Font**, the
+usual cause is this setting, under *Settings → Profiles → Text*:
+
+```
+Use Non-ASCII Font  = yes
+Non ASCII Font      = Arial          ← every symbol renders in this font
+```
+
+With it on, the profile's main font is used only for ASCII, and *every other
+character* — the transport icons, box-drawing, arrows — comes from the non-ASCII
+font. If that font is a normal UI font like Arial or Monaco, none of the symbols
+exist in it and you get boxes no matter how good your main font is.
+
+Fix it by turning the option **off**, or by setting the non-ASCII font to the
+same Nerd Font. If you'd rather leave it alone, `icon_set = "ascii"` is immune —
+ASCII characters go through the *ASCII* font, so they always render.
+
+This is also why lyrfin can't detect any of it: the font a terminal reports, and
+even the font it's configured with, is not necessarily the font it draws these
+characters in.
 
 ### `[spotify]` / client ID
 
