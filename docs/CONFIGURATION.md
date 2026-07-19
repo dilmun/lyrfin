@@ -138,18 +138,32 @@ Use Non-ASCII Font  = yes
 Non ASCII Font      = Arial          ← every symbol renders in this font
 ```
 
-With it on, the profile's main font is used only for ASCII, and *every other
-character* — the transport icons, box-drawing, arrows — comes from the non-ASCII
-font. If that font is a normal UI font like Arial or Monaco, none of the symbols
-exist in it and you get boxes no matter how good your main font is.
+With it on, the profile's main font covers ASCII only and every other character
+comes from the non-ASCII font. That setting is genuinely useful — it's a common
+way to get good **Hebrew / Arabic / CJK** rendering, since most Nerd Fonts have
+no coverage for those scripts — so it's usually worth keeping.
 
-Fix it by turning the option **off**, or by setting the non-ASCII font to the
-same Nerd Font. If you'd rather leave it alone, `icon_set = "ascii"` is immune —
-ASCII characters go through the *ASCII* font, so they always render.
+You don't have to choose. iTerm2 still falls back to other installed fonts for
+ordinary Unicode when the non-ASCII font lacks a glyph, which is why lyrfin's
+sidebar icons, borders, and `♪` keep working. It does **not** fall back for
+**Private Use Area** codepoints (U+E000–U+F8FF), because no font can claim to own
+them — and that is exactly where Nerd Font icons live.
+
+So with this setting on, keep your non-ASCII font and simply avoid the two PUA
+features:
+
+| Setting | Value | Why |
+|---------|-------|-----|
+| `icon_set` | anything but `nerd` | `nerd` is the only PUA preset |
+| `powerline` | `false` | U+E0Bx is PUA too |
+
+Those are already the defaults. If a plain preset renders as colour emoji or the
+transport row misaligns (some terminals resolve `⏸ ⏮ ⏭` to an emoji font, which
+is double-width), pick `triangles` or `ascii` instead.
 
 This is also why lyrfin can't detect any of it: the font a terminal reports, and
-even the font it's configured with, is not necessarily the font it draws these
-characters in.
+even the font it's configured with, is not necessarily the font it draws a given
+character in.
 
 ### `[spotify]` / client ID
 
