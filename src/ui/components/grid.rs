@@ -839,7 +839,7 @@ pub(crate) fn fill_thumb(
             Block::default().style(Style::default().bg(col(th.panel))),
             art,
         );
-        super::render_proto_filled(f, art, &mut p, app);
+        super::render_proto_filled(f, art, &mut p);
         return;
     }
     // still loading / missing → a clean solid-colour placeholder + the centred
@@ -865,7 +865,7 @@ pub(crate) fn fill_thumb(
             Block::default().style(Style::default().bg(col(th.panel))),
             art,
         );
-        super::render_proto_filled(f, art, &mut p, app);
+        super::render_proto_filled(f, art, &mut p);
         true
     } else {
         false

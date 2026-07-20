@@ -246,12 +246,7 @@ fn cover_search_body(f: &mut Frame, inner: Rect, app: &AppState) {
                     .get(cs.sel)
                     .map(|c| c.thumb.width().max(c.thumb.height()))
                     .unwrap_or(256);
-                let max_px = if app.in_tmux {
-                    native.min(TMUX_IMG_PX)
-                } else {
-                    native
-                };
-                let prect = square_image_rect(prev, image_font(app), max_px);
+                let prect = square_image_rect(prev, image_font(app), native);
                 f.render_stateful_widget(
                     ratatui_image::StatefulImage::default(),
                     prect,

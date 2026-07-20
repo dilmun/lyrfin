@@ -117,12 +117,7 @@ pub fn run(mut app: AppState) -> Result<()> {
     // screen (handles tmux + iTerm2/kitty/sixel; falls back to halfblocks). The
     // picker is always created so the album-art toggle can take effect live; the
     // `album_art` setting governs whether covers are actually loaded/rendered.
-    {
-        app.set_picker(build_picker());
-        // tmux can't reliably forward large inline-image transmissions, so the UI
-        // caps the biggest covers to a tmux-safe size — but only inside tmux.
-        app.in_tmux = std::env::var_os("TMUX").is_some();
-    }
+    app.set_picker(build_picker());
 
     // Attach a real audio engine if a device is available (else NullEngine +
     // demo clock keep the UI working).

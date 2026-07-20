@@ -817,9 +817,6 @@ pub struct AppState {
     pub eq: EqUi,
     /// The user's saved custom EQ presets (loaded from `eq_presets.toml`).
     pub eq_presets: Vec<crate::config::EqPreset>,
-    /// Running inside tmux — inline images larger than ~a few hundred px don't
-    /// reliably pass through, so the biggest covers are capped when this is set.
-    pub in_tmux: bool,
     /// The unified Tag Edit modal: which tab is active + each tab's popup state
     /// (manual editor / online tag search / album-art search). All `None` = closed.
     pub tags: TagModal,

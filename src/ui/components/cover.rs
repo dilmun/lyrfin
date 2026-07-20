@@ -47,12 +47,6 @@ impl Cover {
 
 pub type CoverState = Option<Cover>;
 
-/// The one place tmux's image limitation lives: the largest inline-image edge
-/// (px) that passes through tmux's escape-passthrough. There's no API to query
-/// it, so it's a single tuned constant — applied *only* inside tmux. Outside
-/// tmux images are sized naturally (by layout + the source's own resolution).
-pub(crate) const TMUX_IMG_PX: u32 = 384;
-
 /// The terminal's font cell size (px), for sizing image rects. Falls back to a
 /// reasonable 1:2 cell if the picker isn't available.
 pub(crate) fn image_font(app: &AppState) -> (u16, u16) {
@@ -67,8 +61,8 @@ pub(crate) fn image_font(app: &AppState) -> (u16, u16) {
 }
 
 /// A centred, square (cover-aspect) image rect inside `area`, capped to `max_px`
-/// on each edge — so we never transmit a larger image than needed (or than tmux
-/// can handle) and never upscale beyond the source.
+/// on each edge — so we never transmit a larger image than needed and never
+/// upscale beyond the source.
 pub(crate) fn square_image_rect(area: Rect, font: (u16, u16), max_px: u32) -> Rect {
     let (cw, ch) = (font.0.max(1) as u32, font.1.max(1) as u32);
     let native_h = (max_px / ch).max(1); // cells tall at 1:1
@@ -107,9 +101,8 @@ pub(crate) fn render_cover(f: &mut Frame, area: Rect, cover: &CoverState, app: &
 }
 
 /// Like [`render_cover`] but *upscales* the cover to fill `area` (`Resize::Scale`),
-/// so small covers don't render tiny. tmux can't forward an upscaled image, so it
-/// falls back to a centred, tmux-safe square. Pass an aspect-matched rect to get
-/// the result centred without letterboxing.
+/// so small covers don't render tiny. Pass an aspect-matched rect to get the
+/// result centred without letterboxing.
 pub(crate) fn render_cover_filled(f: &mut Frame, area: Rect, cover: &CoverState, app: &AppState) {
     if area.width == 0 || area.height == 0 {
         return;
@@ -117,7 +110,7 @@ pub(crate) fn render_cover_filled(f: &mut Frame, area: Rect, cover: &CoverState,
     if let Some(c) = cover
         && let Ok(mut proto) = c.proto.try_borrow_mut()
     {
-        render_proto_filled(f, area, &mut proto, app);
+        render_proto_filled(f, area, &mut proto);
         return;
     }
     f.render_widget(
@@ -131,32 +124,30 @@ pub(crate) fn render_cover_filled(f: &mut Frame, area: Rect, cover: &CoverState,
 }
 
 /// Render an already-built image protocol so it FILLS `area` (`Resize::Scale`
-/// upscales, so a small source doesn't render tiny in a top-left corner). tmux
-/// can't forward an upscaled image, so there it draws a centred, tmux-safe square
-/// instead. Pass an aspect-matched `area` to avoid letterboxing. Shared by the big
-/// cover, the Spotify pane, and the local Artist pane photo.
+/// upscales, so a small source doesn't render tiny in a top-left corner). Pass an
+/// aspect-matched `area` to avoid letterboxing. Shared by the big cover, the
+/// Spotify pane, and the local Artist pane photo.
 pub(crate) fn render_proto_filled(
     f: &mut Frame,
     area: Rect,
     proto: &mut ratatui_image::protocol::StatefulProtocol,
-    app: &AppState,
 ) {
-    if app.in_tmux {
-        let rect = square_image_rect(area, image_font(app), TMUX_IMG_PX);
-        f.render_stateful_widget(ratatui_image::StatefulImage::default(), rect, proto);
-    } else {
-        f.render_stateful_widget(
-            ratatui_image::StatefulImage::default().resize(ratatui_image::Resize::Scale(None)),
-            area,
-            proto,
-        );
-    }
+    // One path for every terminal, tmux or not. tmux used to get a *centred
+    // square* capped to `TMUX_IMG_PX` with the default resize instead, which is
+    // what made grid cards render smaller than their card and scale differently
+    // from native. The cap was a guess at tmux's passthrough limit; the cell size
+    // is queried correctly through tmux (verified: identical to native), so
+    // nothing about the geometry needs to differ.
+    f.render_stateful_widget(
+        ratatui_image::StatefulImage::default().resize(ratatui_image::Resize::Scale(None)),
+        area,
+        proto,
+    );
 }
 
 /// Render a pre-cropped carousel "peek" slice filling `rect`. The worker already
 /// sized it to ~`rect` (card width × the visible slice height), so this is a
-/// near-1:1 scale — no tmux square-centring (a peek is a wide-short strip, not a
-/// square cover).
+/// near-1:1 scale.
 pub(crate) fn render_proto_peek(
     f: &mut Frame,
     rect: Rect,
