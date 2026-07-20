@@ -81,6 +81,16 @@ pub fn welcome(f: &mut Frame, area: Rect, app: &AppState) {
             ]
             .concat(),
         ),
+        Line::from(""),
+        Line::from(Span::styled("IF SYMBOLS LOOK WRONG", section)),
+        // A terminal can't be asked which glyphs its font has, so this can't be
+        // detected — point at the picker, which renders every set for comparison.
+        Line::from(vec![
+            Span::styled("  ▸ ", faint),
+            Span::styled(format!("{:<21} ", "These should be icons"), dim),
+            Span::styled(crate::icons::Icons::sample(&app.config.icon_set), key),
+        ]),
+        row("Boxes instead?", ";  →  Transport icons"),
     ];
 
     let block_w = lines.iter().map(Line::width).max().unwrap_or(0) as u16;

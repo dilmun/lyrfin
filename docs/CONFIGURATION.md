@@ -28,7 +28,8 @@ wipe your settings).
 | `grid_circle` | bool | `true` | Render grid cards as circles (vs rounded squares). |
 | `grid_card_size` | `small`\|`medium`\|`large` | `medium` | Cover-grid card size. |
 | `track_columns` | bool | `true` | Show tracks as a column table (default) instead of compact rows. |
-| `icon_set` | string | `"nerd"` | Icon preset: `outline`, `triangles`, `skip`, `nerd`. |
+| `icon_set` | string | `"outline"` | Transport icon preset: `outline`, `triangles`, `skip`, `ascii`, `nerd`. |
+| `powerline` | bool | `true` | Powerline glyphs (U+E0Bx) for the rounded selection pill; off falls back to ◖◗. |
 | `arabic_shaping` | bool | `true` | Pre-shape Arabic text; disable on terminals that shape natively. |
 
 ### Audio & playback
@@ -104,6 +105,68 @@ Booleans that toggle each column of the track table (`track_columns = true`):
 Override individual glyphs (`play`, `pause`, `prev`, `next`, `shuffle`,
 `repeat`, `repeat_one`, `seek_back`, `seek_fwd`, `volume`, `volume_mute`) with
 your own strings.
+
+### Symbols showing as boxes?
+
+A terminal offers **no way to ask which glyphs its font actually has** — a
+missing glyph occupies exactly the same width as a present one, so lyrfin cannot
+detect this and pick for you. Instead it defaults to glyphs that need no special
+font, and lets you *look* at the alternatives:
+
+<kbd>;</kbd> → **Transport icons** renders every preset inline, so you pick the
+row that displays correctly:
+
+| Preset | Needs | Glyphs |
+|--------|-------|--------|
+| `outline` (default) | plain Unicode | ▶ ⏸ ⏮ ⏭ ⇄ ↻ |
+| `triangles` | plain Unicode | ▶ ❚❚ ▏◀ ▶▏ ⤨ ↻ |
+| `skip` | plain Unicode | ▶ ❚❚ ↞ ↠ ⤭ ⟳ |
+| `ascii` | nothing — pure ASCII | `>` `\|\|` `\|<` `>\|` `><` `()` |
+| `nerd` | a [Nerd Font](https://www.nerdfonts.com) | Font Awesome media icons |
+
+If even `outline` shows boxes, use `ascii` — it cannot fail. `powerline` is a
+separate toggle because Powerline (U+E0Bx) and Nerd Font (U+F0xx) coverage are
+independent: many fonts have one without the other.
+
+#### iTerm2: check "Use a different font for non-ASCII text"
+
+If symbols are boxes in iTerm2 **even though your profile uses a Nerd Font**, the
+usual cause is this setting, under *Settings → Profiles → Text*:
+
+```
+Use Non-ASCII Font  = yes
+Non ASCII Font      = Arial          ← every symbol renders in this font
+```
+
+With it on, the profile's main font covers ASCII only and every other character
+comes from the non-ASCII font. That setting is genuinely useful — it's a common
+way to get good **Hebrew / Arabic / CJK** rendering, since most Nerd Fonts have
+no coverage for those scripts — so it's usually worth keeping.
+
+You don't have to choose. iTerm2 still falls back to other installed fonts for
+ordinary Unicode when the non-ASCII font lacks a glyph, which is why lyrfin's
+sidebar icons, borders, and `♪` keep working. It does **not** fall back for
+**Private Use Area** codepoints (U+E000–U+F8FF), because no font can claim to own
+them — and that is exactly where Nerd Font icons live.
+
+So with this setting on, keep your non-ASCII font and simply avoid the two PUA
+features:
+
+`icon_set` just needs to be anything but `nerd` — the only preset in the PUA — and
+that is already the default.
+
+`powerline` is PUA as well, but it stays **on** by default because these two box
+shapes are a special case: iTerm2 ("Draw Powerline Glyphs"), Kitty, WezTerm and
+Ghostty all draw them natively, whatever font you use. Turn it off if the
+selection pill's end caps show as boxes; it falls back to ◖◗.
+
+If a plain preset renders as colour emoji or the transport row misaligns (some
+terminals resolve `⏸ ⏮ ⏭` to an emoji font, which is double-width), pick
+`triangles` or `ascii` instead.
+
+This is also why lyrfin can't detect any of it: the font a terminal reports, and
+even the font it's configured with, is not necessarily the font it draws a given
+character in.
 
 ### `[spotify]` / client ID
 

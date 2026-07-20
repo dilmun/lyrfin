@@ -294,6 +294,9 @@ pub enum Setting {
     AlbumArt,
     DynamicAccent,
     IconSet,
+    /// Powerline glyphs for the rounded selection pill (own font requirement,
+    /// independent of `IconSet`).
+    Powerline,
     PlayerViz,
     PlayerVizMode,
     /// Side panes (Queue/Artist/Lyrics) stack vertically or sit side-by-side.
@@ -407,7 +410,7 @@ impl Setting {
         use Setting::*;
         match self {
             Mouse | NextHint | OsMediaControls | TouchpadScroll | GridScrollLock | OverlaySize
-            | ReducedMotion | Fps | IconSet | RadioRefresh | ArabicShaping => "General",
+            | ReducedMotion | Fps | IconSet | Powerline | RadioRefresh | ArabicShaping => "General",
             // the movable side panels (show / dock / size) + their stacking axis
             PanelShow(_) | PanelDock(_) | PanelSize(_) | PanesLayout => "Panes",
             // the cover-art grid: list⇄grid, card shape, card size

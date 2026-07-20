@@ -62,20 +62,6 @@ fn idx_choices(labels: &[&str], current: usize) -> SettingChoices {
     )
 }
 
-/// Discrete choices from string values (`current` = the matching value).
-fn str_choices(items: &[&str], current: &str) -> SettingChoices {
-    SettingChoices::Discrete(
-        items
-            .iter()
-            .map(|v| Choice {
-                label: (*v).to_string(),
-                current: *v == current,
-                value: ChoiceValue::Str((*v).to_string()),
-            })
-            .collect(),
-    )
-}
-
 /// Discrete choices from `(value, label)` pairs keyed on the actual stored number
 /// (not an index) — e.g. `320` kbps, `7` days.
 fn int_choices(pairs: &[(i64, &str)], current: i64) -> Vec<Choice> {
@@ -117,7 +103,19 @@ impl AppState {
             LightTheme => self.theme_choices(&self.config.light_theme),
             DarkTheme => self.theme_choices(&self.config.dark_theme),
 
-            IconSet => str_choices(&crate::icons::Icons::PRESETS, &self.config.icon_set),
+            // Each preset is labelled with its own glyphs rendered inline. A font's
+            // glyph coverage can't be queried, so the picker shows the sets instead
+            // of describing them: the row that looks like boxes is the unusable one.
+            IconSet => SettingChoices::Discrete(
+                crate::icons::Icons::PRESETS
+                    .iter()
+                    .map(|v| Choice {
+                        label: format!("{v:<10} {}", crate::icons::Icons::sample(v)),
+                        current: *v == self.config.icon_set,
+                        value: ChoiceValue::Str((*v).to_string()),
+                    })
+                    .collect(),
+            ),
             PlayerVizMode => idx_choices(
                 &crate::ui::components::VIZ_MODES,
                 self.config.player_viz_mode as usize,
