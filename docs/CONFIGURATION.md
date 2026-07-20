@@ -134,6 +134,39 @@ image, is kept either way.
 > unicode-placeholder placement lyrfin renders with, so lyrfin selects iTerm2's own
 > protocol there automatically. No configuration needed.
 
+## Running under tmux
+
+lyrfin renders the same inside tmux as it does natively — same protocol, same
+image scaling — but tmux needs **two settings** first. Add them to `~/.tmux.conf`
+and restart the tmux server (`tmux kill-server`):
+
+```tmux
+# Inline album art. tmux hides escape sequences it doesn't recognise, so images
+# (and lyrfin's terminal queries) never reach the terminal without this.
+# It is OFF by default — nothing works until you set it.
+set -g allow-passthrough on
+
+# 24-bit colour. Without this tmux downgrades to 256 colours and every theme
+# gradient banks; match the value to your `default-terminal`.
+set -g default-terminal "tmux-256color"
+set -ag terminal-overrides ",tmux-256color:Tc"
+```
+
+| Setting | Default | Why lyrfin needs it |
+|---------|---------|---------------------|
+| `allow-passthrough` | **off** | inline images, and the terminal-identity query |
+| `terminal-overrides … :Tc` | not set | true colour; themes are 24-bit RGB throughout |
+
+Without `allow-passthrough`, art degrades to half-blocks at best — and because
+lyrfin also identifies your terminal through that channel, detection falls back to
+guessing from environment variables, which tmux is unable to answer correctly
+(the tmux server hands every pane the environment of whichever terminal *started*
+it, so attaching the same session from a different terminal reports the old one).
+
+> Ghostty, iTerm2 and WezTerm all report themselves correctly through tmux once
+> passthrough is on, so a session started in one and attached from another still
+> picks the right image protocol.
+
 ## Themes
 
 ### Auto (match the terminal)

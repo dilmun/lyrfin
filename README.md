@@ -172,6 +172,10 @@ equalizer, and <kbd>7</kbd> to connect Spotify.
 > half-blocks — lower resolution, but the real artwork. It targets common standards
 > (truecolor, inline images, Unicode) and should work on other modern terminals,
 > but those aren't officially verified yet.
+>
+> **Using tmux?** It renders identically to a native terminal, but needs
+> `set -g allow-passthrough on` (off by default) plus a true-colour override —
+> see [tmux setup](docs/CONFIGURATION.md#running-under-tmux).
 
 ---
 

@@ -42,7 +42,9 @@ fn reset_terminal_bg() {
 /// name like `ew-resize`, or empty to reset to the default). When running inside
 /// tmux — which otherwise swallows escapes it doesn't recognise — the sequence is
 /// wrapped in tmux's passthrough DCS (every inner `ESC` doubled) so it reaches the
-/// outer terminal. Requires tmux `allow-passthrough on` (the default since 3.3a).
+/// outer terminal. Requires tmux `allow-passthrough on`, which is **off** by
+/// default (verified against a config-less server) — so this silently does
+/// nothing until the user sets it; see `docs/CONFIGURATION.md`.
 /// Terminals without OSC 22 (Terminal.app, older iTerm2) ignore it harmlessly.
 fn write_osc22(payload: &str) {
     use std::io::Write;
