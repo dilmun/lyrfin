@@ -166,9 +166,10 @@ Press <kbd>?</kbd> for help, <kbd>;</kbd> for settings, <kbd>e</kbd> for the
 equalizer, and <kbd>7</kbd> to connect Spotify.
 
 > [!IMPORTANT]
-> lyrfin is developed and tested on [Ghostty](https://ghostty.org). It targets
-> common standards (truecolor, inline images, Unicode) and should work on other
-> modern terminals, but they aren't officially verified yet.
+> lyrfin is developed on [Ghostty](https://ghostty.org) and also verified on
+> **iTerm2** (macOS), including inline album art. It targets common standards
+> (truecolor, inline images, Unicode) and should work on other modern terminals,
+> but those aren't officially verified yet.
 
 ---
 
@@ -198,21 +199,22 @@ Essentials (all rebindable — full list in [`docs/KEYBINDINGS.md`](docs/KEYBIND
 
 | Key | Action | | Key | Action |
 |-----|--------|-|-----|--------|
-| <kbd>Space</kbd> | Play / pause | | <kbd>1</kbd>–<kbd>7</kbd> | Switch layout |
+| <kbd>Space</kbd> | Play / pause | | <kbd>1</kbd>–<kbd>7</kbd> | Switch view |
 | <kbd>n</kbd> / <kbd>p</kbd> | Next / previous | | <kbd>/</kbd> | Search |
-| <kbd>←</kbd> / <kbd>→</kbd> | Seek | | <kbd>Tab</kbd> | Cycle pane focus |
+| <kbd>,</kbd> / <kbd>.</kbd> | Seek back / forward | | <kbd>Tab</kbd> | Cycle pane focus |
 | <kbd>-</kbd> / <kbd>+</kbd> | Volume | | <kbd>Enter</kbd> | Play / open |
 | <kbd>j</kbd> / <kbd>k</kbd> | Move down / up | | <kbd>e</kbd> | Equalizer |
-| <kbd>s</kbd> / <kbd>r</kbd> | Shuffle / repeat | | <kbd>t</kbd> | Cycle theme |
-| <kbd>f</kbd> | Favorite | | <kbd>v</kbd> | Visualizer mode |
-| <kbd>.</kbd> / <kbd>,</kbd> | Rate up / down | | <kbd>;</kbd> | Settings |
-| <kbd>?</kbd> | Help | | <kbd>q</kbd> | Quit |
+| <kbd>h</kbd> / <kbd>l</kbd> | Focus pane left / right | | <kbd>t</kbd> | Cycle theme |
+| <kbd>s</kbd> / <kbd>r</kbd> | Shuffle / repeat | | <kbd>v</kbd> | Visualizer mode |
+| <kbd>f</kbd> | Favorite | | <kbd>;</kbd> | Settings |
+| <kbd>(</kbd> / <kbd>)</kbd> | Rate down / up | | <kbd>?</kbd> / <kbd>q</kbd> | Help / quit |
 
 ---
 
 ## Roadmap
 
-- [ ] Broader terminal support (verified beyond Ghostty)
+- [ ] Broader terminal support (Ghostty and iTerm2 verified; Kitty, WezTerm,
+      Alacritty, foot, and Windows Terminal still to go)
 - [ ] Workspace profiles — switchable config / layout / library sets
 - [ ] Scripting hooks (Lua or Rhai) for automation
 - [ ] User-defined custom panes

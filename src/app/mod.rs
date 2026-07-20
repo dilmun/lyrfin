@@ -924,6 +924,9 @@ impl AppState {
     /// Attach the terminal image-protocol picker (called from `tui`).
     pub fn set_picker(&mut self, picker: ratatui_image::picker::Picker) {
         self.art.picker = Some(picker);
+        // Must precede `reload_cover`: the underlay is baked in when a protocol is
+        // built, so setting it afterwards would leave the first cover unflattened.
+        self.sync_art_background();
         self.reload_cover(); // show the current track's cover immediately
     }
 

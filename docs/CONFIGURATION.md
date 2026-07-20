@@ -111,6 +111,29 @@ your own strings.
 `spotify_client_id` file so a `config.toml` parse error can never wipe it. See
 [`SPOTIFY.md`](SPOTIFY.md).
 
+## Inline album art
+
+lyrfin detects the terminal's inline-image protocol at startup and picks the best
+one available (Kitty, iTerm2, sixel, or a half-block fallback). `album_art`
+controls whether covers are shown at all.
+
+Detection trusts what the terminal reports, which is occasionally wrong — a
+terminal can advertise a protocol it only partly implements, and the usual
+symptom is that art silently renders as *nothing* while the rest of the UI looks
+fine. Override it with an environment variable:
+
+```sh
+LYRFIN_IMAGE_PROTOCOL=iterm2 lyrfin     # kitty · iterm2 · sixel · halfblocks
+```
+
+Unset (or `auto`, or an unrecognised name) means "trust detection". The override
+only changes the protocol — the terminal's queried font size, which sizes every
+image, is kept either way.
+
+> **iTerm2** advertises Kitty graphics support but doesn't implement the
+> unicode-placeholder placement lyrfin renders with, so lyrfin selects iTerm2's own
+> protocol there automatically. No configuration needed.
+
 ## Themes
 
 ### Auto (match the terminal)
