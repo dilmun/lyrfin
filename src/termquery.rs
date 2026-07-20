@@ -28,7 +28,6 @@ use crate::ui::theme::Rgb;
 #[cfg(unix)]
 pub fn query(timeout: std::time::Duration, log_dir: Option<&std::path::Path>) -> TerminalPalette {
     use std::io::Write;
-    use std::time::Instant;
 
     use ratatui::crossterm::terminal::{disable_raw_mode, enable_raw_mode, is_raw_mode_enabled};
 
@@ -51,10 +50,42 @@ pub fn query(timeout: std::time::Duration, log_dir: Option<&std::path::Path>) ->
         let _ = out.flush();
     }
 
+    let buf = drain_replies(timeout, |buf| {
+        // Decide completion from the PARSED colours, not the DA sentinel alone: a
+        // terminal can send its DA reply BEFORE some colour replies, so breaking the
+        // instant DA appears would drop them (the intermittent "auto went dark"
+        // bug). Stop once every colour is in, or once the essentials (fg + bg, all
+        // `to_theme` needs) are in AND the terminal has signalled it's done (DA).
+        let p = parse(buf);
+        let essentials = p.fg.is_some() && p.bg.is_some();
+        let complete = essentials && p.ansi.iter().all(Option::is_some);
+        complete || (essentials && has_da_reply(buf))
+    });
+
+    if !was_raw {
+        let _ = disable_raw_mode();
+    }
+    let pal = parse(&buf);
+    // Record a diagnostic only when the user is actually on `auto` (log_dir is
+    // Some) AND detection FAILED — so the startup probe never litters a log for
+    // someone who isn't using the auto theme, and a success leaves no file behind.
+    if let Some(dir) = log_dir
+        && pal.to_theme().is_none()
+    {
+        write_debug(dir, &buf, &pal);
+    }
+    pal
+}
+
+/// Read stdin until `is_done` accepts what's arrived or `timeout` elapses.
+/// Raw mode must already be on (replies arrive unbuffered, byte by byte). Shared
+/// by the palette query and [`terminal_name`].
+#[cfg(unix)]
+fn drain_replies(timeout: std::time::Duration, is_done: impl Fn(&[u8]) -> bool) -> Vec<u8> {
+    let deadline = std::time::Instant::now() + timeout;
     let mut buf: Vec<u8> = Vec::with_capacity(1024);
-    let deadline = Instant::now() + timeout;
     loop {
-        let remaining = deadline.saturating_duration_since(Instant::now());
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
         if remaining.is_zero() {
             break;
         }
@@ -82,32 +113,77 @@ pub fn query(timeout: std::time::Duration, log_dir: Option<&std::path::Path>) ->
             break;
         }
         buf.extend_from_slice(&chunk[..n as usize]);
-        // Decide completion from the PARSED colours, not the DA sentinel alone: a
-        // terminal can send its DA reply BEFORE some colour replies, so breaking the
-        // instant DA appears would drop them (the intermittent "auto went dark"
-        // bug). Stop once every colour is in, or once the essentials (fg + bg, all
-        // `to_theme` needs) are in AND the terminal has signalled it's done (DA).
-        let p = parse(&buf);
-        let essentials = p.fg.is_some() && p.bg.is_some();
-        let complete = essentials && p.ansi.iter().all(Option::is_some);
-        if complete || (essentials && has_da_reply(&buf)) {
+        if is_done(&buf) {
             break;
         }
     }
+    buf
+}
 
+/// Ask the terminal what it *is* (XTVERSION, `CSI > q`) and return its self-
+/// reported name, e.g. `"iTerm2 3.6.11"`, `"WezTerm 20260623-..."`, `"ghostty ..."`.
+///
+/// This exists because environment variables cannot identify the terminal under a
+/// multiplexer: tmux overwrites `TERM_PROGRAM` with its own name, and the tmux
+/// *server* hands every pane the environment of whichever terminal happened to
+/// start it — so a session started from one terminal and attached from another
+/// reports the wrong one, indefinitely. Asking over the wire always describes the
+/// terminal actually attached right now.
+///
+/// Inside tmux the query is wrapped in tmux's passthrough DCS (verified to reach
+/// the outer terminal and return its real reply), which needs `allow-passthrough`
+/// — on by default since tmux 3.3a. Terminals without XTVERSION simply never
+/// answer and we return `None`, so every caller must have an env-based fallback.
+#[cfg(unix)]
+pub fn terminal_name(timeout: std::time::Duration) -> Option<String> {
+    use std::io::Write;
+
+    use ratatui::crossterm::terminal::{disable_raw_mode, enable_raw_mode, is_raw_mode_enabled};
+
+    let was_raw = is_raw_mode_enabled().unwrap_or(false);
+    if !was_raw && enable_raw_mode().is_err() {
+        return None;
+    }
+    let q = xtversion_query(std::env::var_os("TMUX").is_some());
+    {
+        let mut out = std::io::stdout();
+        let _ = out.write_all(q.as_bytes());
+        let _ = out.flush();
+    }
+    // The reply is a DCS string terminated by ST; stop as soon as it's whole.
+    let buf = drain_replies(timeout, |b| parse_xtversion(b).is_some());
     if !was_raw {
         let _ = disable_raw_mode();
     }
-    let pal = parse(&buf);
-    // Record a diagnostic only when the user is actually on `auto` (log_dir is
-    // Some) AND detection FAILED — so the startup probe never litters a log for
-    // someone who isn't using the auto theme, and a success leaves no file behind.
-    if let Some(dir) = log_dir
-        && pal.to_theme().is_none()
-    {
-        write_debug(dir, &buf, &pal);
+    parse_xtversion(&buf)
+}
+
+#[cfg(not(unix))]
+pub fn terminal_name(_timeout: std::time::Duration) -> Option<String> {
+    None
+}
+
+/// Build the XTVERSION query, wrapped in tmux passthrough when inside tmux (every
+/// inner `ESC` doubled). Pure, so the escaping is unit-testable.
+fn xtversion_query(in_tmux: bool) -> String {
+    let q = "\x1b[>q";
+    if in_tmux {
+        format!("\x1bPtmux;{}\x1b\\", q.replace('\x1b', "\x1b\x1b"))
+    } else {
+        q.to_string()
     }
-    pal
+}
+
+/// Extract the name from an XTVERSION reply: `DCS > | <name> ST`, where ST is
+/// either `ESC \` or BEL. Returns `None` until the whole reply has arrived, which
+/// is what lets the read loop stop at exactly the right moment.
+fn parse_xtversion(buf: &[u8]) -> Option<String> {
+    let s = String::from_utf8_lossy(buf);
+    let start = s.find("\x1bP>|")? + 4;
+    let rest = &s[start..];
+    let end = rest.find("\x1b\\").or_else(|| rest.find('\x07'))?;
+    let name = rest[..end].trim();
+    (!name.is_empty()).then(|| name.to_string())
 }
 
 /// Write a diagnostic of a FAILED `auto` query to `autotheme.log`: the raw reply
@@ -256,6 +332,33 @@ fn hx(s: &str) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_xtversion_reply() {
+        assert_eq!(
+            parse_xtversion(b"\x1bP>|iTerm2 3.6.11\x1b\\"),
+            Some("iTerm2 3.6.11".to_string())
+        );
+        // BEL is a valid string terminator too
+        assert_eq!(
+            parse_xtversion(b"\x1bP>|WezTerm 20260623\x07"),
+            Some("WezTerm 20260623".to_string())
+        );
+    }
+
+    #[test]
+    fn xtversion_incomplete_reply_is_none() {
+        // no terminator yet -> keep reading rather than truncating the name
+        assert_eq!(parse_xtversion(b"\x1bP>|iTerm2 3.6"), None);
+        assert_eq!(parse_xtversion(b""), None);
+    }
+
+    #[test]
+    fn xtversion_query_is_tmux_wrapped() {
+        assert_eq!(xtversion_query(false), "\x1b[>q");
+        // inside tmux: passthrough DCS with every inner ESC doubled
+        assert_eq!(xtversion_query(true), "\x1bPtmux;\x1b\x1b[>q\x1b\\");
+    }
 
     #[test]
     fn parses_fg_bg_and_palette_from_a_response() {

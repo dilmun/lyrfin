@@ -438,8 +438,12 @@ fn event_loop(
 /// `WEZTERM_EXECUTABLE` for WezTerm. Without that, detection inside tmux falls to
 /// ratatui-image's own comment-documented "risky guess" at the outer terminal —
 /// which happens to land on iTerm2 today, but is a heuristic, not identification.
-fn wants_iterm2_protocol() -> bool {
+fn wants_iterm2_protocol(reported_name: Option<&str>) -> bool {
     iterm2_protocol_from(
+        // What the terminal says it is wins: it is the only signal that stays
+        // correct inside tmux, where the env below describes whichever terminal
+        // started the server rather than the one attached now.
+        reported_name,
         std::env::var("TERM_PROGRAM").ok().as_deref(),
         std::env::var("LC_TERMINAL").ok().as_deref(),
         std::env::var("WEZTERM_EXECUTABLE").ok().as_deref(),
@@ -449,10 +453,16 @@ fn wants_iterm2_protocol() -> bool {
 /// Pure half of [`wants_iterm2_protocol`], so the env-var precedence is
 /// unit-testable.
 fn iterm2_protocol_from(
+    reported_name: Option<&str>,
     term_program: Option<&str>,
     lc_terminal: Option<&str>,
     wezterm_exe: Option<&str>,
 ) -> bool {
+    // A terminal that identified itself is authoritative — including when it names
+    // something else, so tmux under Ghostty is not misread as iTerm2.
+    if let Some(n) = reported_name {
+        return n.contains("iTerm") || n.contains("WezTerm");
+    }
     term_program.is_some_and(|p| p.contains("iTerm") || p.contains("WezTerm"))
         || lc_terminal.is_some_and(|t| t.contains("iTerm"))
         || wezterm_exe.is_some_and(|w| !w.is_empty())
@@ -481,8 +491,12 @@ fn iterm2_protocol_from(
 fn build_picker() -> ratatui_image::picker::Picker {
     use ratatui_image::picker::{Picker, ProtocolType};
 
+    // Ask the terminal what it is *before* the picker query, while stdin is still
+    // ours. Env vars can't answer this under a multiplexer (see `terminal_name`),
+    // and getting it wrong inside tmux is what left iTerm2 with no covers at all.
+    let name = crate::termquery::terminal_name(std::time::Duration::from_millis(150));
     let mut picker = Picker::from_query_stdio().unwrap_or_else(|_| guess_picker());
-    if wants_iterm2_protocol() {
+    if wants_iterm2_protocol(name.as_deref()) {
         picker.set_protocol_type(ProtocolType::Iterm2);
     }
 
@@ -528,7 +542,7 @@ fn guess_picker() -> ratatui_image::picker::Picker {
     let prog = std::env::var("TERM_PROGRAM").unwrap_or_default();
     // iTerm2 first: it also answers the Kitty query, but only its own protocol
     // actually places images (see `build_picker`).
-    if wants_iterm2_protocol() {
+    if wants_iterm2_protocol(None) {
         p.set_protocol_type(ProtocolType::Iterm2);
     } else if std::env::var_os("KITTY_WINDOW_ID").is_some()
         || std::env::var_os("GHOSTTY_RESOURCES_DIR").is_some()
@@ -579,14 +593,19 @@ mod tests {
 
     #[test]
     fn detects_iterm2_from_term_program() {
-        assert!(iterm2_protocol_from(Some("iTerm.app"), None, None));
+        assert!(iterm2_protocol_from(None, Some("iTerm.app"), None, None));
     }
 
     #[test]
     fn detects_iterm2_through_tmux_via_lc_terminal() {
         // The regression this guards: inside tmux, TERM_PROGRAM is overwritten
         // with "tmux", so LC_TERMINAL is the only surviving iTerm2 signal.
-        assert!(iterm2_protocol_from(Some("tmux"), Some("iTerm2"), None));
+        assert!(iterm2_protocol_from(
+            None,
+            Some("tmux"),
+            Some("iTerm2"),
+            None
+        ));
     }
 
     /// WezTerm speaks the same protocol, and `WEZTERM_EXECUTABLE` survives tmux —
@@ -594,19 +613,46 @@ mod tests {
     /// terminal rather than identifying WezTerm at all.
     #[test]
     fn detects_wezterm_through_tmux() {
-        assert!(iterm2_protocol_from(Some("WezTerm"), None, None));
+        assert!(iterm2_protocol_from(None, Some("WezTerm"), None, None));
         assert!(iterm2_protocol_from(
+            None,
             Some("tmux"),
             None,
             Some("/opt/homebrew/bin/wezterm-gui")
         ));
-        assert!(!iterm2_protocol_from(Some("tmux"), None, Some("")));
+        assert!(!iterm2_protocol_from(None, Some("tmux"), None, Some("")));
+    }
+
+    /// The tmux fix: what the terminal *reports* beats the environment, because
+    /// inside tmux the env describes whichever terminal started the server. Both
+    /// directions matter — a reported Ghostty must not be misread as iTerm2 just
+    /// because a stale LC_TERMINAL says so.
+    #[test]
+    fn reported_name_overrides_stale_env() {
+        assert!(iterm2_protocol_from(
+            Some("iTerm2 3.6.11"),
+            Some("tmux"),
+            None,
+            None
+        ));
+        assert!(iterm2_protocol_from(
+            Some("WezTerm 20260623-212301"),
+            Some("tmux"),
+            None,
+            None
+        ));
+        assert!(!iterm2_protocol_from(
+            Some("ghostty 1.2.0"),
+            Some("iTerm.app"),
+            Some("iTerm2"),
+            None
+        ));
     }
 
     #[test]
     fn other_terminals_are_not_iterm2() {
-        assert!(!iterm2_protocol_from(Some("ghostty"), None, None));
-        assert!(!iterm2_protocol_from(None, None, None));
+        assert!(!iterm2_protocol_from(None, Some("ghostty"), None, None));
+        assert!(!iterm2_protocol_from(None, None, None, None));
     }
 
     #[test]
