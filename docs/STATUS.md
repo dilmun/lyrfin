@@ -48,13 +48,13 @@ all pass across the CI matrix (Linux/macOS/Windows).
   play/pause + next (verified headless under a D-Bus session bus). Windows (SMTC)
   isn't wired yet — it needs a hidden message-pump window a console app lacks.
 - **Terminal testing** covers [Ghostty](https://ghostty.org) (the development
-  terminal), **iTerm2**, **WezTerm** and **Alacritty** on macOS. The first three
-  render inline album art; Alacritty has no graphics protocol, so covers fall back
+  terminal), **Kitty**, **iTerm2**, **WezTerm** and **Alacritty** on macOS. The
+  first four render inline album art; Alacritty has no graphics protocol, so covers fall back
   to half-blocks, which was confirmed to render the real artwork at the correct
   aspect rather than degrading to placeholders. lyrfin targets widely-supported
-  standards so it should work on other modern terminals, but Kitty, foot, and
-  Windows Terminal aren't verified yet — see the [roadmap](ROADMAP.md).
-  **tmux** is verified too (under iTerm2): art renders through tmux's escape
+  standards so it should work on other modern terminals, but foot and Windows
+  Terminal aren't verified yet — see the [roadmap](ROADMAP.md).
+  **tmux** is verified too (under iTerm2 and Kitty): art renders through tmux's escape
   passthrough at the same size and protocol as native. It needs
   `allow-passthrough on`, which is **off** by default, plus a true-colour
   override — see [CONFIGURATION.md](CONFIGURATION.md#running-under-tmux). The

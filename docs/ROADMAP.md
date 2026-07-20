@@ -25,10 +25,10 @@ detection instead of fingerprinting.
 The active list — the road to the next release. Ordered by priority.
 
 - [ ] **Terminal compatibility.** Verified on **Ghostty** (the development
-  terminal), **iTerm2**, **WezTerm** and **Alacritty** — the first three with
-  inline album art, Alacritty on the half-block fallback, which renders the real
-  artwork rather than degrading to placeholders. **tmux** is verified under
-  iTerm2 and renders identically to a native terminal.
+  terminal), **Kitty**, **iTerm2**, **WezTerm** and **Alacritty** — the first
+  four with inline album art, Alacritty on the half-block fallback, which renders
+  the real artwork rather than degrading to placeholders. **tmux** is verified
+  under both iTerm2 and Kitty, and renders identically to a native terminal.
 
   Shipped along the way: iTerm2 advertises Kitty graphics support it doesn't
   implement, so lyrfin selects iTerm2's own protocol there; the terminal is
@@ -39,7 +39,7 @@ The active list — the road to the next release. Ordered by priority.
   `LYRFIN_IMAGE_PROTOCOL` overrides the choice by hand. tmux's two required
   settings are documented in [`CONFIGURATION.md`](CONFIGURATION.md#running-under-tmux).
 
-  Remaining: **Kitty**, **foot**, and **Windows Terminal** — truecolor,
+  Remaining: **foot** and **Windows Terminal** — truecolor,
   inline-image protocols, Unicode / RTL shaping, and mouse. Each needs an actual
   look rather than a capability check: a terminal's self-reported capabilities
   can be wrong, which is what the iTerm2 and HiDPI bugs both turned out to be.
