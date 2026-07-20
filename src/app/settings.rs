@@ -841,7 +841,7 @@ impl AppState {
         self.theme = self.resolve_theme(name);
         self.apply_accent();
         // Protocols that flatten art onto the panel colour baked in the *old* one.
-        self.invalidate_art(crate::app::grid_art::ArtChange::Theme);
+        self.invalidate_art(ArtChange::Theme);
     }
 
     pub(crate) fn set_theme(&mut self, name: &str) {

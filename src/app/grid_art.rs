@@ -54,7 +54,7 @@ const GRID_ART_CAP: usize = 256;
 /// one place, what it invalidates. That is deliberate: the bugs this replaces were
 /// all "this path cleared the cache, that path forgot to".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ArtChange {
+pub enum ArtChange {
     /// Card geometry changed (grid card size). Cached protocols were encoded for
     /// the old rect; a re-encode can fail silently and strand the card blank.
     Geometry,
@@ -65,6 +65,16 @@ pub(crate) enum ArtChange {
     /// image — i.e. every protocol except Kitty, which composites transparency
     /// against the cell and so recolours for free.
     Theme,
+    /// An overlay covered the artwork and has now closed. Inline images are a
+    /// layer the *terminal* owns: drawing a modal over one destroys it, and the
+    /// protocol won't re-transmit because, as far as it knows, nothing about its
+    /// area changed — so the art stays blank until something forces a rebuild.
+    ///
+    /// This used to be handled only for the four persistent covers, by calling
+    /// `rebuild_persistent_covers` straight from the event loop; grid thumbnails
+    /// were left blank, which is why closing the settings overlay stranded every
+    /// card it had covered.
+    Occluded,
 }
 
 impl AppState {

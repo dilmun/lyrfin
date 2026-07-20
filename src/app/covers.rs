@@ -94,7 +94,7 @@ impl AppState {
     /// Rebuilding from each cover's retained image mints that new id, so the next
     /// render re-places the whole image cleanly. Synchronous (no worker) → the swap
     /// is instant with no blank frame. See [`crate::ui::components::Cover`].
-    pub fn rebuild_persistent_covers(&mut self) {
+    pub(crate) fn rebuild_persistent_covers(&mut self) {
         let Some(picker) = self.art.picker.as_ref() else {
             return;
         };
