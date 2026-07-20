@@ -165,6 +165,7 @@ pub fn terminal_name(_timeout: std::time::Duration) -> Option<String> {
 
 /// Build the XTVERSION query, wrapped in tmux passthrough when inside tmux (every
 /// inner `ESC` doubled). Pure, so the escaping is unit-testable.
+#[cfg(any(unix, test))]
 fn xtversion_query(in_tmux: bool) -> String {
     let q = "\x1b[>q";
     if in_tmux {
@@ -177,6 +178,7 @@ fn xtversion_query(in_tmux: bool) -> String {
 /// Extract the name from an XTVERSION reply: `DCS > | <name> ST`, where ST is
 /// either `ESC \` or BEL. Returns `None` until the whole reply has arrived, which
 /// is what lets the read loop stop at exactly the right moment.
+#[cfg(any(unix, test))]
 fn parse_xtversion(buf: &[u8]) -> Option<String> {
     let s = String::from_utf8_lossy(buf);
     let start = s.find("\x1bP>|")? + 4;
@@ -230,6 +232,7 @@ pub fn measured_cell_size(_timeout: std::time::Duration) -> Option<(u16, u16)> {
 
 /// Pull `CSI 4 ; h ; w t` (pixels) and `CSI 8 ; rows ; cols t` (characters) out of
 /// a reply buffer and divide them into a cell size. Pure, so it is unit-testable.
+#[cfg(any(unix, test))]
 fn parse_cell_size(buf: &[u8]) -> Option<(u16, u16)> {
     let s = String::from_utf8_lossy(buf);
     let triple = |lead: &str| -> Option<(u32, u32)> {
