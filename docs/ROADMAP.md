@@ -24,15 +24,25 @@ detection instead of fingerprinting.
 
 The active list — the road to the next release. Ordered by priority.
 
-- [ ] **Terminal compatibility.** Developed on [**Ghostty**](https://ghostty.org);
-  **iTerm2**, **WezTerm** and **Alacritty** (macOS) now verified too — the first
-  two with inline album art, Alacritty on the half-block fallback — it advertises
-  Kitty graphics support it doesn't fully implement, so lyrfin selects iTerm2's own
-  protocol there, and `LYRFIN_IMAGE_PROTOCOL` overrides the choice by hand.
-  Remaining: verify and tune rendering — truecolor, inline-image protocols
-  (Kitty/sixel/iTerm2), Unicode / RTL shaping, mouse — on Kitty, foot, and
-  Windows Terminal, and document what's supported per
-  terminal. Treat each one as needing a real look: capability queries can lie.
+- [ ] **Terminal compatibility.** Verified on **Ghostty** (the development
+  terminal), **iTerm2**, **WezTerm** and **Alacritty** — the first three with
+  inline album art, Alacritty on the half-block fallback, which renders the real
+  artwork rather than degrading to placeholders. **tmux** is verified under
+  iTerm2 and renders identically to a native terminal.
+
+  Shipped along the way: iTerm2 advertises Kitty graphics support it doesn't
+  implement, so lyrfin selects iTerm2's own protocol there; the terminal is
+  identified over the wire (XTVERSION through tmux passthrough) because
+  environment variables can't name it under a multiplexer; image geometry is
+  measured from the terminal's own numbers, since a HiDPI cell is reported in
+  physical pixels while images are sized in points; and
+  `LYRFIN_IMAGE_PROTOCOL` overrides the choice by hand. tmux's two required
+  settings are documented in [`CONFIGURATION.md`](CONFIGURATION.md#running-under-tmux).
+
+  Remaining: **Kitty**, **foot**, and **Windows Terminal** — truecolor,
+  inline-image protocols, Unicode / RTL shaping, and mouse. Each needs an actual
+  look rather than a capability check: a terminal's self-reported capabilities
+  can be wrong, which is what the iTerm2 and HiDPI bugs both turned out to be.
 - [ ] **Audio listening checks.** Gapless, pitch-preserved speed, crossfade, and
   silence-skip are implemented, adjustable, and confirmed by ear on the desktop
   output; the remaining case is a **Bluetooth sink** — output-latency
