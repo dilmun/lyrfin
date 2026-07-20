@@ -53,7 +53,6 @@ impl AppState {
             settings: SettingsUi::default(),
             eq: EqUi::default(),
             eq_presets,
-            in_tmux: false,
             tags: TagModal::default(),
             radio: {
                 let mut r = Radio::default();
