@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.3.0](https://github.com/dilmun/lyrfin/compare/v0.2.0...v0.3.0) (2026-07-20)
+
+
+### Features
+
+* **icons:** default to font-independent symbols ([#11](https://github.com/dilmun/lyrfin/issues/11)) ([2dc5f95](https://github.com/dilmun/lyrfin/commit/2dc5f958d331fcce7f8bc88645ac6ca4559035d2))
+* **images:** verify WezTerm and Alacritty, fix terminal identity under tmux ([#13](https://github.com/dilmun/lyrfin/issues/13)) ([53ddc03](https://github.com/dilmun/lyrfin/commit/53ddc0324df6e966c2e00392e26090381e479cd1))
+
+
+### Bug Fixes
+
+* **art:** one seam for artwork cache invalidation ([#15](https://github.com/dilmun/lyrfin/issues/15)) ([095204d](https://github.com/dilmun/lyrfin/commit/095204d50fdc00025c50a8974c1feafaf60c520d))
+* **images:** render album art correctly on iTerm2 ([#10](https://github.com/dilmun/lyrfin/issues/10)) ([c029afd](https://github.com/dilmun/lyrfin/commit/c029afd3446d222c52131f9f84cf31508f61dbf3))
+* **images:** render art the same way inside tmux ([#14](https://github.com/dilmun/lyrfin/issues/14)) ([5b3028c](https://github.com/dilmun/lyrfin/commit/5b3028cdac3d85637508d5e8134a4d3ee147c054))
+
 ## [0.2.0](https://github.com/dilmun/lyrfin/compare/v0.1.0...v0.2.0) (2026-07-15)
 
 
