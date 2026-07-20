@@ -430,20 +430,32 @@ fn event_loop(
     Ok(())
 }
 
-/// Is this iTerm2? `TERM_PROGRAM` is the usual signal, but a multiplexer
-/// overwrites it with its own name (`tmux`), so `LC_TERMINAL` — which iTerm2
-/// also sets and which survives tmux and ssh — is checked as well.
-fn is_iterm2() -> bool {
-    iterm2_from(
+/// Does this terminal render the **iTerm2 inline-image protocol**? Covers iTerm2
+/// itself and WezTerm, which implements the same protocol.
+///
+/// Each is identified by a signal that survives a multiplexer, because `tmux`
+/// overwrites `TERM_PROGRAM` with its own name: `LC_TERMINAL` for iTerm2,
+/// `WEZTERM_EXECUTABLE` for WezTerm. Without that, detection inside tmux falls to
+/// ratatui-image's own comment-documented "risky guess" at the outer terminal —
+/// which happens to land on iTerm2 today, but is a heuristic, not identification.
+fn wants_iterm2_protocol() -> bool {
+    iterm2_protocol_from(
         std::env::var("TERM_PROGRAM").ok().as_deref(),
         std::env::var("LC_TERMINAL").ok().as_deref(),
+        std::env::var("WEZTERM_EXECUTABLE").ok().as_deref(),
     )
 }
 
-/// Pure half of [`is_iterm2`], so the env-var precedence is unit-testable.
-fn iterm2_from(term_program: Option<&str>, lc_terminal: Option<&str>) -> bool {
-    term_program.is_some_and(|p| p.contains("iTerm"))
+/// Pure half of [`wants_iterm2_protocol`], so the env-var precedence is
+/// unit-testable.
+fn iterm2_protocol_from(
+    term_program: Option<&str>,
+    lc_terminal: Option<&str>,
+    wezterm_exe: Option<&str>,
+) -> bool {
+    term_program.is_some_and(|p| p.contains("iTerm") || p.contains("WezTerm"))
         || lc_terminal.is_some_and(|t| t.contains("iTerm"))
+        || wezterm_exe.is_some_and(|w| !w.is_empty())
 }
 
 /// Resolve the inline-image protocol for this terminal.
@@ -470,7 +482,7 @@ fn build_picker() -> ratatui_image::picker::Picker {
     use ratatui_image::picker::{Picker, ProtocolType};
 
     let mut picker = Picker::from_query_stdio().unwrap_or_else(|_| guess_picker());
-    if is_iterm2() {
+    if wants_iterm2_protocol() {
         picker.set_protocol_type(ProtocolType::Iterm2);
     }
 
@@ -516,7 +528,7 @@ fn guess_picker() -> ratatui_image::picker::Picker {
     let prog = std::env::var("TERM_PROGRAM").unwrap_or_default();
     // iTerm2 first: it also answers the Kitty query, but only its own protocol
     // actually places images (see `build_picker`).
-    if is_iterm2() || prog == "WezTerm" {
+    if wants_iterm2_protocol() {
         p.set_protocol_type(ProtocolType::Iterm2);
     } else if std::env::var_os("KITTY_WINDOW_ID").is_some()
         || std::env::var_os("GHOSTTY_RESOURCES_DIR").is_some()
@@ -562,26 +574,39 @@ fn convert_key(k: ratatui::crossterm::event::KeyEvent) -> Key {
 
 #[cfg(test)]
 mod tests {
-    use super::{iterm2_from, osc22_seq, protocol_from_name};
+    use super::{iterm2_protocol_from, osc22_seq, protocol_from_name};
     use ratatui_image::picker::ProtocolType;
 
     #[test]
     fn detects_iterm2_from_term_program() {
-        assert!(iterm2_from(Some("iTerm.app"), None));
+        assert!(iterm2_protocol_from(Some("iTerm.app"), None, None));
     }
 
     #[test]
     fn detects_iterm2_through_tmux_via_lc_terminal() {
         // The regression this guards: inside tmux, TERM_PROGRAM is overwritten
         // with "tmux", so LC_TERMINAL is the only surviving iTerm2 signal.
-        assert!(iterm2_from(Some("tmux"), Some("iTerm2")));
+        assert!(iterm2_protocol_from(Some("tmux"), Some("iTerm2"), None));
+    }
+
+    /// WezTerm speaks the same protocol, and `WEZTERM_EXECUTABLE` survives tmux —
+    /// without it, detection inside tmux relies on upstream guessing the outer
+    /// terminal rather than identifying WezTerm at all.
+    #[test]
+    fn detects_wezterm_through_tmux() {
+        assert!(iterm2_protocol_from(Some("WezTerm"), None, None));
+        assert!(iterm2_protocol_from(
+            Some("tmux"),
+            None,
+            Some("/opt/homebrew/bin/wezterm-gui")
+        ));
+        assert!(!iterm2_protocol_from(Some("tmux"), None, Some("")));
     }
 
     #[test]
     fn other_terminals_are_not_iterm2() {
-        assert!(!iterm2_from(Some("ghostty"), None));
-        assert!(!iterm2_from(Some("WezTerm"), None));
-        assert!(!iterm2_from(None, None));
+        assert!(!iterm2_protocol_from(Some("ghostty"), None, None));
+        assert!(!iterm2_protocol_from(None, None, None));
     }
 
     #[test]

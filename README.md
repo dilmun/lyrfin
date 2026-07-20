@@ -167,7 +167,7 @@ equalizer, and <kbd>7</kbd> to connect Spotify.
 
 > [!IMPORTANT]
 > lyrfin is developed on [Ghostty](https://ghostty.org) and also verified on
-> **iTerm2** (macOS), including inline album art. It targets common standards
+> **iTerm2** and **WezTerm** (macOS), including inline album art. It targets common standards
 > (truecolor, inline images, Unicode) and should work on other modern terminals,
 > but those aren't officially verified yet.
 
@@ -213,7 +213,7 @@ Essentials (all rebindable — full list in [`docs/KEYBINDINGS.md`](docs/KEYBIND
 
 ## Roadmap
 
-- [ ] Broader terminal support (Ghostty and iTerm2 verified; Kitty, WezTerm,
+- [ ] Broader terminal support (Ghostty, iTerm2 and WezTerm verified; Kitty,
       Alacritty, foot, and Windows Terminal still to go)
 - [ ] Workspace profiles — switchable config / layout / library sets
 - [ ] Scripting hooks (Lua or Rhai) for automation
