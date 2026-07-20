@@ -186,6 +186,73 @@ fn parse_xtversion(buf: &[u8]) -> Option<String> {
     (!name.is_empty()).then(|| name.to_string())
 }
 
+/// Measure the terminal cell size in the units its *image protocol* uses, by
+/// asking for the text area both ways and dividing:
+///
+/// * `CSI 14t` -> text area in pixels
+/// * `CSI 18t` -> text area in characters
+///
+/// Why not just use the cell size from `CSI 16t`, which ratatui-image already
+/// queries? Because on a HiDPI display the two disagree: iTerm2 answers `16t` in
+/// *physical* pixels (22x46 on a 2x Retina panel) while sizing inline images in
+/// *points* (11x23) — so every image is transmitted at twice its intended size and
+/// spills far outside the cells it was given. Deriving the cell from `14t / 18t`
+/// keeps us in one unit system, whichever that turns out to be.
+///
+/// Returns `None` unless both replies arrive and divide cleanly, so a terminal
+/// that answers neither (or only one) keeps ratatui-image's own detection.
+#[cfg(unix)]
+pub fn measured_cell_size(timeout: std::time::Duration) -> Option<(u16, u16)> {
+    use std::io::Write;
+
+    use ratatui::crossterm::terminal::{disable_raw_mode, enable_raw_mode, is_raw_mode_enabled};
+
+    let was_raw = is_raw_mode_enabled().unwrap_or(false);
+    if !was_raw && enable_raw_mode().is_err() {
+        return None;
+    }
+    {
+        let mut out = std::io::stdout();
+        let _ = out.write_all(b"\x1b[14t\x1b[18t");
+        let _ = out.flush();
+    }
+    let buf = drain_replies(timeout, |b| parse_cell_size(b).is_some());
+    if !was_raw {
+        let _ = disable_raw_mode();
+    }
+    parse_cell_size(&buf)
+}
+
+#[cfg(not(unix))]
+pub fn measured_cell_size(_timeout: std::time::Duration) -> Option<(u16, u16)> {
+    None
+}
+
+/// Pull `CSI 4 ; h ; w t` (pixels) and `CSI 8 ; rows ; cols t` (characters) out of
+/// a reply buffer and divide them into a cell size. Pure, so it is unit-testable.
+fn parse_cell_size(buf: &[u8]) -> Option<(u16, u16)> {
+    let s = String::from_utf8_lossy(buf);
+    let triple = |lead: &str| -> Option<(u32, u32)> {
+        let at = s.find(lead)? + lead.len();
+        let rest = &s[at..];
+        let end = rest.find('t')?;
+        let mut it = rest[..end].split(';');
+        Some((
+            it.next()?.trim().parse().ok()?,
+            it.next()?.trim().parse().ok()?,
+        ))
+    };
+    let (px_h, px_w) = triple("\x1b[4;")?;
+    let (rows, cols) = triple("\x1b[8;")?;
+    if rows == 0 || cols == 0 {
+        return None;
+    }
+    let (cw, ch) = (px_w / cols, px_h / rows);
+    // A degenerate answer (some terminals report 0, or a 1px cell) is worse than
+    // no answer — leave detection alone rather than sizing every image from it.
+    (cw >= 2 && ch >= 2).then_some((cw as u16, ch as u16))
+}
+
 /// Write a diagnostic of a FAILED `auto` query to `autotheme.log`: the raw reply
 /// (escaped) and what we parsed from it. Lets a terminal that won't answer be told
 /// apart from a parse gap without guessing.
@@ -332,6 +399,28 @@ fn hx(s: &str) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn derives_cell_size_from_area_replies() {
+        // real capture from iTerm2 on a 2x Retina panel: 1066x612 px over 96x25
+        // cells -> 11x24, while CSI 16t reports 22x46 (physical pixels).
+        let reply = b"\x1b[4;612;1066t\x1b[8;25;96t";
+        assert_eq!(parse_cell_size(reply), Some((11, 24)));
+    }
+
+    #[test]
+    fn cell_size_needs_both_replies() {
+        assert_eq!(parse_cell_size(b"\x1b[4;612;1066t"), None);
+        assert_eq!(parse_cell_size(b"\x1b[8;25;96t"), None);
+        assert_eq!(parse_cell_size(b""), None);
+    }
+
+    #[test]
+    fn degenerate_cell_size_is_rejected() {
+        // a 0-cell or 1px answer would mis-size every image — worse than no answer
+        assert_eq!(parse_cell_size(b"\x1b[4;612;1066t\x1b[8;0;0t"), None);
+        assert_eq!(parse_cell_size(b"\x1b[4;25;96t\x1b[8;25;96t"), None);
+    }
 
     #[test]
     fn parses_xtversion_reply() {

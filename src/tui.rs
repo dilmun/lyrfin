@@ -496,7 +496,7 @@ fn build_picker() -> ratatui_image::picker::Picker {
     // Ask the terminal what it is *before* the picker query, while stdin is still
     // ours. Env vars can't answer this under a multiplexer (see `terminal_name`),
     // and getting it wrong inside tmux is what left iTerm2 with no covers at all.
-    let name = crate::termquery::terminal_name(std::time::Duration::from_millis(150));
+    let name = crate::termquery::terminal_name(TERM_QUERY_TIMEOUT);
     let mut picker = Picker::from_query_stdio().unwrap_or_else(|_| guess_picker());
     if wants_iterm2_protocol(name.as_deref()) {
         picker.set_protocol_type(ProtocolType::Iterm2);
@@ -509,7 +509,40 @@ fn build_picker() -> ratatui_image::picker::Picker {
     if let Some(proto) = forced_protocol() {
         picker.set_protocol_type(proto);
     }
+
+    // Correct a HiDPI cell size before anything is sized from it. `CSI 16t` (what
+    // ratatui-image queries) can answer in physical pixels while the image
+    // protocol sizes in points — on a 2x Retina panel iTerm2 reports a 22x46 cell
+    // but draws an image sized in 11x23 units, so every cover is transmitted at
+    // twice its intended size and spills outside its card. The terminal's own
+    // area-in-pixels / area-in-cells is self-consistent, so trust that when the two
+    // disagree by more than rounding.
+    if let Some((cw, ch)) = crate::termquery::measured_cell_size(TERM_QUERY_TIMEOUT)
+        && disagrees(picker.font_size(), (cw, ch))
+    {
+        // `from_fontsize` is deprecated upstream, but `font_size` is a private
+        // field with no setter and the suggested replacements (`from_query_stdio`,
+        // `halfblocks`) cannot express a measured cell size — so there is no
+        // supported way to do this. Rendering every cover at 2x is the worse
+        // trade; revisit if upstream adds a setter.
+        #[allow(deprecated)]
+        let mut fixed = Picker::from_fontsize(ratatui_image::FontSize::new(cw, ch));
+        // Keep the protocol we resolved above: `from_fontsize` re-guesses it from
+        // the environment, which is exactly what we don't trust under tmux.
+        fixed.set_protocol_type(picker.protocol_type());
+        picker = fixed;
+    }
     picker
+}
+
+/// How long any single startup terminal query may block before we give up on it.
+const TERM_QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(150);
+
+/// Do the reported and measured cell sizes differ by more than integer rounding?
+/// `CSI 14t / 18t` divide to whole pixels, so a 1px difference per axis is
+/// expected and must not trigger a correction; a HiDPI mismatch is a factor of 2.
+fn disagrees(reported: ratatui_image::FontSize, measured: (u16, u16)) -> bool {
+    reported.width.abs_diff(measured.0) > 1 || reported.height.abs_diff(measured.1) > 1
 }
 
 /// The `LYRFIN_IMAGE_PROTOCOL` override, if set to a name we recognise.
@@ -590,7 +623,7 @@ fn convert_key(k: ratatui::crossterm::event::KeyEvent) -> Key {
 
 #[cfg(test)]
 mod tests {
-    use super::{iterm2_protocol_from, osc22_seq, protocol_from_name};
+    use super::{disagrees, iterm2_protocol_from, osc22_seq, protocol_from_name};
     use ratatui_image::picker::ProtocolType;
 
     #[test]
@@ -655,6 +688,16 @@ mod tests {
     fn other_terminals_are_not_iterm2() {
         assert!(!iterm2_protocol_from(None, Some("ghostty"), None, None));
         assert!(!iterm2_protocol_from(None, None, None, None));
+    }
+
+    /// Only a real mismatch triggers the HiDPI correction: `CSI 14t / 18t` divide
+    /// to whole pixels, so a 1px rounding difference must be left alone.
+    #[test]
+    fn only_a_real_cell_mismatch_triggers_correction() {
+        use ratatui_image::FontSize;
+        assert!(disagrees(FontSize::new(22, 46), (11, 24))); // 2x Retina
+        assert!(!disagrees(FontSize::new(11, 24), (11, 24))); // exact
+        assert!(!disagrees(FontSize::new(11, 24), (10, 23))); // rounding only
     }
 
     #[test]
