@@ -48,10 +48,11 @@ all pass across the CI matrix (Linux/macOS/Windows).
   play/pause + next (verified headless under a D-Bus session bus). Windows (SMTC)
   isn't wired yet — it needs a hidden message-pump window a console app lacks.
 - **Terminal testing** covers [Ghostty](https://ghostty.org) (the development
-  terminal), **iTerm2** and **WezTerm** on macOS, all three with inline album art
-  confirmed rendering. lyrfin targets widely-supported standards so it should work on other
-  modern terminals, but Kitty, Alacritty, foot, and Windows Terminal aren't
-  verified yet — broader terminal support is on the [roadmap](ROADMAP.md).
+  terminal), **iTerm2**, **WezTerm** and **Alacritty** on macOS. The first three
+  render inline album art; Alacritty has no graphics protocol, so covers fall back
+  to half-blocks, which was confirmed to render the real artwork at the correct
+  aspect rather than degrading to placeholders. lyrfin targets widely-supported standards so it should work on other
+  modern terminals, but Kitty, foot, and Windows Terminal aren't verified yet — broader terminal support is on the [roadmap](ROADMAP.md).
   Note that a terminal's self-reported capabilities can be wrong (iTerm2
   advertises Kitty graphics support it doesn't fully implement), so each terminal
   needs an actual look rather than a capability check; `LYRFIN_IMAGE_PROTOCOL`
