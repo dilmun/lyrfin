@@ -219,8 +219,8 @@ Essentials (all rebindable — full list in [`docs/KEYBINDINGS.md`](docs/KEYBIND
 
 ## Roadmap
 
-- [ ] Broader terminal support (Ghostty, iTerm2, WezTerm and Alacritty verified;
-      Kitty, foot, and Windows Terminal still to go)
+- [ ] Broader terminal support (Ghostty, iTerm2, WezTerm, Alacritty and tmux
+      verified; Kitty, foot, and Windows Terminal still to go)
 - [ ] Workspace profiles — switchable config / layout / library sets
 - [ ] Scripting hooks (Lua or Rhai) for automation
 - [ ] User-defined custom panes

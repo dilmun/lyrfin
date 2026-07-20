@@ -51,8 +51,9 @@ all pass across the CI matrix (Linux/macOS/Windows).
   terminal), **iTerm2**, **WezTerm** and **Alacritty** on macOS. The first three
   render inline album art; Alacritty has no graphics protocol, so covers fall back
   to half-blocks, which was confirmed to render the real artwork at the correct
-  aspect rather than degrading to placeholders. lyrfin targets widely-supported standards so it should work on other
-  modern terminals, but Kitty, foot, and Windows Terminal aren't verified yet — broader terminal support is on the [roadmap](ROADMAP.md).
+  aspect rather than degrading to placeholders. lyrfin targets widely-supported
+  standards so it should work on other modern terminals, but Kitty, foot, and
+  Windows Terminal aren't verified yet — see the [roadmap](ROADMAP.md).
   **tmux** is verified too (under iTerm2): art renders through tmux's escape
   passthrough at the same size and protocol as native. It needs
   `allow-passthrough on`, which is **off** by default, plus a true-colour
