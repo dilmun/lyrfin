@@ -167,9 +167,15 @@ equalizer, and <kbd>7</kbd> to connect Spotify.
 
 > [!IMPORTANT]
 > lyrfin is developed on [Ghostty](https://ghostty.org) and also verified on
-> **iTerm2** (macOS), including inline album art. It targets common standards
+> **iTerm2**, **WezTerm** and **Alacritty** (macOS). The first three render
+> inline album art; Alacritty has no graphics protocol, so art falls back to
+> half-blocks — lower resolution, but the real artwork. It targets common standards
 > (truecolor, inline images, Unicode) and should work on other modern terminals,
 > but those aren't officially verified yet.
+>
+> **Using tmux?** It renders identically to a native terminal, but needs
+> `set -g allow-passthrough on` (off by default) plus a true-colour override —
+> see [tmux setup](docs/CONFIGURATION.md#running-under-tmux).
 
 ---
 
@@ -213,8 +219,8 @@ Essentials (all rebindable — full list in [`docs/KEYBINDINGS.md`](docs/KEYBIND
 
 ## Roadmap
 
-- [ ] Broader terminal support (Ghostty and iTerm2 verified; Kitty, WezTerm,
-      Alacritty, foot, and Windows Terminal still to go)
+- [ ] Broader terminal support (Ghostty, iTerm2, WezTerm and Alacritty verified;
+      Kitty, foot, and Windows Terminal still to go)
 - [ ] Workspace profiles — switchable config / layout / library sets
 - [ ] Scripting hooks (Lua or Rhai) for automation
 - [ ] User-defined custom panes

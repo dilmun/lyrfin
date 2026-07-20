@@ -25,12 +25,13 @@ detection instead of fingerprinting.
 The active list — the road to the next release. Ordered by priority.
 
 - [ ] **Terminal compatibility.** Developed on [**Ghostty**](https://ghostty.org);
-  **iTerm2** (macOS) now verified too, including inline album art — it advertises
+  **iTerm2**, **WezTerm** and **Alacritty** (macOS) now verified too — the first
+  two with inline album art, Alacritty on the half-block fallback — it advertises
   Kitty graphics support it doesn't fully implement, so lyrfin selects iTerm2's own
   protocol there, and `LYRFIN_IMAGE_PROTOCOL` overrides the choice by hand.
   Remaining: verify and tune rendering — truecolor, inline-image protocols
-  (Kitty/sixel/iTerm2), Unicode / RTL shaping, mouse — on Kitty, WezTerm,
-  Alacritty, foot, and Windows Terminal, and document what's supported per
+  (Kitty/sixel/iTerm2), Unicode / RTL shaping, mouse — on Kitty, foot, and
+  Windows Terminal, and document what's supported per
   terminal. Treat each one as needing a real look: capability queries can lie.
 - [ ] **Audio listening checks.** Gapless, pitch-preserved speed, crossfade, and
   silence-skip are implemented, adjustable, and confirmed by ear on the desktop
