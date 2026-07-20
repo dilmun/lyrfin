@@ -139,7 +139,7 @@ pub use browser::Browser;
 mod covers;
 pub use covers::{CoverArt, CoverSearch, CoverStatus};
 mod grid_art;
-pub use grid_art::ArtThumb;
+pub use grid_art::{ArtChange, ArtThumb};
 mod discovery;
 mod effects;
 pub use effects::PlaybackFx;

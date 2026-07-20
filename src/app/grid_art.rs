@@ -15,8 +15,23 @@ pub enum ArtThumb {
     /// ~264 bytes, so keeping it inline would bloat every `Pending`/`Missing`
     /// cache entry to that size (clippy `large_enum_variant`).
     Ready(Box<std::cell::RefCell<ratatui_image::protocol::StatefulProtocol>>),
-    /// Nothing could be loaded — show the placeholder, don't re-request.
-    Missing,
+    /// Nothing could be loaded. Negative-cached so a cover-less card doesn't
+    /// re-fetch every frame — but *not forever*: `at`/`tries` let a transient
+    /// failure be retried, because a network blip must not blank a card for the
+    /// life of the process (see [`AppState::request_art`]).
+    Missing { at: std::time::Instant, tries: u8 },
+}
+
+/// How many times a failed thumbnail is retried before it's accepted as genuinely
+/// absent. Small: covers that truly have no art must not re-hit the network
+/// forever, but a burst of timeouts should heal itself.
+const ART_MAX_RETRIES: u8 = 3;
+
+/// Backoff before retrying a failed thumbnail — 2s, 4s, 8s. Long enough that a
+/// rate-limited or saturated fetch has room to recover, short enough that the card
+/// fills in while the user is still looking at it.
+fn art_retry_after(tries: u8) -> std::time::Duration {
+    std::time::Duration::from_secs(2u64 << tries.min(3))
 }
 
 /// The cover-art cache: `ArtKey → (last-used clock tick, thumbnail)`. The tick is
@@ -30,7 +45,62 @@ pub(crate) type ArtCache = std::collections::HashMap<ArtKey, (u64, ArtThumb)>;
 /// decoded ~320px image protocol.
 const GRID_ART_CAP: usize = 256;
 
+/// Why rendered artwork has to be rebuilt. **The single vocabulary for artwork
+/// invalidation** — every UI change that can stale a cover names its reason here
+/// and calls [`AppState::invalidate_art`], instead of each call site remembering
+/// which caches to poke.
+///
+/// Adding a setting that affects artwork means adding a variant and answering, in
+/// one place, what it invalidates. That is deliberate: the bugs this replaces were
+/// all "this path cleared the cache, that path forgot to".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArtChange {
+    /// Card geometry changed (grid card size). Cached protocols were encoded for
+    /// the old rect; a re-encode can fail silently and strand the card blank.
+    Geometry,
+    /// Card shape changed (circle ⇄ rounded square). The mask is baked into the
+    /// decoded image by the worker, so the pixels themselves are wrong.
+    Shape,
+    /// The theme changed. Only matters where the panel colour is baked into the
+    /// image — i.e. every protocol except Kitty, which composites transparency
+    /// against the cell and so recolours for free.
+    Theme,
+    /// An overlay covered the artwork and has now closed. Inline images are a
+    /// layer the *terminal* owns: drawing a modal over one destroys it, and the
+    /// protocol won't re-transmit because, as far as it knows, nothing about its
+    /// area changed — so the art stays blank until something forces a rebuild.
+    ///
+    /// This used to be handled only for the four persistent covers, by calling
+    /// `rebuild_persistent_covers` straight from the event loop; grid thumbnails
+    /// were left blank, which is why closing the settings overlay stranded every
+    /// card it had covered.
+    Occluded,
+}
+
 impl AppState {
+    /// Rebuild whatever `change` staled. The one place that decides which caches a
+    /// UI change invalidates.
+    ///
+    /// Grid thumbnails are dropped and refetched lazily as cards come back on
+    /// screen; the persistent covers (now-playing, transport bar, Spotify panes)
+    /// retain their source image and rebuild in place, so they never blank.
+    pub(crate) fn invalidate_art(&mut self, change: ArtChange) {
+        // Theme is the one change that some terminals don't care about: with the
+        // Kitty protocol the panel shows *through* the art's transparent corners,
+        // so a repaint is enough and re-encoding would be pure cost.
+        if change == ArtChange::Theme {
+            if !self.art_needs_opaque_bg() {
+                return;
+            }
+            // Protocols bake the underlay in when built, so point it at the new
+            // panel colour before anything is rebuilt below.
+            self.sync_art_background();
+        }
+        self.grid_art.borrow_mut().clear();
+        self.rebuild_persistent_covers();
+        self.dirty = true;
+    }
+
     pub fn set_art_sender(&mut self, tx: crossbeam_channel::Sender<ArtRequest>) {
         self.workers.art = Some(tx);
     }
@@ -44,11 +114,26 @@ impl AppState {
         {
             let mut cache = self.grid_art.borrow_mut();
             if let Some(entry) = cache.get_mut(&key) {
-                entry.0 = tick; // already cached / in flight → just mark it fresh
-                return;
+                entry.0 = tick; // already cached / in flight → mark it fresh
+                // A previous failure is retried once its backoff has passed. This is
+                // what stops one bad fetch from blanking a card permanently: clearing
+                // the cache (a size or shape change) re-downloads every visible
+                // cover at once through a single worker, and whichever requests time
+                // out under that burst used to stay blank until a restart.
+                let retry = match entry.1 {
+                    ArtThumb::Missing { at, tries } => {
+                        tries < ART_MAX_RETRIES && at.elapsed() >= art_retry_after(tries)
+                    }
+                    _ => false,
+                };
+                if !retry {
+                    return;
+                }
+                entry.1 = ArtThumb::Pending;
+            } else {
+                cache.insert(key, (tick, ArtThumb::Pending));
+                evict_lru(&mut cache);
             }
-            cache.insert(key, (tick, ArtThumb::Pending));
-            evict_lru(&mut cache);
         }
         if let Some(tx) = &self.workers.art {
             let _ = tx.send(ArtRequest {
@@ -147,11 +232,20 @@ impl AppState {
     /// Receive a decoded thumbnail: build its protocol (the picker lives on this
     /// thread) and cache it, or mark it Missing. Redraws so the cover appears.
     pub fn on_art_result(&mut self, res: ArtResult) {
+        // Carry the attempt count across a failure so the backoff actually widens
+        // and a hopeless cover stops re-requesting after `ART_MAX_RETRIES`.
+        let tries = match self.grid_art.borrow().get(&res.key) {
+            Some((_, ArtThumb::Missing { tries, .. })) => *tries,
+            _ => 0,
+        };
         let thumb = match (res.img, self.art.picker.as_ref()) {
             (Some(img), Some(p)) => ArtThumb::Ready(Box::new(std::cell::RefCell::new(
                 p.new_resize_protocol(img),
             ))),
-            _ => ArtThumb::Missing,
+            _ => ArtThumb::Missing {
+                at: std::time::Instant::now(),
+                tries: tries.saturating_add(1),
+            },
         };
         let tick = self.grid_art_clock.get();
         self.grid_art.borrow_mut().insert(res.key, (tick, thumb));
@@ -206,14 +300,33 @@ impl AppState {
     /// cache so existing thumbnails re-decode in the new shape. Persists the choice.
     pub(crate) fn toggle_grid_shape(&mut self) {
         self.config.grid_circle = !self.config.grid_circle;
-        self.grid_art.borrow_mut().clear();
+        self.invalidate_art(ArtChange::Shape);
         self.config.save();
     }
 
-    /// Step the grid card size (small ↔ medium ↔ large) and persist it. No cache
-    /// clear needed — the cached image protocols re-scale to the new card rect.
+    /// Step the grid card size (small ↔ medium ↔ large).
     pub(crate) fn cycle_grid_size(&mut self, dir: i32) {
-        self.config.grid_card_size = self.config.grid_card_size.step(dir);
+        self.set_grid_card_size(self.config.grid_card_size.step(dir));
+    }
+
+    /// Set the grid card size, dropping the cached thumbnails so every card is
+    /// re-encoded for the new geometry. **The single place the size changes** — the
+    /// settings value-picker routes here too, so the cache can't be left stale by
+    /// one path and cleared by another.
+    ///
+    /// The cache used to be kept here, on the theory that a cached protocol simply
+    /// re-scales itself to the new card rect. It does try — but a re-encode that
+    /// fails leaves that entry blank *permanently*: `resize_encode` stores the error
+    /// and, on failure, doesn't advance the source hash, so nothing rebuilds it and
+    /// nothing reports it. Cycling small → medium → large stranded a spread of
+    /// covers that only a restart brought back. Re-encoding from scratch costs one
+    /// decode per visible card, and only when the size actually changes.
+    pub(crate) fn set_grid_card_size(&mut self, size: crate::config::GridCardSize) {
+        if self.config.grid_card_size == size {
+            return;
+        }
+        self.config.grid_card_size = size;
+        self.invalidate_art(ArtChange::Geometry);
         self.config.save();
     }
 }
@@ -232,5 +345,168 @@ fn evict_lru(cache: &mut ArtCache) {
             break;
         };
         cache.remove(&oldest);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{Config, GridCardSize};
+
+    fn app() -> AppState {
+        AppState::new(Config {
+            dir: std::env::temp_dir().join("lyrfin-test-gridsize"),
+            ..Config::default()
+        })
+    }
+
+    /// The regression: cycling the card size used to keep the cached protocols,
+    /// and a re-encode that failed left those covers blank until a restart.
+    #[test]
+    fn changing_card_size_drops_cached_thumbnails() {
+        let mut a = app();
+        a.grid_art.borrow_mut().insert(
+            ArtKey::solid(0x00ff00, true),
+            (
+                1,
+                ArtThumb::Missing {
+                    at: std::time::Instant::now(),
+                    tries: 0,
+                },
+            ),
+        );
+        assert_eq!(a.grid_art.borrow().len(), 1);
+
+        a.set_grid_card_size(GridCardSize::Large);
+        assert_eq!(a.config.grid_card_size, GridCardSize::Large);
+        assert!(
+            a.grid_art.borrow().is_empty(),
+            "cache must be dropped so covers re-encode for the new geometry"
+        );
+    }
+
+    /// Re-selecting the size already in effect must not throw away good art.
+    #[test]
+    fn setting_the_same_card_size_keeps_the_cache() {
+        let mut a = app();
+        let size = a.config.grid_card_size;
+        a.grid_art.borrow_mut().insert(
+            ArtKey::solid(0x00ff00, true),
+            (
+                1,
+                ArtThumb::Missing {
+                    at: std::time::Instant::now(),
+                    tries: 0,
+                },
+            ),
+        );
+
+        a.set_grid_card_size(size);
+        assert_eq!(a.grid_art.borrow().len(), 1, "no change, no invalidation");
+    }
+
+    /// Every artwork-staling change routes through one seam, so a new setting
+    /// can't quietly forget to invalidate.
+    #[test]
+    fn every_art_change_drops_the_cache() {
+        for change in [ArtChange::Geometry, ArtChange::Shape] {
+            let mut a = app();
+            a.grid_art.borrow_mut().insert(
+                ArtKey::solid(0x00ff00, true),
+                (
+                    1,
+                    ArtThumb::Missing {
+                        at: std::time::Instant::now(),
+                        tries: 0,
+                    },
+                ),
+            );
+            a.invalidate_art(change);
+            assert!(a.grid_art.borrow().is_empty(), "{change:?} must invalidate");
+        }
+    }
+
+    /// A failed fetch is retried after its backoff — a network blip during the
+    /// re-download burst that follows a size/shape change must not blank a card
+    /// for the life of the process.
+    #[test]
+    fn a_failed_thumbnail_is_retried_once_its_backoff_passes() {
+        let a = app();
+        let key = ArtKey::solid(0x00ff00, true);
+        // failed long ago -> eligible
+        a.grid_art.borrow_mut().insert(
+            key,
+            (
+                1,
+                ArtThumb::Missing {
+                    at: std::time::Instant::now() - std::time::Duration::from_secs(60),
+                    tries: 0,
+                },
+            ),
+        );
+        a.request_art(key, ArtSource::Embedded("/nonexistent".into()), true);
+        assert!(
+            matches!(a.grid_art.borrow().get(&key), Some((_, ArtThumb::Pending))),
+            "an expired failure should be retried"
+        );
+    }
+
+    /// ...but not immediately, and not forever.
+    #[test]
+    fn a_fresh_or_exhausted_failure_is_not_retried() {
+        let a = app();
+        let fresh = ArtKey::solid(0x111111, true);
+        let spent = ArtKey::solid(0x222222, true);
+        let long_ago = std::time::Instant::now() - std::time::Duration::from_secs(600);
+        a.grid_art.borrow_mut().insert(
+            fresh,
+            (
+                1,
+                ArtThumb::Missing {
+                    at: std::time::Instant::now(),
+                    tries: 0,
+                },
+            ),
+        );
+        a.grid_art.borrow_mut().insert(
+            spent,
+            (
+                1,
+                ArtThumb::Missing {
+                    at: long_ago,
+                    tries: ART_MAX_RETRIES,
+                },
+            ),
+        );
+        for k in [fresh, spent] {
+            a.request_art(k, ArtSource::Embedded("/nonexistent".into()), true);
+            assert!(
+                matches!(
+                    a.grid_art.borrow().get(&k),
+                    Some((_, ArtThumb::Missing { .. }))
+                ),
+                "must not re-request"
+            );
+        }
+    }
+
+    /// Both entry points must invalidate — the keyboard cycle and the settings
+    /// value-picker used to be separate code paths, and only one cleared.
+    #[test]
+    fn cycling_the_size_also_drops_the_cache() {
+        let mut a = app();
+        a.grid_art.borrow_mut().insert(
+            ArtKey::solid(0x00ff00, true),
+            (
+                1,
+                ArtThumb::Missing {
+                    at: std::time::Instant::now(),
+                    tries: 0,
+                },
+            ),
+        );
+
+        a.cycle_grid_size(1);
+        assert!(a.grid_art.borrow().is_empty());
     }
 }

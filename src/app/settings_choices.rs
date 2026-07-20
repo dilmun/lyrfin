@@ -278,8 +278,9 @@ impl AppState {
                 self.config.save();
             }
             (GridSize, Int(i)) => {
-                self.config.grid_card_size = crate::config::GridCardSize::ALL[(*i as usize).min(2)];
-                self.config.save();
+                // via `set_grid_card_size` so the thumbnail cache is invalidated
+                // here exactly as it is when cycling the size with the keyboard.
+                self.set_grid_card_size(crate::config::GridCardSize::ALL[(*i as usize).min(2)]);
             }
             (TouchpadScroll, Int(i)) => {
                 self.config.touchpad_speed =

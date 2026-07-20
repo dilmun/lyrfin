@@ -27,7 +27,7 @@ impl AppState {
     /// cover that paints the corners in the terminal bg, so a faint square shows
     /// inside the panel — invisible in dark themes where the two nearly match,
     /// obvious in light ones.
-    fn art_needs_opaque_bg(&self) -> bool {
+    pub(crate) fn art_needs_opaque_bg(&self) -> bool {
         self.art
             .picker
             .as_ref()
@@ -46,22 +46,6 @@ impl AppState {
         };
         picker
             .set_background_color(opaque.then_some(image::Rgba([panel.0, panel.1, panel.2, 255])));
-    }
-
-    /// Re-encode cached art after a theme change, so the baked-in background
-    /// matches the new panel colour. A no-op on Kitty, where transparency does the
-    /// work and the cache stays valid — which is what keeps a theme switch free
-    /// there. Elsewhere the grid cache is dropped and refilled lazily as cards come
-    /// back on screen; thumbnails are disk-cached, so that's a local decode rather
-    /// than a re-fetch. The persistent covers retain their source image, so they
-    /// rebuild in place with no reload at all.
-    pub(crate) fn rebuild_art_for_theme(&mut self) {
-        if !self.art_needs_opaque_bg() {
-            return;
-        }
-        self.sync_art_background();
-        self.grid_art.borrow_mut().clear();
-        self.rebuild_persistent_covers();
     }
 
     /// (Re)load the current track's embedded cover into the inline-image
@@ -110,7 +94,7 @@ impl AppState {
     /// Rebuilding from each cover's retained image mints that new id, so the next
     /// render re-places the whole image cleanly. Synchronous (no worker) → the swap
     /// is instant with no blank frame. See [`crate::ui::components::Cover`].
-    pub fn rebuild_persistent_covers(&mut self) {
+    pub(crate) fn rebuild_persistent_covers(&mut self) {
         let Some(picker) = self.art.picker.as_ref() else {
             return;
         };

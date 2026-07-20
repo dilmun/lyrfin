@@ -126,45 +126,60 @@ pub struct ArtResult {
 pub fn spawn() -> (Sender<ArtRequest>, Receiver<ArtResult>) {
     let (req_tx, req_rx) = unbounded::<ArtRequest>();
     let (res_tx, res_rx) = unbounded::<ArtResult>();
-    std::thread::Builder::new()
-        .name("lyrfin-artwork".into())
-        .spawn(move || {
-            let agent: ureq::Agent = ureq::Agent::config_builder()
-                .timeout_connect(Some(Duration::from_secs(6)))
-                .timeout_recv_body(Some(Duration::from_secs(12)))
-                .build()
-                .into();
-            while let Ok(req) = req_rx.recv() {
-                let img = resolve(&agent, &req.source, &req.cache_dir).map(|im| {
-                    match req.crop {
-                        // peek: scale to the card width, (optionally) round it, then
-                        // keep the top `h` px so a partial row shows the cover's top.
-                        Some((w, h)) => {
-                            let t = im.thumbnail(w, w);
-                            let shaped = if req.circle {
-                                crate::spotify::artwork::circle_crop(t)
-                            } else {
-                                t
-                            };
-                            let (cw, ch) = (shaped.width(), shaped.height());
-                            shaped.crop_imm(0, 0, w.min(cw), h.min(ch))
-                        }
-                        None => {
-                            let t = im.thumbnail(THUMB, THUMB);
-                            if req.circle {
-                                crate::spotify::artwork::circle_crop(t)
-                            } else {
-                                t
+    // A small pool, not one thread. Covers were fetched strictly serially, so a
+    // screenful on a cold start or a fast scroll waited out one network round trip
+    // after another and filled in visibly one card at a time. The channel is MPMC,
+    // so the workers just share the queue.
+    //
+    // Deliberately small and fixed: these are CDN image fetches, and the point is to
+    // overlap the latency, not to open as many sockets as there are cards. Four
+    // keeps a screenful moving while staying politely below anything that would look
+    // like a burst. A warm disk cache (see `cached_download`) means most requests
+    // never leave the machine at all.
+    const ART_WORKERS: usize = 4;
+    for n in 0..ART_WORKERS {
+        let req_rx = req_rx.clone();
+        let res_tx = res_tx.clone();
+        std::thread::Builder::new()
+            .name(format!("lyrfin-artwork-{n}"))
+            .spawn(move || {
+                let agent: ureq::Agent = ureq::Agent::config_builder()
+                    .timeout_connect(Some(Duration::from_secs(6)))
+                    .timeout_recv_body(Some(Duration::from_secs(12)))
+                    .build()
+                    .into();
+                while let Ok(req) = req_rx.recv() {
+                    let img = resolve(&agent, &req.source, &req.cache_dir).map(|im| {
+                        match req.crop {
+                            // peek: scale to the card width, (optionally) round it, then
+                            // keep the top `h` px so a partial row shows the cover's top.
+                            Some((w, h)) => {
+                                let t = im.thumbnail(w, w);
+                                let shaped = if req.circle {
+                                    crate::spotify::artwork::circle_crop(t)
+                                } else {
+                                    t
+                                };
+                                let (cw, ch) = (shaped.width(), shaped.height());
+                                shaped.crop_imm(0, 0, w.min(cw), h.min(ch))
+                            }
+                            None => {
+                                let t = im.thumbnail(THUMB, THUMB);
+                                if req.circle {
+                                    crate::spotify::artwork::circle_crop(t)
+                                } else {
+                                    t
+                                }
                             }
                         }
+                    });
+                    if res_tx.send(ArtResult { key: req.key, img }).is_err() {
+                        return; // app gone
                     }
-                });
-                if res_tx.send(ArtResult { key: req.key, img }).is_err() {
-                    return; // app gone
                 }
-            }
-        })
-        .expect("spawn artwork thread");
+            })
+            .expect("spawn artwork thread");
+    }
     (req_tx, res_rx)
 }
 
@@ -178,7 +193,7 @@ fn resolve(
         ArtSource::Artist { name, fallback } => {
             artist_image(agent, name, fallback.as_deref(), cache_dir)
         }
-        ArtSource::Url(url) => download(agent, url).and_then(|b| image::load_from_memory(&b).ok()),
+        ArtSource::Url(url) => cached_download(agent, url, cache_dir),
     }
 }
 
@@ -261,6 +276,39 @@ fn deezer_artist(agent: &ureq::Agent, name: &str) -> Option<String> {
 }
 
 /// GET `url` and read the body (capped at 12 MB).
+/// A remote cover, disk-cached by a hash of its URL — the same one-time-fetch
+/// treatment artist photos already get.
+///
+/// Without this, every artwork invalidation (a card size or shape change, an
+/// overlay closing) re-downloads every visible cover at once through this single
+/// worker thread. That burst is what left cards blank: whichever requests timed
+/// out were negative-cached, and the covers didn't come back until a restart.
+/// Re-fetching from disk makes invalidation cheap enough to be routine.
+fn cached_download(
+    agent: &ureq::Agent,
+    url: &str,
+    cache_dir: &Path,
+) -> Option<image::DynamicImage> {
+    use std::hash::{Hash, Hasher};
+    // `cache_dir` is the artists directory; covers get their own sibling.
+    let dir = cache_dir.parent().unwrap_or(cache_dir).join("covers");
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    url.hash(&mut h);
+    let path = dir.join(format!("{:016x}", h.finish()));
+
+    if let Ok(bytes) = std::fs::read(&path)
+        && let Ok(img) = image::load_from_memory(&bytes)
+    {
+        return Some(img);
+    }
+    let bytes = download(agent, url)?;
+    let img = image::load_from_memory(&bytes).ok()?;
+    // Best-effort: a cache write failing must never fail the render.
+    let _ = std::fs::create_dir_all(&dir);
+    let _ = std::fs::write(&path, &bytes);
+    Some(img)
+}
+
 fn download(agent: &ureq::Agent, url: &str) -> Option<Vec<u8>> {
     let mut buf = Vec::new();
     agent

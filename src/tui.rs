@@ -281,14 +281,13 @@ fn event_loop(
             media = crate::media::MediaBridge::new("lyrfin", app.config.os_media_controls);
             media_on = app.config.os_media_controls;
         }
-        // Modal-close edge: a modal overlay that partly covered a persistent inline
-        // cover leaves stale glyphs on the covered edge (ratatui-image v11 reuses the
-        // Kitty image id, and Ghostty won't repaint occluded placeholder cells for an
-        // unchanged id). Rebuild those covers with a fresh id so they re-place cleanly
-        // — done before the draw so the repaint lands this frame.
+        // Modal-close edge: an overlay drawn over inline images destroys them —
+        // they're a layer the terminal owns, and the protocol won't re-transmit
+        // because its area hasn't changed. Tell the art layer why; it decides what
+        // that costs. Done before the draw so the repaint lands this frame.
         let modal_now = app.modal_open();
         if modal_prev && !modal_now {
-            app.rebuild_persistent_covers();
+            app.invalidate_art(crate::app::ArtChange::Occluded);
         }
         modal_prev = modal_now;
 
