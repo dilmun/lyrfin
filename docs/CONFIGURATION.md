@@ -259,6 +259,27 @@ it, so attaching the same session from a different terminal reports the old one)
 > passthrough is on, so a session started in one and attached from another still
 > picks the right image protocol.
 
+### One client per session (covers vanish with two)
+
+**Attach a tmux session from only one terminal at a time.** With two or more
+clients attached to the same session, album art renders as empty space — the
+layout, borders and labels are all correct, only the images are missing.
+
+This is a tmux limitation, not a setting to fix. Passthrough is a *write-through*:
+the escape goes straight out to the client and tmux keeps no copy of the image, so
+it has nothing to replay to a second client or on a redraw. Everything else in the
+UI is plain cells that tmux can re-render for every client, which is why only the
+art disappears.
+
+Watch out for **session groups** (`tmux new-session -t <existing>`), which are
+easy to hit without noticing: a grouped session shares its windows, so attaching
+the group is the same multi-client situation even though it looks like a separate
+session. `tmux ls` marks them with `(group …)`; `tmux list-clients` shows exactly
+how many are attached.
+
+Detach the extra client (`tmux detach-client -s <session>`) and the covers come
+straight back — nothing needs restarting.
+
 ## Themes
 
 ### Auto (match the terminal)
