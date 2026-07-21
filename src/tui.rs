@@ -492,6 +492,8 @@ fn build_picker() -> ratatui_image::picker::Picker {
     // and getting it wrong inside tmux is what left iTerm2 with no covers at all.
     let name = crate::termquery::terminal_name(TERM_QUERY_TIMEOUT);
     let mut picker = Picker::from_query_stdio().unwrap_or_else(|_| guess_picker());
+    // keep what the terminal *reported* before any correction, for the diagnostic
+    let reported = picker.font_size();
     if wants_iterm2_protocol(name.as_deref()) {
         picker.set_protocol_type(ProtocolType::Iterm2);
     }
@@ -511,14 +513,16 @@ fn build_picker() -> ratatui_image::picker::Picker {
     // twice its intended size and spills outside its card. The terminal's own
     // area-in-pixels / area-in-cells is self-consistent, so trust that when the two
     // disagree by more than rounding.
-    if let Some((cw, ch)) = crate::termquery::measured_cell_size(TERM_QUERY_TIMEOUT)
-        && disagrees(picker.font_size(), (cw, ch))
-    {
+    let measured = crate::termquery::measured_cell_size(TERM_QUERY_TIMEOUT);
+    // An explicit `LYRFIN_CELL_SIZE` wins outright; otherwise take the measured
+    // size only when it genuinely disagrees with what the terminal reported.
+    let corrected = forced_cell_size().or_else(|| measured.filter(|m| disagrees(reported, *m)));
+    if let Some((cw, ch)) = corrected {
         // `from_fontsize` is deprecated upstream, but `font_size` is a private
         // field with no setter and the suggested replacements (`from_query_stdio`,
         // `halfblocks`) cannot express a measured cell size — so there is no
-        // supported way to do this. Rendering every cover at 2x is the worse
-        // trade; revisit if upstream adds a setter.
+        // supported way to do this. Rendering every cover at the wrong scale is
+        // the worse trade; revisit if upstream adds a setter.
         #[allow(deprecated)]
         let mut fixed = Picker::from_fontsize(ratatui_image::FontSize::new(cw, ch));
         // Keep the protocol we resolved above: `from_fontsize` re-guesses it from
@@ -526,7 +530,67 @@ fn build_picker() -> ratatui_image::picker::Picker {
         fixed.set_protocol_type(picker.protocol_type());
         picker = fixed;
     }
+    report_cell_size(name.as_deref(), reported, measured, &picker);
     picker
+}
+
+/// The `LYRFIN_CELL_SIZE=WxH` override (e.g. `LYRFIN_CELL_SIZE=11x23`): the
+/// terminal's cell size in the pixel units its **image protocol** places by.
+///
+/// Every image rect is sized from this, so when it's wrong every cover renders at
+/// the wrong scale — half size on one terminal, double on another. Detection tries
+/// to get it right (reported size, corrected by a measured one), but a terminal
+/// that misreports *both* leaves no way back. This is that way back, and the
+/// numbers to try come from `LYRFIN_DEBUG_CELLS=1`.
+fn forced_cell_size() -> Option<(u16, u16)> {
+    let raw = std::env::var("LYRFIN_CELL_SIZE").ok()?;
+    let (w, h) = raw.split_once(['x', 'X'])?;
+    let (w, h) = (w.trim().parse().ok()?, h.trim().parse().ok()?);
+    // a zero cell would divide by zero downstream; treat it as unset
+    (w > 0 && h > 0).then_some((w, h))
+}
+
+/// With `LYRFIN_DEBUG_CELLS=1`, print how the cell size was resolved to **stderr**
+/// (stdout carries the TUI, and is never written to — see `termquery`). Run
+/// `LYRFIN_DEBUG_CELLS=1 lyrfin 2>/tmp/cells.txt` and read it after quitting.
+///
+/// This exists because the failure is invisible from inside: covers render at the
+/// wrong size with no error, and the three candidate numbers — reported, measured,
+/// chosen — are exactly what distinguishes the terminals that work from the ones
+/// that don't.
+fn report_cell_size(
+    name: Option<&str>,
+    reported: ratatui_image::FontSize,
+    measured: Option<(u16, u16)>,
+    picker: &ratatui_image::picker::Picker,
+) {
+    if std::env::var_os("LYRFIN_DEBUG_CELLS").is_none() {
+        return;
+    }
+    let final_size = picker.font_size();
+    eprintln!("lyrfin cell-size diagnostic");
+    eprintln!("  terminal   : {}", name.unwrap_or("<unidentified>"));
+    eprintln!("  protocol   : {:?}", picker.protocol_type());
+    eprintln!(
+        "  reported   : {}x{}  (CSI 16t)",
+        reported.width, reported.height
+    );
+    match measured {
+        Some((w, h)) => eprintln!("  measured   : {w}x{h}  (area px / area cells)"),
+        None => eprintln!("  measured   : <query failed or timed out>"),
+    }
+    eprintln!(
+        "  disagreed  : {}",
+        measured.map_or("n/a".into(), |m| disagrees(reported, m).to_string())
+    );
+    eprintln!(
+        "  forced     : {:?}  (LYRFIN_CELL_SIZE)",
+        forced_cell_size()
+    );
+    eprintln!(
+        "  IN USE     : {}x{}  <- every image rect is sized from this",
+        final_size.width, final_size.height
+    );
 }
 
 /// How long any single startup terminal query may block before we give up on it.
