@@ -54,6 +54,11 @@ all pass across the CI matrix (Linux/macOS/Windows).
   aspect rather than degrading to placeholders. lyrfin targets widely-supported
   standards so it should work on other modern terminals, but foot and Windows
   Terminal aren't verified yet — see the [roadmap](ROADMAP.md).
+  Treat "verified" as *verified at that commit*: 0.3.0 shipped with album art at
+  half size in iTerm2 on a HiDPI panel (fixed in 0.3.1) even though iTerm2 was
+  listed here, because the regression was a rendering **scale** change that the
+  test suite cannot see — `--snapshot` compares text, not images. Cover art
+  changes need an actual look on a HiDPI screen before release.
   **tmux** is verified too (under iTerm2 and Kitty): art renders through tmux's escape
   passthrough at the same size and protocol as native. It needs
   `allow-passthrough on`, which is **off** by default, plus a true-colour

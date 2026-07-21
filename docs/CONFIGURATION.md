@@ -193,6 +193,35 @@ Unset (or `auto`, or an unrecognised name) means "trust detection". The override
 only changes the protocol — the terminal's queried font size, which sizes every
 image, is kept either way.
 
+### When covers are the wrong *size*
+
+A cover that renders but at the wrong scale — half its card, or overflowing it —
+is a **cell size** problem, not a protocol one, so the override above won't move
+it. Every image is transmitted at `cells × cell-size` pixels, so if that size is
+wrong the art is scaled by exactly the same factor.
+
+lyrfin uses the size the terminal reports (`CSI 16t`) as-is and never
+second-guesses it. To see the numbers:
+
+```sh
+LYRFIN_DEBUG_CELLS=1 lyrfin 2>/tmp/cells.txt   # quit, then read the file
+```
+
+It prints the reported size, an independently measured one (`CSI 14t / 18t`),
+whether they differ, and which is in use. **A mismatch is normal and not a
+fault**: `CSI 16t` answers in physical device pixels while `CSI 14t / 18t` answer
+in points, so any HiDPI/Retina panel disagrees by a factor of two. The physical
+value is the one the image protocol places by.
+
+If a terminal genuinely misreports it, force the value:
+
+```sh
+LYRFIN_CELL_SIZE=22x46 lyrfin           # WxH, in pixels
+```
+
+This is the only thing that replaces the reported size, and it should not be
+needed — if you need it, that's a bug worth reporting, with the diagnostic output.
+
 > **iTerm2** advertises Kitty graphics support but doesn't implement the
 > unicode-placeholder placement lyrfin renders with, so lyrfin selects iTerm2's own
 > protocol there automatically. No configuration needed.

@@ -506,23 +506,17 @@ fn build_picker() -> ratatui_image::picker::Picker {
         picker.set_protocol_type(proto);
     }
 
-    // Correct a HiDPI cell size before anything is sized from it. `CSI 16t` (what
-    // ratatui-image queries) can answer in physical pixels while the image
-    // protocol sizes in points — on a 2x Retina panel iTerm2 reports a 22x46 cell
-    // but draws an image sized in 11x23 units, so every cover is transmitted at
-    // twice its intended size and spills outside its card. The terminal's own
-    // area-in-pixels / area-in-cells is self-consistent, so trust that when the two
-    // disagree by more than rounding.
+    // The cell size the terminal reports (`CSI 16t`) is the one the image protocol
+    // places by, and it is used as-is. There is deliberately NO automatic
+    // correction here — see `measured_cell_size` for the one that was removed and
+    // why. `CSI 14t / 18t` is still measured, but only to *report* a mismatch in
+    // the diagnostic; it never silently overrides the terminal.
     let measured = crate::termquery::measured_cell_size(TERM_QUERY_TIMEOUT);
-    // An explicit `LYRFIN_CELL_SIZE` wins outright; otherwise take the measured
-    // size only when it genuinely disagrees with what the terminal reported.
-    let corrected = forced_cell_size().or_else(|| measured.filter(|m| disagrees(reported, *m)));
-    if let Some((cw, ch)) = corrected {
+    if let Some((cw, ch)) = forced_cell_size() {
         // `from_fontsize` is deprecated upstream, but `font_size` is a private
         // field with no setter and the suggested replacements (`from_query_stdio`,
-        // `halfblocks`) cannot express a measured cell size — so there is no
-        // supported way to do this. Rendering every cover at the wrong scale is
-        // the worse trade; revisit if upstream adds a setter.
+        // `halfblocks`) cannot express an explicit cell size — so there is no
+        // supported way to honour the override; revisit if upstream adds a setter.
         #[allow(deprecated)]
         let mut fixed = Picker::from_fontsize(ratatui_image::FontSize::new(cw, ch));
         // Keep the protocol we resolved above: `from_fontsize` re-guesses it from
@@ -534,16 +528,22 @@ fn build_picker() -> ratatui_image::picker::Picker {
     picker
 }
 
-/// The `LYRFIN_CELL_SIZE=WxH` override (e.g. `LYRFIN_CELL_SIZE=11x23`): the
+/// The `LYRFIN_CELL_SIZE=WxH` override (e.g. `LYRFIN_CELL_SIZE=22x46`): the
 /// terminal's cell size in the pixel units its **image protocol** places by.
 ///
-/// Every image rect is sized from this, so when it's wrong every cover renders at
-/// the wrong scale — half size on one terminal, double on another. Detection tries
-/// to get it right (reported size, corrected by a measured one), but a terminal
-/// that misreports *both* leaves no way back. This is that way back, and the
+/// Normally unset — the size the terminal reports is used, which is what
+/// ratatui-image queries and what every protocol places by. This is a last resort
+/// for a terminal that misreports it, and deliberately the *only* thing that can
+/// replace the reported value: lyrfin does not second-guess it automatically
+/// (see [`disagrees`] for the correction that did, and the bug it caused). The
 /// numbers to try come from `LYRFIN_DEBUG_CELLS=1`.
 fn forced_cell_size() -> Option<(u16, u16)> {
-    let raw = std::env::var("LYRFIN_CELL_SIZE").ok()?;
+    parse_cell_size_override(&std::env::var("LYRFIN_CELL_SIZE").ok()?)
+}
+
+/// Parse a `WxH` cell-size override. Pure, so it is unit-testable without the
+/// process-wide environment (which parallel tests cannot safely share).
+fn parse_cell_size_override(raw: &str) -> Option<(u16, u16)> {
     let (w, h) = raw.split_once(['x', 'X'])?;
     let (w, h) = (w.trim().parse().ok()?, h.trim().parse().ok()?);
     // a zero cell would divide by zero downstream; treat it as unset
@@ -598,7 +598,20 @@ const TERM_QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_millis
 
 /// Do the reported and measured cell sizes differ by more than integer rounding?
 /// `CSI 14t / 18t` divide to whole pixels, so a 1px difference per axis is
-/// expected and must not trigger a correction; a HiDPI mismatch is a factor of 2.
+/// expected; a HiDPI mismatch is a factor of 2.
+///
+/// **Reporting only.** A mismatch is normal and must NOT be corrected: `CSI 16t`
+/// answers in physical device pixels and `CSI 14t / 18t` in points, so a 2x panel
+/// disagrees by design — and the physical value is the one the image protocol
+/// places by (ratatui-image sends `width=<cells × cell_px>px`).
+///
+/// This previously *drove* a correction that replaced the reported size with the
+/// measured one, on the reasoning that iTerm2 "reports a 22x46 cell but draws in
+/// 11x23 units". That is backwards, and it shipped in 0.3.0: on a 2x Retina panel
+/// reporting exactly 22x46, forcing 11x24 transmitted every cover at half its
+/// pixels, so album art rendered at half size (quarter area) pinned to the
+/// top-left of its card. Verified by eye in iTerm2 3.6.11 — `LYRFIN_CELL_SIZE=22x46`
+/// (the reported value) renders correctly, the measured value does not.
 fn disagrees(reported: ratatui_image::FontSize, measured: (u16, u16)) -> bool {
     reported.width.abs_diff(measured.0) > 1 || reported.height.abs_diff(measured.1) > 1
 }
@@ -681,7 +694,9 @@ fn convert_key(k: ratatui::crossterm::event::KeyEvent) -> Key {
 
 #[cfg(test)]
 mod tests {
-    use super::{disagrees, iterm2_protocol_from, osc22_seq, protocol_from_name};
+    use super::{
+        disagrees, iterm2_protocol_from, osc22_seq, parse_cell_size_override, protocol_from_name,
+    };
     use ratatui_image::picker::ProtocolType;
 
     #[test]
@@ -748,14 +763,40 @@ mod tests {
         assert!(!iterm2_protocol_from(None, None, None, None));
     }
 
-    /// Only a real mismatch triggers the HiDPI correction: `CSI 14t / 18t` divide
-    /// to whole pixels, so a 1px rounding difference must be left alone.
+    /// `disagrees` is a *reporting* predicate for the diagnostic — a 2x mismatch is
+    /// normal on a HiDPI panel (physical pixels vs points) and must never be
+    /// "corrected". Rounding differences aren't a mismatch at all.
     #[test]
-    fn only_a_real_cell_mismatch_triggers_correction() {
+    fn cell_size_mismatch_is_detected_for_reporting() {
         use ratatui_image::FontSize;
         assert!(disagrees(FontSize::new(22, 46), (11, 24))); // 2x Retina
         assert!(!disagrees(FontSize::new(11, 24), (11, 24))); // exact
         assert!(!disagrees(FontSize::new(11, 24), (10, 23))); // rounding only
+    }
+
+    /// Regression guard for the 0.3.0 album-art bug: the reported cell size is used
+    /// as-is, and ONLY an explicit `LYRFIN_CELL_SIZE` may replace it. Auto-correcting
+    /// a HiDPI "mismatch" halved every cover (see `disagrees`), so the absence of
+    /// that path is the behaviour worth pinning — a unit test on the old predicate
+    /// passed happily while art rendered at half size on screen.
+    #[test]
+    fn nothing_but_an_explicit_override_replaces_the_reported_cell_size() {
+        assert_eq!(parse_cell_size_override("22x46"), Some((22, 46)));
+        assert_eq!(parse_cell_size_override(" 11 X 24 "), Some((11, 24)));
+        // rejected → the terminal's reported size stands
+        assert_eq!(
+            parse_cell_size_override("0x46"),
+            None,
+            "zero would divide by zero"
+        );
+        assert_eq!(
+            parse_cell_size_override("22x0"),
+            None,
+            "zero would divide by zero"
+        );
+        assert_eq!(parse_cell_size_override("22"), None, "no separator");
+        assert_eq!(parse_cell_size_override("axb"), None, "not numeric");
+        assert_eq!(parse_cell_size_override(""), None, "empty means unset");
     }
 
     #[test]
