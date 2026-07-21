@@ -193,6 +193,35 @@ Unset (or `auto`, or an unrecognised name) means "trust detection". The override
 only changes the protocol — the terminal's queried font size, which sizes every
 image, is kept either way.
 
+### When covers are the wrong *size*
+
+A cover that renders but at the wrong scale — half its card, or overflowing it —
+is a **cell size** problem, not a protocol one, so the override above won't move
+it. Every image is transmitted at `cells × cell-size` pixels, so if that size is
+wrong the art is scaled by exactly the same factor.
+
+lyrfin uses the size the terminal reports (`CSI 16t`) as-is and never
+second-guesses it. To see the numbers:
+
+```sh
+LYRFIN_DEBUG_CELLS=1 lyrfin 2>/tmp/cells.txt   # quit, then read the file
+```
+
+It prints the reported size, an independently measured one (`CSI 14t / 18t`),
+whether they differ, and which is in use. **A mismatch is normal and not a
+fault**: `CSI 16t` answers in physical device pixels while `CSI 14t / 18t` answer
+in points, so any HiDPI/Retina panel disagrees by a factor of two. The physical
+value is the one the image protocol places by.
+
+If a terminal genuinely misreports it, force the value:
+
+```sh
+LYRFIN_CELL_SIZE=22x46 lyrfin           # WxH, in pixels
+```
+
+This is the only thing that replaces the reported size, and it should not be
+needed — if you need it, that's a bug worth reporting, with the diagnostic output.
+
 > **iTerm2** advertises Kitty graphics support but doesn't implement the
 > unicode-placeholder placement lyrfin renders with, so lyrfin selects iTerm2's own
 > protocol there automatically. No configuration needed.
@@ -229,6 +258,27 @@ it, so attaching the same session from a different terminal reports the old one)
 > Ghostty, iTerm2 and WezTerm all report themselves correctly through tmux once
 > passthrough is on, so a session started in one and attached from another still
 > picks the right image protocol.
+
+### One client per session (covers vanish with two)
+
+**Attach a tmux session from only one terminal at a time.** With two or more
+clients attached to the same session, album art renders as empty space — the
+layout, borders and labels are all correct, only the images are missing.
+
+This is a tmux limitation, not a setting to fix. Passthrough is a *write-through*:
+the escape goes straight out to the client and tmux keeps no copy of the image, so
+it has nothing to replay to a second client or on a redraw. Everything else in the
+UI is plain cells that tmux can re-render for every client, which is why only the
+art disappears.
+
+Watch out for **session groups** (`tmux new-session -t <existing>`), which are
+easy to hit without noticing: a grouped session shares its windows, so attaching
+the group is the same multi-client situation even though it looks like a separate
+session. `tmux ls` marks them with `(group …)`; `tmux list-clients` shows exactly
+how many are attached.
+
+Detach the extra client (`tmux detach-client -s <session>`) and the covers come
+straight back — nothing needs restarting.
 
 ## Themes
 

@@ -166,16 +166,26 @@ Press <kbd>?</kbd> for help, <kbd>;</kbd> for settings, <kbd>e</kbd> for the
 equalizer, and <kbd>7</kbd> to connect Spotify.
 
 > [!IMPORTANT]
-> lyrfin is developed on [Ghostty](https://ghostty.org) and also verified on
-> **Kitty**, **iTerm2**, **WezTerm** and **Alacritty** (macOS). The first four render
-> inline album art; Alacritty has no graphics protocol, so art falls back to
-> half-blocks — lower resolution, but the real artwork. It targets common standards
-> (truecolor, inline images, Unicode) and should work on other modern terminals,
-> but those aren't officially verified yet.
+> **Terminal support.** lyrfin is developed on [Ghostty](https://ghostty.org) and
+> verified by eye on every other major macOS terminal: **Kitty**, **iTerm2**,
+> **WezTerm** and **Alacritty**. The first four render real inline album art
+> (Kitty or iTerm2 graphics, picked per terminal); Alacritty has no graphics
+> protocol, so art falls back to half-blocks — lower resolution, but the real
+> artwork rather than a placeholder. Both HiDPI/Retina and non-HiDPI panels are
+> covered, since cover art is scaled from the terminal's reported cell size.
+>
+> It targets common standards (truecolor, inline images, Unicode) and should work
+> on other modern terminals; **foot** and **Windows Terminal** simply haven't been
+> looked at yet. Covers are checked visually, not by the test suite — a rendering
+> **scale** bug is invisible to a text snapshot — so "verified" means someone
+> actually looked, at that commit.
 >
 > **Using tmux?** It renders identically to a native terminal, but needs
 > `set -g allow-passthrough on` (off by default) plus a true-colour override —
-> see [tmux setup](docs/CONFIGURATION.md#running-under-tmux).
+> see [tmux setup](docs/CONFIGURATION.md#running-under-tmux). Attach the session
+> from **one terminal at a time**: with two clients attached (a session *group*
+> counts), album art renders as empty space, because tmux writes the image
+> straight through and keeps no copy to replay to the second client.
 
 ---
 
