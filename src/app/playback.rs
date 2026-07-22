@@ -151,6 +151,15 @@ impl AppState {
     /// over the per-source toggles ([`toggle_spotify_play`] / [`toggle_radio_play`]
     /// / [`toggle_local_play`]); the OS-media-control path routes to those same
     /// helpers by the *active audio* source instead (see `app/nowplaying.rs`).
+    /// Whether what the current view is about is the local library — i.e. a
+    /// local-only action (rating, tag edits) has something real to act on.
+    pub(crate) fn playing_source_is_local(&self) -> bool {
+        !matches!(
+            self.now_playing_source(),
+            Some(crate::app::NpSource::Spotify) | Some(crate::app::NpSource::Radio)
+        )
+    }
+
     /// The source a transport key should drive, when the current view has no
     /// source of its own.
     ///
@@ -168,23 +177,15 @@ impl AppState {
     }
 
     pub(crate) fn toggle_play(&mut self) {
-        // A player view drives whatever it is showing (see `player_view_source`).
-        match self.player_view_source() {
-            Some(crate::app::NpSource::Spotify) => {
-                self.toggle_spotify_play();
-                return;
-            }
-            Some(crate::app::NpSource::Radio) => {
-                self.toggle_radio_play();
-                return;
-            }
-            // local, or nothing loaded → the local toggle at the end
-            Some(crate::app::NpSource::Local) | None => {
-                if self.layout.is_player_view() {
-                    self.toggle_local_play();
-                    return;
-                }
-            }
+        // `showing_spotify` / `showing_radio` already answer "is this view about
+        // that source", and in a player view that means whatever is playing — so
+        // the branches below route correctly there without a special case. The
+        // only extra rule: a player view showing nothing but local audio must
+        // toggle the local player rather than fall through the "play my music"
+        // branches, which exist for *source* views.
+        if self.layout.is_player_view() && !self.showing_spotify() && !self.showing_radio() {
+            self.toggle_local_play();
+            return;
         }
         // In the Spotify view, play/pause controls the librespot stream only.
         if self.showing_spotify() {

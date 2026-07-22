@@ -301,6 +301,10 @@ impl AppState {
             Focus::Main if self.layout == Layout::Dashboard && !self.is_searching() => {
                 self.local_activate()
             }
+            // A player view has no list — Enter acts on what it is showing, the
+            // same thing space does. Without this it fell through to the local
+            // tracklist selection and started a local track under a Spotify one.
+            Focus::Main if self.layout.is_player_view() => self.toggle_play(),
             Focus::Main => self.activate_selection(),
         }
     }

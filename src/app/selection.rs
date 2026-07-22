@@ -198,6 +198,26 @@ impl AppState {
         if matches!(self.layout, Layout::Radio | Layout::Spotify) {
             return;
         }
+        // A player view has no selection of its own: `f` means "favourite what is
+        // playing", which for Spotify or radio is that source's own star. Without
+        // this it favourited whatever local track happened to be loaded behind a
+        // Spotify one.
+        match self
+            .layout
+            .is_player_view()
+            .then(|| self.now_playing_source())
+            .flatten()
+        {
+            Some(crate::app::NpSource::Spotify) => {
+                self.spotify_like_selection();
+                return;
+            }
+            Some(crate::app::NpSource::Radio) => {
+                self.radio_star();
+                return;
+            }
+            _ => {}
+        }
         let ids = self.selected_track_ids();
         if ids.is_empty() {
             return;

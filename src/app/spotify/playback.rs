@@ -1136,7 +1136,17 @@ impl AppState {
 
     /// Whether the now-bar should show the Spotify track (Spotify view only).
     pub fn showing_spotify(&self) -> bool {
-        self.layout == Layout::Spotify && self.spov.now_spotify.is_some()
+        self.spov.now_spotify.is_some()
+            && match self.layout {
+                // the Spotify view is always about Spotify
+                Layout::Spotify => true,
+                // a player view is about whatever is playing (see `is_player_view`)
+                l if l.is_player_view() => {
+                    self.now_playing_source() == Some(crate::app::NpSource::Spotify)
+                }
+                // every other view browses its own source
+                _ => false,
+            }
     }
 
     /// Elapsed position of whatever's actually playing — the Spotify overlay in
@@ -1145,7 +1155,7 @@ impl AppState {
     pub fn playback_elapsed(&self) -> std::time::Duration {
         // same source as `active_lyrics_pane`, or the wipe would track one track's
         // clock while showing another's words
-        let base = if self.lyrics_source_is_spotify() {
+        let base = if self.showing_spotify() {
             std::time::Duration::from_secs_f64(self.spov.sp_pos.max(0.0))
         } else {
             self.player.elapsed

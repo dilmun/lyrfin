@@ -161,11 +161,18 @@ source that most recently produced audio, recorded each tick. That last step is
 what makes pausing Spotify and opening Lyrics still show Spotify, instead of
 falling back to whatever local track happens to be loaded.
 
+The player views also host **no dock panes** and each does one thing: Now Playing
+is the playing track, Lyrics is its words, Concert is the full-screen card. A
+queue docked beside them showed the *local* queue next to a possibly-Spotify
+track, and a second visualizer competed with the one the view already draws.
+Panes belong to the browsing views, and each view's `;` settings follow from
+`Layout::panels()`, so the Panes tab disappears on its own.
+
 What this reaches: the playback bar (`now_bar` dispatch), the visualizer's
 liveness gate (`update_viz`), the lyrics pane + its fetch target
 (`active_lyrics_pane` / `reload_lyrics`, which must agree or one source's words
 get cached under another's key), the queue pane, cover art (`playing_cover`), and
-Concert's whole card via `AppState::playing_card()` — a source-neutral snapshot,
+Concert's whole card via `AppState::playing_card()`, plus every key that acts on "what's playing" — space, Enter, n/p, seek, `f`, add-to-playlist — a source-neutral snapshot,
 the sibling of the OS `now_playing_snapshot`.
 
 Two model gaps are handled rather than faked: `year`/`rating` are local-library

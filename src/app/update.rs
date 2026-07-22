@@ -645,6 +645,10 @@ impl AppState {
             TagEditSaveAlbum => self.tag_edit_apply(true),
             TagEditCancel => self.close_tags(),
             ToggleFavoriteSel => self.toggle_favorite_selection(),
+            // Rating is local-library only. In a player view showing another
+            // source there is nothing to rate — silently rating the local track
+            // behind it would be worse than doing nothing.
+            Rate(..) if self.layout.is_player_view() && !self.playing_source_is_local() => {}
             Rate(id, stars) => {
                 let stars = stars.min(5);
                 if let Some(t) = self.library.tracks.get_mut(&id) {

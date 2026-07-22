@@ -117,7 +117,7 @@ impl AppState {
         // must agree with `active_lyrics_pane`, which decides which slot the result
         // is cached under — disagreeing would fetch one source's words and store
         // them against the other's key
-        if self.lyrics_source_is_spotify() {
+        if self.showing_spotify() {
             self.load_spotify_lyrics();
         } else {
             self.load_lyrics();
@@ -139,30 +139,10 @@ impl AppState {
     /// Which source currently owns playback / the now-bar — the pane the shared
     /// lyrics slot is loaded for.
     pub(crate) fn active_lyrics_pane(&self) -> crate::app::LyricsPane {
-        if self.lyrics_source_is_spotify() {
+        if self.showing_spotify() {
             crate::app::LyricsPane::Spotify
         } else {
             crate::app::LyricsPane::Local
-        }
-    }
-
-    /// Whether lyrics should track the Spotify track rather than the local one.
-    ///
-    /// The Spotify *view* always does. The player views (Now Playing / Lyrics /
-    /// Concert) have no source of their own, so they follow whatever is playing —
-    /// otherwise opening Lyrics while Spotify streams would fetch the *local*
-    /// track's lyrics and overwrite the Spotify slot that the shared cache keys.
-    pub(crate) fn lyrics_source_is_spotify(&self) -> bool {
-        match self.layout {
-            // a player view follows the audio
-            l if l.is_player_view() => {
-                self.now_playing_source() == Some(crate::app::NpSource::Spotify)
-                    && self.spov.now_spotify.is_some()
-            }
-            Layout::Spotify => self.spov.now_spotify.is_some(),
-            // Home/Library dock a Local lyrics pane; radio has no per-track
-            // identity to key a lookup on
-            _ => false,
         }
     }
 
