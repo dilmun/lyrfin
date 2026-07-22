@@ -55,6 +55,10 @@ pub fn radio(f: &mut Frame, area: Rect, app: &AppState) {
             title: &title,
             title_right: None,
             focused: app.focus == Focus::Main || r.editing,
+            // Radio draws its own search row inside `radio_body`: it sits under a
+            // filter/section header rather than directly under the border, so the
+            // title-embedded field would detach it from what it filters.
+            search: None,
             render: &|f, inner, app| radio_body(f, inner, app),
         },
     );

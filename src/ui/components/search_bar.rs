@@ -15,6 +15,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
+use super::col;
 use crate::ui::theme::Theme;
 
 /// Spinner frames shown in place of the magnifier while a search is loading
@@ -124,4 +125,81 @@ pub fn search_bar(f: &mut Frame, area: Rect, th: &Theme, bar: &SearchBar) {
             Rect::new(rx, row.y, w, 1),
         );
     }
+}
+
+/// The same search field rendered as a **title for a panel's top border**, so an
+/// active search reads as part of the frame rather than as a faint extra row.
+///
+/// The row form ([`search_bar`]) is nearly invisible when the query is empty:
+/// against a full-width blank line, a caret and a magnifier are easy to miss, and
+/// the box gives no hint that typing goes anywhere. Sitting in the border the
+/// field is bounded on both sides, so it reads as a field even while empty — and
+/// it costs no content row.
+///
+/// Returns `(left, right)` for [`panel_titled`](super::panel_titled): the field
+/// itself and the scope/result chip.
+pub fn search_title<'a>(
+    th: &Theme,
+    bar: &SearchBar<'a>,
+    context: &str,
+) -> (Line<'static>, Option<Line<'static>>) {
+    let accent = Style::default().fg(col(th.accent[0]));
+    let glyph = if bar.loading {
+        SPINNER[(bar.tick as usize / 3) % SPINNER.len()].to_string()
+    } else {
+        "⌕".to_string()
+    };
+    // keep naming the pane: a search field alone leaves no clue *what* is being
+    // searched, and the border is the only place that context lives
+    let mut spans = vec![Span::raw(" ")];
+    if !context.is_empty() {
+        spans.push(Span::styled(
+            format!("{context}  "),
+            Style::default()
+                .fg(col(th.title_color(true)))
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    spans.push(Span::styled(format!("{glyph} "), accent));
+
+    // the query, with the caret parked at its edit position
+    let chars: Vec<char> = bar.query.chars().collect();
+    let caret = bar.caret.min(chars.len());
+    let text = Style::default()
+        .fg(col(th.text))
+        .add_modifier(Modifier::BOLD);
+    if chars.is_empty() {
+        spans.push(Span::styled(
+            bar.placeholder.to_string(),
+            Style::default().fg(col(th.text_faint)),
+        ));
+    } else {
+        spans.push(Span::styled(
+            chars[..caret].iter().collect::<String>(),
+            text,
+        ));
+    }
+    if bar.focused {
+        spans.push(Span::styled("▌", accent));
+    }
+    if !chars.is_empty() && caret < chars.len() {
+        spans.push(Span::styled(
+            chars[caret..].iter().collect::<String>(),
+            text,
+        ));
+    }
+    spans.push(Span::raw(" "));
+
+    // right chip: "12 results · Spotify", omitted when there is nothing to say
+    let chip: Vec<&str> = [bar.info, bar.scope]
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect();
+    let right = (!chip.is_empty()).then(|| {
+        Line::from(Span::styled(
+            format!(" {} ", chip.join("  ·  ")),
+            Style::default().fg(col(th.text_dim)),
+        ))
+    });
+    (Line::from(spans), right)
 }

@@ -4,7 +4,7 @@
 use super::*;
 use crate::app::{AppState, Focus, LocalItem, LocalSection, MouseTarget, ScrollBox};
 use ratatui::Frame;
-use ratatui::layout::{Alignment, Constraint, Layout, Rect};
+use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Cell, Paragraph};
@@ -202,32 +202,15 @@ pub fn tracklist_title(app: &AppState) -> String {
 /// track list as the columnar table, a list of containers (or the grouped artist
 /// page) as a name + subtitle list. The local analogue of `spotify_main_body`.
 pub fn local_main_body(f: &mut Frame, inner: Rect, app: &AppState) {
-    let th = &app.theme;
     let focused = app.focus == Focus::Main;
     // an active `/` filter shows the local search results (flat tracks) under the
     // shared inline search row — the unified search box every source uses.
     if app.search.active || !app.search.query.is_empty() {
+        // the search field itself lives in the pane's border (the shell draws it),
+        // so the whole inner rect is results
         let ids = app.search_results();
-        let [bar, body] =
-            Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(inner);
-        let info = format!("{} results", ids.len());
-        search_bar(
-            f,
-            bar,
-            th,
-            &SearchBar {
-                query: &app.search.query,
-                caret: app.search.query.chars().count(),
-                focused: app.focus == Focus::Search,
-                loading: false,
-                tick: app.tick,
-                placeholder: "search your library…",
-                scope: "Library",
-                info: &info,
-            },
-        );
-        app.register_click(body, MouseTarget::Scroll(ScrollBox::Tracklist));
-        local_tracklist(f, body, app, &ids, app.selection, true);
+        app.register_click(inner, MouseTarget::Scroll(ScrollBox::Tracklist));
+        local_tracklist(f, inner, app, &ids, app.selection, true);
         return;
     }
     let items = &app.local.items;

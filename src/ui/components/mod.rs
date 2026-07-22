@@ -337,6 +337,36 @@ pub fn panel(f: &mut Frame, area: Rect, app: &AppState, title: &str, focused: bo
 /// the title border (e.g. the connected Spotify account). The chip is dropped when
 /// the pane is too narrow to fit it beside the main title, so the border never shows
 /// a collided/overlapping title.
+/// Like [`panel_titled`] but the left title is a **styled line** rather than a
+/// plain string — for a title that is itself interactive, i.e. the search field
+/// embedded in the border (see [`search_title`]). Kept separate because the
+/// plain-string form is what almost every pane wants and it stays the simple path.
+pub fn panel_titled_line(
+    f: &mut Frame,
+    area: Rect,
+    app: &AppState,
+    title: Line<'static>,
+    title_right: Option<Line<'static>>,
+    focused: bool,
+) -> Rect {
+    let th = &app.theme;
+    let border = if focused { th.border_focus } else { th.border };
+    let mut block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(col(border)))
+        .style(Style::default().bg(col(th.panel)))
+        .title(title.clone());
+    if let Some(right) =
+        title_right.filter(|r| title_right_fits(area.width, title.width(), r.width()))
+    {
+        block = block.title(right.right_aligned());
+    }
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    inner
+}
+
 pub fn panel_titled(
     f: &mut Frame,
     area: Rect,

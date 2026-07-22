@@ -2265,3 +2265,55 @@ fn spotify_columns_survive_long_values_instead_of_collapsing() {
         "long artist/album values truncate rather than sizing the column wide"
     );
 }
+
+#[test]
+fn an_empty_search_still_reads_as_a_field() {
+    // The old full-width row was a caret and a magnifier on an otherwise blank
+    // line: with no query typed yet it read as nothing at all, so `/` looked like
+    // it had done nothing. In the border the field is bounded on both sides.
+    use crate::spotify::ConnState;
+    let mut a = demo();
+    a.layout = Layout::Spotify;
+    a.spotify.conn = ConnState::Connected {
+        name: "me".into(),
+        premium: true,
+    };
+    a.spotify.searching = true; // pressed `/`, nothing typed
+    let s = render_layout(&mut a, Layout::Spotify, 100, 24);
+    let border = s.lines().next().unwrap_or_default();
+    assert!(border.contains('⌕'), "the field is on the border line");
+    assert!(
+        border.contains('▌'),
+        "with a caret showing where typing goes"
+    );
+    assert!(
+        border.contains("search Spotify…"),
+        "and a placeholder naming what it searches"
+    );
+    assert!(
+        border.contains("SPOTIFY"),
+        "the pane is still identifiable while searching"
+    );
+}
+
+#[test]
+fn searching_costs_no_content_row() {
+    // The field lives in the border, so the list keeps its full height — the old
+    // row stole one.
+    use crate::spotify::ConnState;
+    let mut a = demo();
+    a.layout = Layout::Spotify;
+    a.spotify.conn = ConnState::Connected {
+        name: "me".into(),
+        premium: true,
+    };
+    let rows = |app: &mut AppState| {
+        render_layout(app, Layout::Spotify, 100, 24)
+            .lines()
+            .filter(|l| l.contains('│'))
+            .count()
+    };
+    let idle = rows(&mut a);
+    a.spotify.searching = true;
+    assert_eq!(rows(&mut a), idle, "the pane's inner height is unchanged");
+}
