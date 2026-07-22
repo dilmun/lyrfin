@@ -126,6 +126,20 @@ pub(crate) struct NowPlaying<'a> {
     pub under_bar: Line<'static>,
 }
 
+/// The playback-rate badge (`1.25×`), or `None` at normal speed so an untouched
+/// rate never adds clutter. Trailing zeros trimmed: 0.5× not 0.50×.
+pub(crate) fn speed_badge(app: &AppState) -> Option<String> {
+    let speed = app.player.speed;
+    if (speed - 1.0).abs() <= 0.01 {
+        return None;
+    }
+    let s = format!("{speed:.2}");
+    Some(format!(
+        "{}×",
+        s.trim_end_matches('0').trim_end_matches('.')
+    ))
+}
+
 /// The base "elapsed / total" spans under the progress bar. The local bar appends
 /// a speed badge; the Spotify bar swaps in "buffering…" while the stream fills.
 pub(crate) fn time_label(th: &Theme, elapsed: Duration, duration: Duration) -> Vec<Span<'static>> {
@@ -145,7 +159,7 @@ pub(crate) fn time_label(th: &Theme, elapsed: Duration, duration: Duration) -> V
 pub(crate) fn playback_bar(f: &mut Frame, area: Rect, app: &AppState, np: NowPlaying) {
     let th = &app.theme;
     // mini layout: too few rows for the bordered bar — one shared compact form
-    if area.height <= MINI_NOW_H + 1 {
+    if area.height <= MINI_NOW_VIZ_H + 1 {
         compact_bar(
             f,
             area,
@@ -212,7 +226,11 @@ pub(crate) fn playback_bar(f: &mut Frame, area: Rect, app: &AppState, np: NowPla
     // centre column, stacked: title+artist · (optional) blended visualizer ·
     // progress bar · transport. The elapsed/total time sits under the bar when
     // there's a dedicated row, else it falls back to inline times flanking the bar.
-    let with_time = center.height >= 5;
+    // The under-bar time needs a *dedicated* row AND enough width: it is drawn in
+    // the margin beside the centred transport, so on a narrow bar it silently does
+    // not fit and the times disappear entirely. Below that width, flank the bar
+    // with them instead — visible times matter more than where they sit.
+    let with_time = center.height >= 5 && center.width >= 56;
     let details_h = 2; // title + artist
     let show_viz = app.config.player_viz && center.height >= details_h + 3;
     let (details, viz_opt, prog_row, trans_row) = if show_viz {
@@ -256,10 +274,16 @@ pub(crate) fn playback_bar(f: &mut Frame, area: Rect, app: &AppState, np: NowPla
         format!("{} ", mmss(np.elapsed))
     };
     let plen = time_prefix.chars().count() as u16;
+    // the flanked form reserves room for "<elapsed> …bar… <remaining>", plus the
+    // speed badge when one is shown — without that the badge is drawn past the
+    // row's end and truncated to a stub ("1." instead of "1.25×")
+    let badge_w = speed_badge(app)
+        .filter(|_| !with_time)
+        .map_or(0, |b| b.chars().count() as u16 + 2);
     let prog_w = if with_time {
         prog_row.width
     } else {
-        prog_row.width.saturating_sub(14)
+        prog_row.width.saturating_sub(14 + badge_w)
     };
     let bar_x = prog_row.x + plen;
 
@@ -292,6 +316,17 @@ pub(crate) fn playback_bar(f: &mut Frame, area: Rect, app: &AppState, np: NowPla
             format!(" {}", mmss(remaining)),
             Style::default().fg(col(th.text_faint)),
         ));
+        // Without a dedicated time row the speed badge has nowhere to live, so a
+        // non-1× rate would be invisible on every short bar — including the whole
+        // mini layout. Park it after the remaining time, still only when off 1×.
+        if let Some(badge) = speed_badge(app) {
+            prog.push(Span::styled(
+                format!("  {badge}"),
+                Style::default()
+                    .fg(col(th.accent[0]))
+                    .add_modifier(Modifier::BOLD),
+            ));
+        }
     }
     app.register_click(Rect::new(bar_x, prog_row.y, prog_w, 1), MouseTarget::Seek);
     f.render_widget(Paragraph::new(Line::from(prog)), prog_row);
@@ -336,18 +371,50 @@ pub(crate) fn playback_bar(f: &mut Frame, area: Rect, app: &AppState, np: NowPla
 }
 
 // ---- now-playing transport bar ------------------------------------------
-/// Rows the mini layout's playback bar occupies: one naming what's playing, one
-/// for progress. Borderless — at this size a rounded frame would cost more rows
-/// than the content it wraps.
+/// Rows the mini layout's playback bar occupies without the visualizer: one
+/// naming what's playing, one for progress. Borderless — at this size a rounded
+/// frame would cost more rows than the content it wraps.
 pub const MINI_NOW_H: u16 = 2;
 
+/// Rows the mini bar occupies *with* the visualizer: a spectrum strip above the
+/// progress line, mirroring where the full-size bar puts it. One row, so the
+/// motion is there without eating the list it sits under.
+pub const MINI_NOW_VIZ_H: u16 = 3;
+
+/// The mini bar's height for the current visualizer setting. A short frame keeps
+/// the 2-row form regardless: below this the strip would take a row the list
+/// cannot spare.
+fn mini_now_h(player_viz: bool, frame_h: u16) -> u16 {
+    if player_viz && frame_h >= 14 {
+        MINI_NOW_VIZ_H
+    } else {
+        MINI_NOW_H
+    }
+}
+
 /// Height of the playback bar, kept identical across every view (#1–#4): the
-/// compact 2-row bar on a mini-sized frame, else the tall layout (with the bar
+/// compact 2/3-row bar on a mini-sized frame, else the tall layout (with the bar
 /// visualizer) when there's room, else the standard one. `frame_w`/`frame_h` are
 /// the full frame dimensions so all views agree on the thresholds.
 pub fn now_bar_height(player_viz: bool, frame_w: u16, frame_h: u16) -> u16 {
     if crate::ui::breakpoint::is_mini(Rect::new(0, 0, frame_w, frame_h)) {
-        MINI_NOW_H
+        // The mini layout keeps the STANDARD bar, so shuffle, repeat, the transport
+        // row and the speed badge stay visible — it is the same playback everywhere,
+        // just in a narrower frame, and the bar already drops its art and volume
+        // meter on its own when there isn't room. Only a genuinely short window
+        // falls back to the stripped 2/3-row form, where the full bar would leave
+        // almost nothing for the card above it.
+        if frame_h < 18 {
+            mini_now_h(player_viz, frame_h)
+        } else if player_viz && frame_h >= 20 {
+            // one more row than the standard bar: the centre column needs 5 rows
+            // (title+meta, spectrum, progress, transport) before it will draw the
+            // blended visualizer at all, so at 6 the narrow layout would silently
+            // lose it
+            7
+        } else {
+            6
+        }
     } else if player_viz && frame_h >= 30 {
         9
     } else {
@@ -372,7 +439,15 @@ pub(crate) fn compact_bar(f: &mut Frame, area: Rect, app: &AppState, now: Compac
     if area.width < 4 || area.height == 0 {
         return;
     }
-    let [top, bot] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
+    // title row · (optional) spectrum strip · progress row. The strip sits above
+    // the progress line, the same place the full-size bar puts it.
+    let show_viz = app.config.player_viz && area.height >= MINI_NOW_VIZ_H;
+    let [top, viz, bot] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(if show_viz { 1 } else { 0 }),
+        Constraint::Min(0),
+    ])
+    .areas(area);
 
     // ── line 1: status glyph, then title · subtitle, clipped to the row
     let ic = if now.playing {
@@ -407,6 +482,9 @@ pub(crate) fn compact_bar(f: &mut Frame, area: Rect, app: &AppState, now: Compac
     }
     f.render_widget(Paragraph::new(Line::from(spans)), top);
 
+    if show_viz && viz.height > 0 && viz.width > 1 {
+        spectrum_bare(f, viz, app, app.config.player_viz_mode);
+    }
     if bot.height == 0 {
         return;
     }
@@ -442,7 +520,7 @@ pub(crate) fn compact_bar(f: &mut Frame, area: Rect, app: &AppState, now: Compac
 /// gutter then the text).
 fn idle_bar(f: &mut Frame, area: Rect, th: &Theme, head: &str, hint: &str) {
     // mini layout: the rounded frame would consume both rows it wraps
-    if area.height <= MINI_NOW_H + 1 {
+    if area.height <= MINI_NOW_VIZ_H + 1 {
         f.render_widget(
             Paragraph::new(vec![
                 Line::from(Span::styled(
@@ -538,11 +616,9 @@ pub fn now_bar(f: &mut Frame, area: Rect, app: &AppState) {
     // under-bar time: elapsed/total + a speed badge when off 1.0× (so normal play
     // stays uncluttered). 2 decimals trimmed → 0.25× / 0.5× / 1.25× / 2×.
     let mut tspans = time_label(th, app.player.elapsed, app.player.duration);
-    if (app.player.speed - 1.0).abs() > 0.01 {
-        let sp = format!("{:.2}", app.player.speed);
-        let sp = sp.trim_end_matches('0').trim_end_matches('.');
+    if let Some(badge) = speed_badge(app) {
         tspans.push(Span::styled(
-            format!("  {sp}×"),
+            format!("  {badge}"),
             Style::default()
                 .fg(col(th.accent[0]))
                 .add_modifier(Modifier::BOLD),
@@ -719,7 +795,7 @@ fn dvr_bar_spans(th: &Theme, frac: f32, width: usize) -> Vec<Span<'static>> {
 pub(crate) fn radio_now_bar(f: &mut Frame, area: Rect, app: &AppState) {
     let th = &app.theme;
     // mini layout: the shared compact bar, so radio reads like every other source
-    if area.height <= MINI_NOW_H + 1 {
+    if area.height <= MINI_NOW_VIZ_H + 1 {
         let Some(st) = &app.rnow.now_station else {
             idle_bar(f, area, th, "Radio", "No station — pick one and press ⏎");
             return;

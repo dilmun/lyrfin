@@ -46,20 +46,40 @@ fn a_short_but_wide_window_keeps_the_full_layout() {
 }
 
 #[test]
-fn the_mini_card_shows_one_pane_and_a_compact_bar() {
+fn the_mini_card_keeps_the_standard_playback_bar() {
+    // The narrow layout runs the SAME playback bar as everywhere else — it is the
+    // same playback, just a narrower frame — so shuffle/repeat state and the
+    // transport row stay visible. The bar drops its own art and volume meter when
+    // there isn't room, which is what makes that affordable.
     let mut app = demo();
-    let s = render_layout(&mut app, Layout::Dashboard, NARROW, 22);
+    let s = render_layout(&mut app, Layout::Dashboard, NARROW, 24);
     assert!(s.contains("MUSIC"), "the main card is on screen");
-    // the 2-row bar: track line + progress line, no transport row or volume meter
-    assert!(
-        s.contains("Midnight Protocol · Neon District"),
-        "compact bar names the track and artist on one line"
-    );
-    assert!(!s.contains("VOL"), "no volume meter on the compact bar");
+    assert!(s.contains("Midnight Protocol"), "the bar names the track");
     assert!(
         s.lines().any(|l| l.contains('●') && l.contains(':')),
-        "compact bar has a progress line with times"
+        "with a progress line and times"
     );
+    assert!(
+        s.lines().any(|l| l.contains('⇄') && l.contains('↻')),
+        "and the transport row — shuffle and repeat are visible"
+    );
+}
+
+#[test]
+fn a_non_default_speed_is_visible_on_a_short_bar() {
+    // The speed badge lived only in the under-bar time row, which exists only on
+    // the tall 9-row bar — so any changed rate was invisible in the mini layout.
+    let mut app = demo();
+    app.player.speed = 1.25;
+    let s = render_layout(&mut app, Layout::Dashboard, NARROW, 24);
+    assert!(
+        s.contains("1.25×"),
+        "the rate shows, in full and untruncated"
+    );
+
+    app.player.speed = 1.0;
+    let s = render_layout(&mut app, Layout::Dashboard, NARROW, 24);
+    assert!(!s.contains('×'), "no badge at normal speed");
 }
 
 #[test]
@@ -511,5 +531,24 @@ fn bound_ctrl_keys_are_never_swallowed_by_a_view() {
     assert!(
         !matches!(crate::keymap::map(&a, ctrl('w')), Action::Forward),
         "an unbound ctrl key is not hijacked"
+    );
+}
+
+#[test]
+fn the_mini_bar_keeps_a_visualizer() {
+    // The narrow layout runs the standard bar, whose visualizer is blended over
+    // the progress bar rather than being a separate strip — so the motion that
+    // shows audio is live survives the narrow frame.
+    let mut app = demo();
+    app.player.status = crate::core::player::Status::Playing;
+    app.player.spectrum = vec![0.6; crate::app::VIZ_BANDS];
+    for _ in 0..30 {
+        app.update(Action::Tick); // let the bars ease up from silence
+    }
+    let s = render_layout(&mut app, Layout::Dashboard, NARROW, 30);
+    assert!(
+        s.lines()
+            .any(|l| l.contains('█') || l.contains('▄') || l.contains('▀')),
+        "the spectrum is drawn somewhere in the narrow layout"
     );
 }

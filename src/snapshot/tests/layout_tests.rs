@@ -186,10 +186,26 @@ fn playback_bar_height_is_consistent_across_views() {
     );
     // a mini-width frame collapses the bar regardless of the viz setting; height
     // alone never does (a short-but-wide window keeps the full layout)
+    // the narrow layout keeps the STANDARD bar, so shuffle/repeat/transport show
     assert_eq!(
         now_bar_height(true, 50, 36),
+        7,
+        "narrow but tall → the standard bar, one row taller so its viz fits"
+    );
+    assert_eq!(
+        now_bar_height(false, 50, 36),
+        6,
+        "...and the standard height when the visualizer is off"
+    );
+    assert_eq!(
+        now_bar_height(true, 50, 16),
+        crate::ui::components::MINI_NOW_VIZ_H,
+        "a short frame falls back to the stripped bar, keeping its spectrum strip"
+    );
+    assert_eq!(
+        now_bar_height(false, 50, 16),
         MINI_NOW_H,
-        "narrow frame → compact 2-row bar"
+        "...without the strip when the visualizer is off"
     );
     assert_eq!(
         now_bar_height(true, 120, 18),
