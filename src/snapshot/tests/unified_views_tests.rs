@@ -341,3 +341,62 @@ fn next_and_previous_follow_the_player_views_source() {
     a.update(Action::Previous);
     assert_eq!(a.player.queue.position, local_before, "same for p");
 }
+
+#[test]
+fn enter_acts_on_the_playing_source_not_the_local_list() {
+    use crate::action::Action;
+    // Same bug as space: a player view has no list, so Enter fell through to the
+    // local tracklist selection and started a local track under a Spotify one.
+    let mut a = demo();
+    spotify_playing(&mut a);
+    a.update(Action::Tick);
+    a.spov.spotify_paused = true;
+    a.layout = L::Concert;
+
+    a.update(Action::Activate);
+    assert_ne!(
+        a.player.status,
+        crate::core::player::Status::Playing,
+        "Enter must not start the local player in a player view showing Spotify"
+    );
+}
+
+#[test]
+fn favourite_stars_the_playing_source() {
+    use crate::action::Action;
+    let mut a = demo();
+    let local_fav = |app: &AppState| {
+        app.player
+            .current
+            .and_then(|id| app.library.track(id))
+            .is_some_and(|t| t.favorite)
+    };
+    let before = local_fav(&a);
+    spotify_playing(&mut a);
+    a.layout = L::LyricsFocus;
+
+    a.update(Action::ToggleFavoriteSel);
+    assert_eq!(
+        local_fav(&a),
+        before,
+        "f must not favourite the local track while the view shows Spotify"
+    );
+}
+
+#[test]
+fn the_player_views_host_no_dock_panes() {
+    // Each does one thing. A docked queue beside Now Playing showed the *local*
+    // queue next to a possibly-Spotify track, and a second visualizer competed
+    // with the one the view already draws.
+    for l in [L::FullPlayer, L::LyricsFocus, L::Concert] {
+        assert!(l.panels().is_empty(), "{l:?} hosts no dock panes");
+        let mut a = demo();
+        a.layout = l;
+        assert!(
+            !a.popup_tab_names().contains(&"Panes"),
+            "{l:?} settings offer no Panes tab, since it has none"
+        );
+    }
+    // the browsing views keep theirs
+    assert!(!L::Dashboard.panels().is_empty());
+}

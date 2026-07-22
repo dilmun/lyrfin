@@ -272,23 +272,6 @@ fn browse_row(
     components::pill_line(app, w, content, bg)
 }
 
-/// The queue pane for the source-neutral player views: whichever source is
-/// playing owns the queue shown, so Now Playing / Lyrics list the upcoming
-/// Spotify tracks while Spotify streams instead of a stale local queue. Radio has
-/// no queue, so it keeps the local one (empty or not) rather than inventing one.
-fn playing_queue(f: &mut Frame, area: Rect, app: &AppState) {
-    if app.now_playing_source() == Some(crate::app::NpSource::Spotify) {
-        components::spotify_queue(
-            f,
-            area,
-            app,
-            app.focus == crate::app::Focus::Pane(Panel::Queue),
-        );
-    } else {
-        components::queue(f, area, app);
-    }
-}
-
 /// 03 — Now Playing: a full-width playback bar at the bottom; above it the
 /// visualizer (or album art), with the queue docked beside/over it (not full
 /// height — it sits above the playback like on Home).
@@ -300,20 +283,13 @@ pub fn nowplaying(f: &mut Frame, area: Rect, app: &AppState) {
         Layout::vertical([Constraint::Min(0), Constraint::Length(play_h)]).areas(area);
     components::now_bar(f, play, app);
 
-    // dock the queue within the content area, above the playback bar
-    let mut c = content;
-    let q = app.panel(Panel::Queue);
-    if q.shown && c.width >= 36 && c.height >= 4 {
-        let span = components::pane_span(c, q.dock, q.size); // q.size is a percentage
-        let (qr, rest) = components::dock_split(c, q.dock, span, span.min(c.height.max(2) / 2));
-        playing_queue(f, qr, app);
-        app.register_pane_edge(c, q.dock, qr, Panel::Queue);
-        app.register_focus(qr, crate::app::Focus::Pane(Panel::Queue));
-        c = rest;
-    }
+    // No dock panes here: Now Playing is the playing track and nothing else (see
+    // `Layout::panels`). The whole body is the visualizer, or the cover when the
+    // visualizer is off.
+    let c = content;
     app.register_focus(c, crate::app::Focus::Main);
 
-    if app.panel(Panel::Visualizer).shown && c.height >= 4 {
+    if app.config.player_viz && c.height >= 4 {
         let mode = app.viz_mode();
         components::spectrum_panel(
             f,
@@ -487,46 +463,13 @@ pub fn concert(f: &mut Frame, area: Rect, app: &AppState) {
 pub fn lyrics(f: &mut Frame, area: Rect, app: &AppState) {
     // playback card at the bottom — same height as every other view (#1–#4)
     let play_h = components::now_bar_height(app.config.player_viz, area.width, area.height + 1);
-    let [mut content, play] =
+    let [content, play] =
         Layout::vertical([Constraint::Min(5), Constraint::Length(play_h)]).areas(area);
     components::now_bar(f, play, app);
 
-    // queue + visualizer dock within the content area, above the playback bar
-    let q = app.panel(Panel::Queue);
-    if q.shown && content.width >= 40 && content.height >= 6 {
-        let span = components::pane_span(content, q.dock, q.size); // percentage
-        let (qr, rest) =
-            components::dock_split(content, q.dock, span, span.min(content.height / 2).max(4));
-        playing_queue(f, qr, app);
-        app.register_pane_edge(content, q.dock, qr, Panel::Queue);
-        app.register_focus(qr, crate::app::Focus::Pane(Panel::Queue));
-        content = rest;
-    }
-    let viz_p = app.panel(Panel::Visualizer);
-    if viz_p.shown && content.width >= 40 && content.height >= 8 {
-        let span = components::pane_span(content, viz_p.dock, viz_p.size); // percentage
-        let (viz, rest) = components::dock_split(
-            content,
-            viz_p.dock,
-            span,
-            span.min(content.height / 2).max(6),
-        );
-        let mode = app.viz_mode();
-        components::spectrum_panel(
-            f,
-            viz,
-            app,
-            &format!(
-                "VISUALIZER · {}",
-                components::VIZ_MODES[mode as usize % components::VIZ_MODES.len()]
-            ),
-            mode,
-            false, // the lyrics view's viz strip isn't a Tab focus target
-        );
-        app.register_pane_edge(content, viz_p.dock, viz, Panel::Visualizer);
-        content = rest;
-    }
-
+    // No dock panes here either: the Lyrics view is the words and the playback
+    // bar. A visualizer strip belongs to Now Playing, and a docked queue showed
+    // the local queue beside a possibly-Spotify track (see `Layout::panels`).
     app.register_focus(content, crate::app::Focus::Main);
     components::lyrics_panel(
         f,

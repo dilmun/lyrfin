@@ -76,6 +76,16 @@ pub const DEFAULT_BINDINGS: &[(&str, &str)] = &[
     // teach. vim's ctrl-i is unusable for forward either way — that is 0x09 = Tab.
     ("ctrl-[", "back"),
     ("ctrl-]", "forward"),
+    // ctrl+] under a LEGACY terminal. Ctrl+<key> sends that key's ASCII code with
+    // the top bits stripped, and ']' (0x5D) becomes 0x1D — which crossterm decodes
+    // as ctrl-5, since the 0x1C..=0x1F block is reported as ctrl+4..ctrl+7. So the
+    // key a user presses as ctrl+] genuinely arrives here as "ctrl-5", and binding
+    // it is the only way to honour that press outside the kitty protocol.
+    //
+    // Its partner needs no such entry: '[' (0x5B) becomes 0x1B, which *is* Escape,
+    // and Escape is already back. That is the whole reason the pair looked
+    // asymmetric — ctrl+[ was never recognised as itself, it was Escape.
+    ("ctrl-5", "forward"),
     ("y", "copy_error"),           // yank the last error message to the clipboard
     ("1", "layout:dashboard"),     // Home
     ("2", "layout:library_focus"), // Library (Artists ▸ Albums ▸ Tracks)

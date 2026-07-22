@@ -94,10 +94,10 @@ fn dvr_seek_is_scoped_to_the_radio_view() {
     a.update(Action::Seek(-5));
     assert_eq!(a.rnow.dvr.unwrap().pos, 0.0, "clamped to the buffer start");
 
-    // leaving the Radio view: seek must NOT reach the background radio's window from
-    // any other view (Dashboard, Spotify, …) — the leak we're fixing.
+    // A *source* view browses its own source, so seek must not reach the background
+    // radio's window from there.
     a.rnow.dvr.as_mut().unwrap().pos = 100.0;
-    for view in [Layout::Dashboard, Layout::Spotify, Layout::FullPlayer] {
+    for view in [Layout::Dashboard, Layout::Spotify] {
         a.layout = view;
         a.update(Action::Seek(-5));
         assert_eq!(
@@ -106,6 +106,22 @@ fn dvr_seek_is_scoped_to_the_radio_view() {
             "{view:?} must not seek the background radio"
         );
     }
+
+    // A *player* view is the opposite case: it shows whatever is playing, so with
+    // the station streaming its seek belongs to the DVR window. Seeking the local
+    // track here would move a position the screen isn't showing.
+    a.layout = Layout::FullPlayer;
+    a.update(Action::Seek(-5));
+    assert_eq!(
+        a.rnow.dvr.unwrap().pos,
+        95.0,
+        "a player view seeks the source it is showing"
+    );
+    assert_eq!(
+        a.player.elapsed,
+        Duration::from_secs(42),
+        "and still leaves the local position alone"
+    );
 }
 
 #[test]

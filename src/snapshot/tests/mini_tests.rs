@@ -447,7 +447,13 @@ fn history_keys_survive_a_legacy_terminal() {
     assert!(matches!(crate::keymap::map(&a, ctrl('b')), Action::Back));
     assert!(matches!(crate::keymap::map(&a, ctrl('f')), Action::Forward));
 
-    // Esc is back in its own right, which is why ctrl+[ degrades harmlessly
+    // ctrl+] as a legacy terminal actually sends it: ']' (0x5D) & 0x1F = 0x1D,
+    // which crossterm reports as ctrl-5. Binding that byte is what makes the key
+    // work outside the kitty protocol.
+    assert!(matches!(crate::keymap::map(&a, ctrl('5')), Action::Forward));
+
+    // Esc is back in its own right, which is why ctrl+[ needs no such entry —
+    // '[' (0x5B) & 0x1F = 0x1B, which *is* Escape.
     assert!(matches!(
         crate::keymap::map(
             &a,
@@ -458,4 +464,52 @@ fn history_keys_survive_a_legacy_terminal() {
         ),
         Action::Back
     ));
+}
+
+#[test]
+fn bound_ctrl_keys_are_never_swallowed_by_a_view() {
+    // Every view/pane handler matches bare characters, so each one silently ate the
+    // ctrl combinations sharing a letter with its keys: in the Spotify view ctrl+f
+    // "liked" the track and ctrl+b toggled the sidebar instead of moving through
+    // history. Fixing letters one at a time only ever fixes the ones already
+    // tripped over, so this asserts the rule.
+    use crate::event::{Key, KeyCode, Mods};
+    let ctrl = |c| Key {
+        code: KeyCode::Char(c),
+        mods: Mods {
+            ctrl: true,
+            ..Mods::default()
+        },
+    };
+
+    for layout in [Layout::Spotify, Layout::Radio, Layout::Dashboard] {
+        let mut a = demo();
+        a.layout = layout;
+        a.focus = Focus::Main;
+        assert!(
+            matches!(crate::keymap::map(&a, ctrl('f')), Action::Forward),
+            "{layout:?}: ctrl+f is forward, not the view's `f`"
+        );
+        assert!(
+            matches!(crate::keymap::map(&a, ctrl('b')), Action::Back),
+            "{layout:?}: ctrl+b is back, not the view's `b`"
+        );
+        // ...while the PLAIN key still belongs to the view
+        let plain_f = Key {
+            code: KeyCode::Char('f'),
+            mods: Mods::default(),
+        };
+        assert!(
+            !matches!(crate::keymap::map(&a, plain_f), Action::Forward),
+            "{layout:?}: plain f keeps the view's own meaning"
+        );
+    }
+
+    // an unbound ctrl combination still falls through to the view
+    let mut a = demo();
+    a.layout = Layout::Dashboard;
+    assert!(
+        !matches!(crate::keymap::map(&a, ctrl('w')), Action::Forward),
+        "an unbound ctrl key is not hijacked"
+    );
 }

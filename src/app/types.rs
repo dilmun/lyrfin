@@ -195,8 +195,12 @@ impl Layout {
             // The 3 columns are the navigation (no Sidebar); Queue/Artist/Lyrics
             // dock optionally around them.
             Layout::LibraryFocus => &[Panel::Queue, Panel::Artist, Panel::Lyrics],
-            Layout::FullPlayer => &[Panel::Visualizer, Panel::Queue],
-            Layout::LyricsFocus => &[Panel::Visualizer, Panel::Queue],
+            // The player views host NO dock panes: each does one thing — Now
+            // Playing is the playing track, Lyrics is its words, Concert is the
+            // full-screen card. A queue docked beside them showed the *local*
+            // queue next to a Spotify track, and a second visualizer competed with
+            // the one the view already draws. Panes belong to the browsing views.
+            Layout::FullPlayer | Layout::LyricsFocus => &[],
             Layout::Spotify => &[Panel::Sidebar, Panel::Queue, Panel::Artist, Panel::Lyrics],
             // Radio hosts only the section Sidebar (no queue/artist/lyrics panes).
             Layout::Radio => &[Panel::Sidebar],

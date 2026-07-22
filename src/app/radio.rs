@@ -532,7 +532,15 @@ impl AppState {
     /// Whether the now-playing bar should show the radio station (only in the
     /// Radio view while a station is tuned). Local views keep showing `player`.
     pub fn showing_radio(&self) -> bool {
-        self.layout == Layout::Radio && self.rnow.now_station.is_some()
+        self.rnow.now_station.is_some()
+            && match self.layout {
+                Layout::Radio => true,
+                // a player view is about whatever is playing (see `is_player_view`)
+                l if l.is_player_view() => {
+                    self.now_playing_source() == Some(crate::app::NpSource::Radio)
+                }
+                _ => false,
+            }
     }
 
     pub(crate) fn play_station(&mut self, st: crate::radio::Station) {

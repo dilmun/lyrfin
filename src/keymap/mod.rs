@@ -42,13 +42,11 @@ pub fn map(app: &AppState, key: Key) -> Action {
         .or_else(|| confirm_input(app, key))
         .or_else(|| half_page(key))
         .or_else(|| modal_overlay(app, key))
-        // Directional pane focus outranks every view/pane handler below: the whole
-        // point is that it works even where the focused pane binds the plain key to
-        // its own thing (a cover grid moving a card, the Library switching column).
-        // Those handlers match on `KeyCode::Char('h')` without inspecting modifiers,
-        // so they would otherwise swallow ctrl+h before it reached the key table.
-        // Still below the modal handlers above — an open modal owns the keyboard.
-        .or_else(|| focus_jump(app, key))
+        // Bound ctrl/alt combinations outrank the view + pane handlers below, which
+        // match bare characters and would otherwise swallow them (see
+        // `modified_binding`). Still below the modal handlers above — an open modal
+        // owns the keyboard.
+        .or_else(|| modified_binding(app, key))
         .or_else(|| pane_context(app, key))
         .or_else(|| spotify_view(app, key))
         .or_else(|| radio_view(app, key))
@@ -86,12 +84,29 @@ fn normalize_shift(key: Key) -> Key {
     key
 }
 
-/// Directional pane focus (`ctrl+h/j/k/l` by default), resolved through the normal
-/// key table so a user rebinding still applies — this only changes *when* it is
-/// consulted, not what it binds.
-fn focus_jump(app: &AppState, key: Key) -> Option<Action> {
-    let action = global_binding(app, key);
-    matches!(action, Action::FocusToward(..)).then_some(action)
+/// A **modified** key (ctrl/alt) that the key table binds, resolved before the
+/// view and pane handlers below get a look at it.
+///
+/// Those handlers match on the bare character — `KeyCode::Char('f')` — without
+/// inspecting modifiers, so without this they swallow every ctrl combination that
+/// shares a letter with one of their keys: ctrl+f became "like this track" in the
+/// Spotify view, ctrl+b toggled its sidebar, ctrl+h moved a grid card. Each is the
+/// same bug, and patching them one at a time only fixes the letters someone has
+/// already tripped over.
+///
+/// Resolution goes through the normal key table, so this changes *when* a binding
+/// is consulted, never what it binds — a user rebinding still applies. Unmodified
+/// keys and unbound combinations fall through untouched, so the view handlers keep
+/// every plain key they own. It sits below the modal handlers: an open modal still
+/// owns the whole keyboard.
+fn modified_binding(app: &AppState, key: Key) -> Option<Action> {
+    if !(key.mods.ctrl || key.mods.alt) {
+        return None;
+    }
+    match global_binding(app, key) {
+        Action::Noop => None, // not bound → let the view handlers try
+        action => Some(action),
+    }
 }
 
 /// Library (#2) 3-column browser: while the columns are focused, h/l/←/→ switch the
