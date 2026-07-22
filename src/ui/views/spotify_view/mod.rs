@@ -3,7 +3,7 @@
 //! guides. Split out of `views` to keep the Spotify rendering self-contained.
 
 use ratatui::Frame;
-use ratatui::layout::{Alignment, Constraint, Layout, Rect};
+use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
@@ -63,6 +63,11 @@ fn spotify_browser(f: &mut Frame, area: Rect, app: &AppState) {
     use crate::app::Focus;
     let sp = &app.spotify;
     let title = spotify_main_title(app);
+    let search_info = if sp.in_search {
+        format!("{} results", sp.items.len())
+    } else {
+        String::new()
+    };
     // searching highlights the whole main border + title in the accent colour
     let main_focus = app.focus == Focus::Main || sp.searching;
 
@@ -93,38 +98,20 @@ fn spotify_browser(f: &mut Frame, area: Rect, app: &AppState) {
             title: &title,
             title_right: spotify_account_chip(app),
             focused: main_focus,
-            render: &|f, m, app| {
-                let sp = &app.spotify;
-                // searching / showing results → the shared inline search row sits
-                // above the list (the unified box every source uses).
-                if sp.searching || sp.in_search {
-                    let [bar, body] =
-                        Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(m);
-                    let info = if sp.in_search {
-                        format!("{} results", sp.items.len())
-                    } else {
-                        String::new()
-                    };
-                    components::search_bar(
-                        f,
-                        bar,
-                        &app.theme,
-                        &components::SearchBar {
-                            query: &sp.query,
-                            caret: sp.query.chars().count(),
-                            focused: sp.searching,
-                            loading: sp.loading,
-                            tick: app.tick,
-                            placeholder: "search Spotify…",
-                            scope: "Spotify",
-                            info: &info,
-                        },
-                    );
-                    spotify_main_body(f, body, app);
-                } else {
-                    spotify_main_body(f, m, app);
-                }
-            },
+            // searching → the field takes over the border (drawn by the shell), so
+            // the list keeps its full height and an empty query still reads as a
+            // box rather than a bare caret on a blank row
+            search: (sp.searching || sp.in_search).then(|| components::SearchBar {
+                query: &sp.query,
+                caret: sp.query.chars().count(),
+                focused: sp.searching,
+                loading: sp.loading,
+                tick: app.tick,
+                placeholder: "search Spotify…",
+                scope: "Spotify",
+                info: &search_info,
+            }),
+            render: &|f, m, app| spotify_main_body(f, m, app),
         },
     );
 }

@@ -31,6 +31,11 @@ pub fn dashboard(f: &mut Frame, area: Rect, app: &AppState) {
     // around them — the same chrome as the Spotify view.
     let searching = app.search.active || !app.search.query.is_empty();
     let title = components::tracklist_title(app);
+    let search_info = if searching {
+        format!("{} results", app.search_results().len())
+    } else {
+        String::new()
+    };
     components::browser_shell(
         f,
         area,
@@ -66,6 +71,17 @@ pub fn dashboard(f: &mut Frame, area: Rect, app: &AppState) {
             title: &title,
             title_right: None,
             focused: app.focus == Focus::Main || searching,
+            // searching → the field takes over the border (drawn by the shell)
+            search: searching.then(|| components::SearchBar {
+                query: &app.search.query,
+                caret: app.search.query.chars().count(),
+                focused: app.focus == Focus::Search,
+                loading: false,
+                tick: app.tick,
+                placeholder: "search your library…",
+                scope: "Library",
+                info: &search_info,
+            }),
             render: &|f, inner, app| components::local_main_body(f, inner, app),
         },
     );

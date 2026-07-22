@@ -20,6 +20,13 @@ pub struct ShellPane<'a> {
     pub title_right: Option<Line<'a>>,
     pub focused: bool,
     pub render: &'a dyn Fn(&mut Frame, Rect, &AppState),
+    /// An active search: the field replaces the pane's title and lives **in the
+    /// border**. `None` (the common case) keeps the plain title.
+    ///
+    /// It sits here rather than in each view's body so every source gets the same
+    /// search presentation from one place — and so the field never costs a content
+    /// row, which is what made the old full-width row easy to miss when empty.
+    pub search: Option<super::SearchBar<'a>>,
 }
 
 /// Render the standard shell. Every movable pane — including the library/section
@@ -41,7 +48,19 @@ pub fn browser_shell(
     // the main pane's slot, for directional focus movement (ctrl+h/j/k/l); the
     // docked panes register themselves inside `dock_panels`
     app.register_focus(core, crate::app::Focus::Main);
-    let inner = super::panel_titled(f, core, app, main.title, main.title_right, main.focused);
+    let inner = match &main.search {
+        // searching: the field becomes the border title (see `search_title`)
+        Some(bar) => {
+            // only the pane's SHORT name — the decorated title ("MUSIC · ALL
+            // TRACKS · 14 · ⇅ artist↑") would overflow the border and truncate the
+            // field itself away. The dropped detail is about what is being listed,
+            // which the search is replacing anyway.
+            let context = main.title.split('·').next().unwrap_or("").trim();
+            let (left, right) = super::search_title(&app.theme, bar, context);
+            super::panel_titled_line(f, core, app, left, right, main.focused)
+        }
+        None => super::panel_titled(f, core, app, main.title, main.title_right, main.focused),
+    };
     (main.render)(f, inner, app);
 }
 
