@@ -207,7 +207,13 @@ pub fn artist_pane(
                 true
             }
             ArtistPhoto::Cover(cover) => {
-                render_cover_filled(f, rect, cover, app);
+                // as the grid path: don't emit the image where a modal covers this
+                // rect — it would bleed through the overlay. The artist pane is a
+                // left dock a centred overlay never reaches, so it normally stays
+                // visible. Keep the box either way so the layout holds.
+                if !app.art_occluded(rect) {
+                    render_cover_filled(f, rect, cover, app);
+                }
                 true
             }
         };

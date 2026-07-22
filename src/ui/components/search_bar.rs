@@ -142,6 +142,7 @@ pub fn search_title<'a>(
     th: &Theme,
     bar: &SearchBar<'a>,
     context: &str,
+    caps: (&str, &str),
 ) -> (Line<'static>, Option<Line<'static>>) {
     let accent = Style::default().fg(col(th.accent[0]));
     let glyph = if bar.loading {
@@ -160,18 +161,26 @@ pub fn search_title<'a>(
                 .add_modifier(Modifier::BOLD),
         ));
     }
-    spans.push(Span::styled(format!("{glyph} "), accent));
+    // The field gets a filled pill of its own — the same rounded capsule the row
+    // selection uses. Inline text on a border line still reads as a *label*; a
+    // filled shape reads as somewhere you type, which matters most right after `/`
+    // when nothing has been entered yet.
+    let fill = th.selection;
+    let cap = Style::default().fg(col(fill));
+    spans.push(Span::styled(caps.0.to_string(), cap));
+    spans.push(Span::styled(format!("{glyph} "), accent.bg(col(fill))));
 
     // the query, with the caret parked at its edit position
     let chars: Vec<char> = bar.query.chars().collect();
     let caret = bar.caret.min(chars.len());
     let text = Style::default()
         .fg(col(th.text))
+        .bg(col(fill))
         .add_modifier(Modifier::BOLD);
     if chars.is_empty() {
         spans.push(Span::styled(
             bar.placeholder.to_string(),
-            Style::default().fg(col(th.text_faint)),
+            Style::default().fg(col(th.text_faint)).bg(col(fill)),
         ));
     } else {
         spans.push(Span::styled(
@@ -180,7 +189,7 @@ pub fn search_title<'a>(
         ));
     }
     if bar.focused {
-        spans.push(Span::styled("▌", accent));
+        spans.push(Span::styled("▌", accent.bg(col(fill))));
     }
     if !chars.is_empty() && caret < chars.len() {
         spans.push(Span::styled(

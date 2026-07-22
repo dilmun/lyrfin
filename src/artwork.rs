@@ -27,6 +27,12 @@ pub enum ArtKey {
     /// so the large pane render and the small grid card each own a `StatefulProtocol`
     /// and never thrash one shared resize cache.
     ArtistPhoto(ArtistId),
+    /// The Concert view's fullscreen artist photo. Its own bucket because it is
+    /// always a **square** (masks are baked at decode, and `request_art` dedups by
+    /// key alone), while `ArtistPhoto` follows the `grid_circle` setting — sharing a
+    /// key would let the pane's circle satisfy Concert's square request and leave it
+    /// round.
+    ConcertArtist(ArtistId),
     /// A remote image addressed by a stable hash of its URL (Spotify covers /
     /// artist photos). Hashing keeps `ArtKey` `Copy` — see [`ArtKey::remote`].
     Remote(u64),
@@ -63,6 +69,17 @@ impl ArtKey {
         name.hash(&mut h);
         "artist".hash(&mut h);
         ArtKey::ArtistName(h.finish())
+    }
+
+    /// Key a **square** copy of a remote image by URL — a distinct bucket from
+    /// [`ArtKey::remote`] (which the pane may cache circle-masked) so the Concert
+    /// view's square artist photo never collides with a round one of the same URL.
+    pub fn square(url: &str) -> ArtKey {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        url.hash(&mut h);
+        "square".hash(&mut h);
+        ArtKey::Remote(h.finish())
     }
 
     /// Key the top-slice peek of `base` at `rows` cells tall — distinct from the

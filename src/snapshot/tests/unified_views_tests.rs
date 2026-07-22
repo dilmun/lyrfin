@@ -465,3 +465,110 @@ fn next_and_previous_never_touch_the_local_queue_from_a_player_view() {
         }
     }
 }
+
+#[test]
+fn concert_falls_back_to_the_album_when_no_artist_photo() {
+    // The artist photo needs an online fetch, so before it lands (and always for
+    // radio, which has no artist) Concert must still show art — the album cover —
+    // rather than a blank region. In the headless test harness no photo is ever
+    // fetched, so this exercises exactly the fallback path.
+    let mut a = demo();
+    let s = render_layout(&mut a, L::Concert, 100, 32);
+    assert!(
+        s.contains("Midnight Protocol"),
+        "Concert renders (album-cover fallback path) with no artist photo available"
+    );
+
+    // radio has no artist at all → the same fallback, no panic
+    radio_playing(&mut a);
+    let s = render_layout(&mut a, L::Concert, 100, 32);
+    assert!(s.contains("Cairo Jazz"), "radio Concert still renders");
+}
+
+#[test]
+fn concert_requests_the_local_artist_photo() {
+    // A player view has no artist pane to fire the request, so Concert must do it
+    // itself — otherwise the photo would never load and the album cover would show
+    // forever.
+    let mut a = demo();
+    a.player.status = crate::core::player::Status::Playing;
+    let before = a.grid_art.borrow().len();
+    let _ = render_layout(&mut a, L::Concert, 100, 32);
+    // rendering Concert queued an artwork request for the now-playing artist
+    assert!(
+        a.grid_art.borrow().len() > before || a.current_track().and_then(|t| t.artist_id).is_none(),
+        "Concert requests the artist photo so it can load"
+    );
+}
+
+#[test]
+fn concert_requests_a_square_artist_photo_under_its_own_key() {
+    // The pane caches the artist photo circle-masked (grid_circle default on) under
+    // ArtistPhoto; `request_art` dedups by key alone, so sharing it would leave
+    // Concert's photo round. Concert uses a distinct ConcertArtist key.
+    use crate::artwork::ArtKey;
+    let mut a = demo();
+    a.player.status = crate::core::player::Status::Playing;
+    let id = a
+        .current_track()
+        .and_then(|t| t.artist_id)
+        .expect("demo track has an artist");
+    let (key, _) = a.concert_artist_art(id).expect("a photo source");
+    assert_eq!(key, ArtKey::ConcertArtist(id), "its own square bucket");
+    assert_ne!(
+        key,
+        ArtKey::ArtistPhoto(id),
+        "never the pane's key, which may be circular"
+    );
+
+    let _ = render_layout(&mut a, L::Concert, 100, 32);
+    assert!(
+        a.grid_art.borrow().contains_key(&ArtKey::ConcertArtist(id)),
+        "Concert queues the square photo"
+    );
+}
+
+#[test]
+fn a_modal_leaves_the_artist_pane_photo_visible() {
+    // The pane's Cover-variant photo (render_cover_filled) is a left dock a centred
+    // overlay never reaches, so opening a modal must NOT suppress it — only the art
+    // the overlay actually covers is dropped. Regression: the old global gate binned
+    // the pane photo the instant any overlay opened.
+    use ratatui::layout::Rect;
+    let mut a = demo();
+    a.config.overlay_size = 0; // pin the compact popup so its geometry is fixed
+    a.update(crate::action::Action::OpenViewSettings);
+    let _ = render_layout(&mut a, L::Spotify, 120, 40);
+    let o = a.overlay_rect.get().expect("the modal records its rect");
+    assert!(o.x >= 18, "the compact popup is centred, clear of the pane");
+    // the far-left artist-pane column is clear of the centred overlay
+    let pane = Rect::new(1, 6, 16, 12);
+    assert!(
+        !a.art_occluded(pane),
+        "the artist pane photo stays visible beside the modal"
+    );
+    // a rect at the overlay's centre is, of course, still suppressed
+    let mid = Rect::new(o.x + o.width / 2, o.y + o.height / 2, 2, 2);
+    assert!(a.art_occluded(mid), "art under the modal is suppressed");
+}
+
+#[test]
+fn concert_requests_a_square_spotify_artist_photo() {
+    // Spotify's pane cover is circle-masked (fetched circle:true), so Concert must
+    // request its own square copy rather than reuse it.
+    use crate::artwork::ArtKey;
+    let mut a = demo();
+    spotify_playing(&mut a);
+    a.spov.sp_artist_cover_url = Some("https://img/artist.jpg".into());
+    let _ = render_layout(&mut a, L::Concert, 100, 32);
+    let sq = ArtKey::square("https://img/artist.jpg");
+    assert_ne!(
+        sq,
+        ArtKey::remote("https://img/artist.jpg"),
+        "the square copy is a distinct bucket from the round one"
+    );
+    assert!(
+        a.grid_art.borrow().contains_key(&sq),
+        "Concert queued the square Spotify artist photo"
+    );
+}

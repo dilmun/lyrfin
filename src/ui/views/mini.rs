@@ -197,6 +197,32 @@ fn sidebar_card(f: &mut Frame, area: Rect, app: &AppState) {
 }
 
 /// The view's primary content as a full-width card.
+/// Draw the card's bordered frame, with the search field in the border when a
+/// search is active — the same treatment the wide layout's shell gives it.
+///
+/// The mini card composes `panel` directly rather than going through
+/// `browser_shell`, so it does not inherit that behaviour and the field simply
+/// never appeared here: pressing `/` looked like it had done nothing at all.
+fn card_frame(
+    f: &mut Frame,
+    area: Rect,
+    app: &AppState,
+    title: &str,
+    search: Option<components::SearchBar<'_>>,
+) -> Rect {
+    match search {
+        Some(bar) => {
+            // the short name only — a narrow card has no room for the decorated
+            // title beside the field (see the shell's equivalent)
+            let context = title.split('·').next().unwrap_or("").trim();
+            let (left, right) =
+                components::search_title(&app.theme, &bar, context, components::sel_caps(app));
+            components::panel_titled_line(f, area, app, left, right, true)
+        }
+        None => components::panel(f, area, app, title, true),
+    }
+}
+
 fn main_card(f: &mut Frame, area: Rect, app: &AppState) {
     match app.layout {
         // the Miller browser shows exactly one of its three columns
@@ -212,8 +238,29 @@ fn main_card(f: &mut Frame, area: Rect, app: &AppState) {
                 app.spotify.conn,
                 crate::spotify::ConnState::Connected { .. }
             ) {
+                let sp = &app.spotify;
                 let title = super::spotify_view::spotify_main_title(app);
-                let inner = components::panel(f, area, app, &title, true);
+                let info = if sp.in_search {
+                    format!("{} results", sp.items.len())
+                } else {
+                    String::new()
+                };
+                let inner = card_frame(
+                    f,
+                    area,
+                    app,
+                    &title,
+                    (sp.searching || sp.in_search).then(|| components::SearchBar {
+                        query: &sp.query,
+                        caret: sp.query.chars().count(),
+                        focused: sp.searching,
+                        loading: sp.loading,
+                        tick: app.tick,
+                        placeholder: "search Spotify…",
+                        scope: "",
+                        info: &info,
+                    }),
+                );
                 super::spotify_view::spotify_main_body(f, inner, app);
             } else {
                 super::spotify_view::spotify_auth(f, area, app);
@@ -225,8 +272,29 @@ fn main_card(f: &mut Frame, area: Rect, app: &AppState) {
             super::radio_view::radio_body(f, inner, app);
         }
         _ => {
+            let searching = app.search.active || !app.search.query.is_empty();
             let title = components::tracklist_title(app);
-            let inner = components::panel(f, area, app, &title, true);
+            let info = if searching {
+                format!("{} results", app.search_results().len())
+            } else {
+                String::new()
+            };
+            let inner = card_frame(
+                f,
+                area,
+                app,
+                &title,
+                searching.then(|| components::SearchBar {
+                    query: &app.search.query,
+                    caret: app.search.query.chars().count(),
+                    focused: app.focus == Focus::Search,
+                    loading: false,
+                    tick: app.tick,
+                    placeholder: "search your library…",
+                    scope: "",
+                    info: &info,
+                }),
+            );
             components::local_main_body(f, inner, app);
         }
     }

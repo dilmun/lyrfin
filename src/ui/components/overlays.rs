@@ -11,6 +11,31 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
+/// A centred dialog's `(w, h)`, each clamped to leave a margin inside `area`. The
+/// single source of truth for the fixed-size confirm/name/picker dialogs, shared
+/// by the renderers and by `active_overlay_rect` (content-art suppression) so both
+/// agree on where the dialog sits.
+pub fn dialog_dims(area: Rect, w: u16, h: u16) -> (u16, u16) {
+    (
+        w.min(area.width.saturating_sub(4)),
+        h.min(area.height.saturating_sub(2)),
+    )
+}
+
+/// The add-to-playlist picker's `(w, h)`. Unlike the fixed dialogs it grows with
+/// the playlist count (capped to the screen), so its size is derived here and
+/// reused by `active_overlay_rect`.
+pub fn add_playlist_dims(app: &AppState, area: Rect) -> (u16, u16) {
+    let total = app.library.playlists_sorted().len() + 1; // + "New playlist"
+    let naming = matches!(app.input.naming, Some(crate::app::NameTarget::New));
+    // subject + blank + body (naming chrome | list rows), plus a footer + borders
+    let content = if naming { 4 } else { total as u16 + 2 };
+    (
+        46u16.min(area.width.saturating_sub(4)),
+        (content + 3).clamp(7, area.height.saturating_sub(2)),
+    )
+}
+
 // ---- "add to playlist" picker overlay ------------------------------------
 pub fn add_playlist_overlay(f: &mut Frame, area: Rect, app: &AppState) {
     let th = &app.theme;
@@ -24,10 +49,7 @@ pub fn add_playlist_overlay(f: &mut Frame, area: Rect, app: &AppState) {
     } else {
         &[("⏎", "add"), ("＋", "new"), ("esc", "close")]
     };
-    let w = 46u16.min(area.width.saturating_sub(4));
-    // subject + blank + body (naming chrome | list rows), plus a footer + borders
-    let content = if naming { 4 } else { total as u16 + 2 };
-    let h = (content + 3).clamp(7, area.height.saturating_sub(2));
+    let (w, h) = add_playlist_dims(app, area);
     let inner = overlay_frame(
         f,
         area,
@@ -139,8 +161,7 @@ pub fn spotify_playlist_overlay(f: &mut Frame, area: Rect, app: &AppState) {
             SpNaming::New => ("NEW SPOTIFY PLAYLIST", "Name", "create"),
             SpNaming::Rename { .. } => ("RENAME SPOTIFY PLAYLIST", "New name", "rename"),
         };
-        let w = 52u16.min(area.width.saturating_sub(4));
-        let h = 7u16.min(area.height.saturating_sub(2));
+        let (w, h) = dialog_dims(area, 52, 7);
         let inner = overlay_frame(
             f,
             area,
@@ -267,8 +288,7 @@ pub fn spotify_confirm_delete_overlay(f: &mut Frame, area: Rect, app: &AppState)
         return;
     };
     let th = &app.theme;
-    let w = 52u16.min(area.width.saturating_sub(4));
-    let h = 7u16.min(area.height.saturating_sub(2));
+    let (w, h) = dialog_dims(area, 52, 7);
     let inner = overlay_frame(
         f,
         area,
@@ -324,8 +344,7 @@ pub fn name_overlay(f: &mut Frame, area: Rect, app: &AppState) {
         NameTarget::SpotifyClientId => ("SPOTIFY CLIENT ID", "Paste ID", "save"),
     };
     let th = &app.theme;
-    let w = 52u16.min(area.width.saturating_sub(4));
-    let h = 7u16.min(area.height.saturating_sub(2));
+    let (w, h) = dialog_dims(area, 52, 7);
     let inner = overlay_frame(
         f,
         area,
@@ -374,8 +393,7 @@ pub fn confirm_delete_overlay(f: &mut Frame, area: Rect, app: &AppState) {
         .map(|p| p.name.clone())
         .unwrap_or_default();
     let th = &app.theme;
-    let w = 52u16.min(area.width.saturating_sub(4));
-    let h = 7u16.min(area.height.saturating_sub(2));
+    let (w, h) = dialog_dims(area, 52, 7);
     let inner = overlay_frame(
         f,
         area,

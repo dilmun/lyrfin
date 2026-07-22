@@ -122,6 +122,7 @@ impl AppState {
             focus_rects: std::cell::RefCell::new(Vec::new()),
             last_source: None,
             overlay_hits: std::cell::Cell::new(0),
+            overlay_rect: std::cell::Cell::new(None),
             resize_edges: std::cell::RefCell::new(Vec::new()),
             resize_drag: None,
             search: SearchState::default(),
