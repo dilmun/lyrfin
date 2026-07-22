@@ -5,7 +5,7 @@
 //! frame, sets a breadcrumb); Esc pops back. All lists are built synchronously
 //! from the in-memory [`crate::library::Library`] (no async — the data is local).
 
-use super::nav::NavStack;
+use super::nav::{Frame, NavDir, NavStack};
 use super::release::{POPULAR_HEADER, ReleaseRow, ReleaseSection, release_grid_step};
 use super::*;
 use crate::core::model::{AlbumId, ArtistId, PlaylistId, TrackId};
@@ -112,8 +112,15 @@ impl LocalSection {
     }
 }
 
+/// Per-frame local restore state. Grid-vs-list is *per location*, not per section:
+/// storing it only in `views.grid` (keyed by section) meant backing out of a
+/// drill-in could land you in a different render mode than you left it in.
+pub struct LocalCtx {
+    pub grid: bool,
+}
+
 /// The local library's drill-in browse state: the current list + cursor +
-/// breadcrumb, on the shared [`NavStack`] back-stack. Mirrors the Spotify browse
+/// breadcrumb, on the shared [`NavStack`] history. Mirrors the Spotify browse
 /// model so both navigate identically.
 #[derive(Default)]
 pub struct LocalBrowse {
@@ -123,7 +130,7 @@ pub struct LocalBrowse {
     /// Breadcrumb when drilled into a container (e.g. "◉ Album"); `None` at the
     /// section level.
     pub crumb: Option<String>,
-    pub nav: NavStack<LocalItem>,
+    pub nav: NavStack<LocalItem, LocalCtx>,
     /// Render the current container section as a cover-art grid (vs a flat list).
     pub grid: bool,
     /// Column count from the last grid render — drives 2-D navigation. Interior
@@ -437,7 +444,10 @@ impl AppState {
             std::mem::take(&mut self.local.items),
             self.local.sel,
             self.local.crumb.take(),
-            (),
+            self.focus, // pre-drill focus, restored by `local_back`
+            LocalCtx {
+                grid: self.local.grid,
+            },
         );
         self.local.crumb = Some(crumb);
         self.local.items = children;
@@ -497,17 +507,55 @@ impl AppState {
         }
     }
 
-    /// Back out of a drill-in: pop a frame, restoring the parent list + cursor +
-    /// breadcrumb verbatim. Returns `true` if it popped (else already at the top).
+    /// Back out of a drill-in: restore the parent list + cursor + breadcrumb +
+    /// focus + grid mode verbatim. Returns `true` if it moved (else at the top).
     pub(crate) fn local_back(&mut self) -> bool {
-        if let Some(f) = self.local.nav.pop() {
-            self.local.items = f.items;
-            self.local.sel = f.sel;
-            self.local.crumb = f.crumb;
-            true
-        } else {
-            false
-        }
+        self.local_step(NavDir::Back)
+    }
+
+    /// Step forward again after a [`Self::local_back`], restoring the list stepped
+    /// out of. Returns `true` if it moved (else nothing to redo).
+    pub(crate) fn local_forward(&mut self) -> bool {
+        self.local_step(NavDir::Forward)
+    }
+
+    /// Swap the current browse location with one from the history.
+    ///
+    /// `self.local` is destructured so `nav` and the fields the outgoing frame is
+    /// built from are *disjoint* borrows — that's what lets the frame stay a lazy
+    /// closure. It matters: building it `mem::take`s the visible list, so an eager
+    /// build would blank the pane whenever the step turns out to be unavailable.
+    fn local_step(&mut self, dir: NavDir) -> bool {
+        let focus = self.focus;
+        let LocalBrowse {
+            items,
+            sel,
+            crumb,
+            grid,
+            nav,
+            ..
+        } = &mut self.local;
+        let outgoing = || Frame {
+            items: std::mem::take(items),
+            sel: *sel,
+            crumb: crumb.take(),
+            focus,
+            ctx: LocalCtx { grid: *grid },
+        };
+        let restored = match dir {
+            NavDir::Back => nav.back(outgoing),
+            NavDir::Forward => nav.forward(outgoing),
+        };
+        let Some(f) = restored else { return false };
+        self.local.items = f.items;
+        self.local.sel = f.sel;
+        self.local.crumb = f.crumb;
+        self.local.grid = f.ctx.grid;
+        // the saved focus may name a pane hidden since the drill-in — clamp it back
+        // onto this view's ring rather than stranding focus on something undrawn
+        self.focus = f.focus;
+        self.clamp_focus();
+        true
     }
 
     /// Enter in the local library: a section (sidebar) loads its list; a container

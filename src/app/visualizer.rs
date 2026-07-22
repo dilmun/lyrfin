@@ -129,18 +129,26 @@ impl Visualizer {
 }
 
 impl AppState {
-    /// Feed the visualizer this tick's spectrum — but only from the audio of the
-    /// CURRENT view's context: radio audio drives it in the Radio view; the local
-    /// player drives it everywhere else (flat while radio streams, since local is
-    /// paused). So radio never bleeds its motion into the music-player views and
-    /// vice-versa.
+    /// Feed the visualizer this tick's spectrum.
+    ///
+    /// Every source's PCM already flows through the one audio ring, so the FFT sees
+    /// whatever is audible — local, the Spotify bridge, or a radio stream. The only
+    /// question is whether the bars should move, and the answer is simply "is
+    /// anything playing", via the same resolver the OS bridge uses.
+    ///
+    /// A source-browsing view still shows only its own source's motion: a paused
+    /// source is not audible, so nothing bleeds across. What changed is the player
+    /// views (Now Playing / Lyrics / Concert), which belong to no source — they used
+    /// to gate on the *local* player alone and so sat flat while Spotify or radio
+    /// streamed, despite real spectrum data arriving.
     pub(super) fn update_viz(&mut self) {
-        let audio_live = if self.layout == Layout::Spotify {
-            self.spov.now_spotify.is_some() && !self.spov.spotify_paused
-        } else if self.layout == Layout::Radio {
-            self.rnow.now_station.is_some() && !self.rnow.radio_paused
-        } else {
-            self.player.status == Status::Playing
+        let audio_live = match self.layout {
+            // a player view has no source of its own → whatever is audible
+            l if l.is_player_view() => self.audible_source().is_some(),
+            // a source view reflects its own source, and only its own
+            Layout::Spotify => self.spov.now_spotify.is_some() && !self.spov.spotify_paused,
+            Layout::Radio => self.rnow.now_station.is_some() && !self.rnow.radio_paused,
+            _ => self.player.status == Status::Playing,
         };
         let playing = self.player.spectrum.len() >= 2 && audio_live;
         self.viz.update(

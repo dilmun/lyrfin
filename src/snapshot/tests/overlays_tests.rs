@@ -109,14 +109,14 @@ fn open_overlay_swallows_global_one_key_commands() {
         mods: Mods::default(),
     };
     assert!(matches!(crate::keymap::map(&a, esc), Action::Back));
-    let ctrl_o = Key {
-        code: KeyCode::Char('o'),
+    let ctrl_bracket = Key {
+        code: KeyCode::Char('['),
         mods: Mods {
             ctrl: true,
             ..Default::default()
         },
     };
-    assert!(matches!(crate::keymap::map(&a, ctrl_o), Action::Back));
+    assert!(matches!(crate::keymap::map(&a, ctrl_bracket), Action::Back));
     // closing the overlay restores the global commands
     a.settings.popup = None;
     assert!(matches!(

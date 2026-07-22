@@ -15,11 +15,52 @@ use crate::core::player::Status;
 use crate::media::{MediaCommand, NowPlayingSnapshot};
 
 /// Which source currently owns system playback.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum NpSource {
+///
+/// Also the UI's notion of "what's playing": the player views (Now Playing /
+/// Lyrics / Concert) belong to no single source, so they resolve through
+/// [`AppState::now_playing_source`] exactly as the OS bridge does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NpSource {
     Local,
     Spotify,
     Radio,
+}
+
+/// What the player views draw, independent of source. `live` marks a stream with
+/// a position but no total (radio), so callers show a LIVE badge instead of a
+/// progress beam. `year`/`rating` are local-library concepts and are absent
+/// elsewhere rather than faked.
+pub(crate) struct PlayingCard {
+    pub title: String,
+    pub artist: String,
+    pub album: String,
+    pub year: Option<u16>,
+    pub rating: u8,
+    pub elapsed: Duration,
+    pub duration: Duration,
+    pub frac: f32,
+    pub live: bool,
+}
+
+impl NpSource {
+    /// Stable key for the session file. A plain name, not an index, so the file
+    /// survives the enum gaining or reordering variants.
+    pub(crate) fn key(self) -> &'static str {
+        match self {
+            NpSource::Local => "local",
+            NpSource::Spotify => "spotify",
+            NpSource::Radio => "radio",
+        }
+    }
+
+    pub(crate) fn from_key(s: &str) -> Option<Self> {
+        Some(match s {
+            "local" => NpSource::Local,
+            "spotify" => NpSource::Spotify,
+            "radio" => NpSource::Radio,
+            _ => return None,
+        })
+    }
 }
 
 impl AppState {
@@ -27,31 +68,121 @@ impl AppState {
     /// wins (the overlays are mutually exclusive at the audio engine), else the
     /// on-screen context so a paused card matches what lyrfin shows. `None` when
     /// nothing is loaded anywhere.
-    fn now_playing_source(&self) -> Option<NpSource> {
-        // actively-playing source wins (only one drives the engine at a time)
+    pub(crate) fn now_playing_source(&self) -> Option<NpSource> {
+        if let Some(s) = self.audible_source() {
+            return Some(s);
+        }
+        // nothing playing → reflect the on-screen context, else the source that was
+        // last audible (so pausing Spotify and opening Lyrics still shows Spotify),
+        // else any loaded source at all
+        let (local, spotify, radio) = (
+            self.current_track().is_some(),
+            self.spov.now_spotify.is_some(),
+            self.rnow.now_station.is_some(),
+        );
+        let loaded = |s: NpSource| match s {
+            NpSource::Local => local,
+            NpSource::Spotify => spotify,
+            NpSource::Radio => radio,
+        };
+        match self.layout {
+            Layout::Radio if radio => Some(NpSource::Radio),
+            Layout::Spotify if spotify => Some(NpSource::Spotify),
+            // the player views (3/4/5) have no source of their own — fall through
+            _ => self.last_source.filter(|&s| loaded(s)).or_else(|| {
+                [NpSource::Local, NpSource::Spotify, NpSource::Radio]
+                    .into_iter()
+                    .find(|&s| loaded(s))
+            }),
+        }
+    }
+
+    /// The source actually producing audio right now, if any. Only one drives the
+    /// engine at a time, so this is unambiguous — unlike the paused case, where
+    /// several sources can hold a loaded item at once.
+    pub(crate) fn audible_source(&self) -> Option<NpSource> {
         if self.rnow.now_station.is_some() && !self.rnow.radio_paused {
             return Some(NpSource::Radio);
         }
         if self.spov.now_spotify.is_some() && !self.spov.spotify_paused {
             return Some(NpSource::Spotify);
         }
-        if self.player.status == Status::Playing {
-            return Some(NpSource::Local);
-        }
-        // nothing playing → reflect the on-screen context, else any loaded source
-        let (local, spotify, radio) = (
-            self.current_track().is_some(),
-            self.spov.now_spotify.is_some(),
-            self.rnow.now_station.is_some(),
-        );
-        match self.layout {
-            Layout::Radio if radio => Some(NpSource::Radio),
-            Layout::Spotify if spotify => Some(NpSource::Spotify),
-            _ if local => Some(NpSource::Local),
-            _ if spotify => Some(NpSource::Spotify),
-            _ if radio => Some(NpSource::Radio),
-            _ => None,
-        }
+        (self.player.status == Status::Playing).then_some(NpSource::Local)
+    }
+
+    /// A source-neutral snapshot of what's playing, for the player views (Now
+    /// Playing / Lyrics / Concert) which belong to no single source.
+    ///
+    /// The sibling of [`now_playing_snapshot`], which does the same job for the OS
+    /// — same resolver, different consumer. `None` when nothing is loaded anywhere.
+    ///
+    /// [`now_playing_snapshot`]: Self::now_playing_snapshot
+    pub(crate) fn playing_card(&self) -> Option<PlayingCard> {
+        Some(match self.now_playing_source()? {
+            NpSource::Spotify => {
+                let tr = self.spov.now_spotify.as_ref()?;
+                // sp_dur tracks the live length (podcasts grow past the header);
+                // fall back to the declared length before the stream reports it
+                let dur = if self.spov.sp_dur > 0.0 {
+                    self.spov.sp_dur
+                } else {
+                    tr.duration_ms as f64 / 1000.0
+                };
+                let pos = self.spov.sp_pos.max(0.0);
+                PlayingCard {
+                    title: tr.name.clone(),
+                    artist: tr.primary_artist().to_string(),
+                    album: tr.album.clone(),
+                    // Spotify exposes neither a release year nor a personal rating
+                    year: None,
+                    rating: 0,
+                    elapsed: Duration::from_secs_f64(pos),
+                    duration: Duration::from_secs_f64(dur.max(0.0)),
+                    frac: if dur > 0.0 { (pos / dur) as f32 } else { 0.0 },
+                    live: false,
+                }
+            }
+            NpSource::Radio => {
+                let st = self.rnow.now_station.as_ref()?;
+                // the live ICY song when the stream reports one, else the station
+                let song = self
+                    .rnow
+                    .now_station_title
+                    .as_deref()
+                    .filter(|t| !t.is_empty());
+                PlayingCard {
+                    title: song.unwrap_or(&st.name).to_string(),
+                    // once a song is showing, the station becomes the by-line
+                    artist: if song.is_some() {
+                        st.name.clone()
+                    } else {
+                        String::new()
+                    },
+                    album: String::new(),
+                    year: None,
+                    rating: 0,
+                    elapsed: Duration::ZERO,
+                    duration: Duration::ZERO,
+                    frac: 0.0,
+                    // a stream has a position but no total to measure it against
+                    live: true,
+                }
+            }
+            NpSource::Local => {
+                let t = self.current_track()?;
+                PlayingCard {
+                    title: t.title.clone(),
+                    artist: t.artist.to_string(),
+                    album: t.album.to_string(),
+                    year: t.year,
+                    rating: t.rating,
+                    elapsed: self.player.elapsed,
+                    duration: self.player.duration,
+                    frac: self.player.progress(),
+                    live: false,
+                }
+            }
+        })
     }
 
     /// Build the OS "Now Playing" snapshot for the [`now_playing_source`], or

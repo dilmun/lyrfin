@@ -12,6 +12,7 @@ use crate::ui::theme::Rgb;
 
 mod equalizer_view;
 pub use equalizer_view::*;
+pub mod mini;
 pub(crate) mod settings_rows;
 mod settings_view;
 pub use settings_view::*;
@@ -75,9 +76,7 @@ pub fn dashboard(f: &mut Frame, area: Rect, app: &AppState) {
 /// j/k (rows) and enter (drill in / play). The optional Queue/Artist/Lyrics panes
 /// dock around the columns via the shared movable-pane system.
 pub fn library(f: &mut Frame, area: Rect, app: &AppState) {
-    use crate::app::{Focus, MouseTarget, ScrollBox};
-    let th = &app.theme;
-    let sh = app.config.arabic_shaping;
+    use crate::app::Focus;
 
     // dock the optional movable panes, then split the leftover core into 3 columns
     let core =
@@ -113,99 +112,101 @@ pub fn library(f: &mut Frame, area: Rect, app: &AppState) {
     ])
     .areas(core);
 
+    app.register_focus(core, Focus::Main);
     let on_main = app.focus == Focus::Main;
+    for (i, area) in [acol, bcol, ccol].into_iter().enumerate() {
+        browse_column(f, area, app, i as u8, on_main && app.browser.col == i as u8);
+    }
+}
+
+/// Render one Miller column (0 = ARTISTS, 1 = ALBUMS of the selected artist,
+/// 2 = TRACKS of the selected album) into `area`.
+///
+/// The three columns were three near-identical blocks; they differ only in their
+/// title, row content, accent and click targets, so they share one body. Extracted
+/// because the mini layout shows exactly **one** column at full width — it selects
+/// by `browser.col` instead of drawing all three side by side.
+///
+/// Only the visible row slice is materialised: a column is `n` rows deep but at
+/// most `h` are built, so a large library doesn't allocate per frame for rows that
+/// are scrolled out of view.
+pub(super) fn browse_column(f: &mut Frame, area: Rect, app: &AppState, col: u8, focused: bool) {
+    use crate::app::{MouseTarget, ScrollBox};
+    let th = &app.theme;
+    let sh = app.config.arabic_shaping;
+
     let artists = app.library.artists_sorted();
     let (na, nb, nc) = app.browser_counts();
     let a_sel = app.browser.artist.min(na.saturating_sub(1));
     let b_sel = app.browser.album.min(nb.saturating_sub(1));
     let t_sel = app.browser.track.min(nc.saturating_sub(1));
-
-    // ── ARTISTS ──
-    let focused = on_main && app.browser.col == 0;
-    let inner = components::panel(f, acol, app, &format!("ARTISTS · {na}"), focused);
-    app.register_click(inner, MouseTarget::Scroll(ScrollBox::BrowseArtists));
-    let (w, h) = (inner.width as usize, inner.height as usize);
-    let off = components::sticky_off(&app.browser.artist_off, a_sel, na, h);
-    let mut lines = Vec::new();
-    for (i, ar) in artists.iter().enumerate().skip(off).take(h) {
-        app.register_click(
-            Rect::new(inner.x, inner.y + (i - off) as u16, inner.width, 1),
-            MouseTarget::BrowseArtist(i),
-        );
-        let count = app.library.albums_of(ar.id).len().to_string();
-        let name = crate::arabic::shaped(&ar.name, sh);
-        lines.push(browse_row(
-            app,
-            i == a_sel,
-            focused,
-            &name,
-            &count,
-            w,
-            th.accent[0],
-        ));
-    }
-    f.render_widget(Paragraph::new(lines), inner);
-
-    // ── ALBUMS (of the selected artist) ──
     let cur_artist = artists.get(a_sel);
     let albums = cur_artist
         .map(|a| app.library.albums_of(a.id))
         .unwrap_or_default();
-    let focused = on_main && app.browser.col == 1;
-    let title = cur_artist
-        .map(|a| format!("ALBUMS · {}", crate::arabic::shaped(&a.name, sh)))
-        .unwrap_or_else(|| "ALBUMS".into());
-    let inner = components::panel(f, bcol, app, &title, focused);
-    app.register_click(inner, MouseTarget::Scroll(ScrollBox::BrowseAlbums));
-    let (w, h) = (inner.width as usize, inner.height as usize);
-    let off = components::sticky_off(&app.browser.album_off, b_sel, albums.len(), h);
-    let mut lines = Vec::new();
-    for (i, al) in albums.iter().enumerate().skip(off).take(h) {
-        app.register_click(
-            Rect::new(inner.x, inner.y + (i - off) as u16, inner.width, 1),
-            MouseTarget::BrowseAlbum(i),
-        );
-        let year = al.year.map(|y| y.to_string()).unwrap_or_default();
-        let name = crate::arabic::shaped(&al.title, sh);
-        lines.push(browse_row(
-            app,
-            i == b_sel,
-            focused,
-            &name,
-            &year,
-            w,
-            th.accent[1],
-        ));
-    }
-    f.render_widget(Paragraph::new(lines), inner);
-
-    // ── TRACKS (of the selected album) ──
-    let cur_album = albums.get(b_sel);
-    let tracks = cur_album
+    let tracks = albums
+        .get(b_sel)
         .map(|a| app.library.tracks_of(a.id))
         .unwrap_or_default();
-    let focused = on_main && app.browser.col == 2;
-    let inner = components::panel(f, ccol, app, &format!("TRACKS · {}", tracks.len()), focused);
-    app.register_click(inner, MouseTarget::Scroll(ScrollBox::BrowseTracks));
+
+    // everything that differs between the three columns, resolved up front
+    let (title, n, sel, off_cell, accent, scroll) = match col {
+        0 => (
+            format!("ARTISTS · {na}"),
+            na,
+            a_sel,
+            &app.browser.artist_off,
+            th.accent[0],
+            ScrollBox::BrowseArtists,
+        ),
+        1 => (
+            cur_artist
+                .map(|a| format!("ALBUMS · {}", crate::arabic::shaped(&a.name, sh)))
+                .unwrap_or_else(|| "ALBUMS".into()),
+            albums.len(),
+            b_sel,
+            &app.browser.album_off,
+            th.accent[1],
+            ScrollBox::BrowseAlbums,
+        ),
+        _ => (
+            format!("TRACKS · {}", tracks.len()),
+            tracks.len(),
+            t_sel,
+            &app.browser.track_off,
+            th.accent[2],
+            ScrollBox::BrowseTracks,
+        ),
+    };
+
+    let inner = components::panel(f, area, app, &title, focused);
+    app.register_click(inner, MouseTarget::Scroll(scroll));
     let (w, h) = (inner.width as usize, inner.height as usize);
-    let off = components::sticky_off(&app.browser.track_off, t_sel, tracks.len(), h);
-    let mut lines = Vec::new();
-    for (i, tk) in tracks.iter().enumerate().skip(off).take(h) {
+    let off = components::sticky_off(off_cell, sel, n, h);
+    let mut lines = Vec::with_capacity(h.min(n.saturating_sub(off)));
+    for i in off..n.min(off + h) {
+        let (target, name, trail) = match col {
+            0 => (
+                MouseTarget::BrowseArtist(i),
+                crate::arabic::shaped(&artists[i].name, sh),
+                app.library.albums_of(artists[i].id).len().to_string(),
+            ),
+            1 => (
+                MouseTarget::BrowseAlbum(i),
+                crate::arabic::shaped(&albums[i].title, sh),
+                albums[i].year.map(|y| y.to_string()).unwrap_or_default(),
+            ),
+            _ => (
+                MouseTarget::BrowseTrack(i),
+                crate::arabic::shaped(&tracks[i].title, sh),
+                components::mmss(tracks[i].duration()),
+            ),
+        };
         app.register_click(
             Rect::new(inner.x, inner.y + (i - off) as u16, inner.width, 1),
-            MouseTarget::BrowseTrack(i),
+            target,
         );
-        let dur = components::mmss(tk.duration());
-        let title = crate::arabic::shaped(&tk.title, sh);
-        lines.push(browse_row(
-            app,
-            i == t_sel,
-            focused,
-            &title,
-            &dur,
-            w,
-            th.accent[2],
-        ));
+        lines.push(browse_row(app, i == sel, focused, &name, &trail, w, accent));
     }
     f.render_widget(Paragraph::new(lines), inner);
 }
@@ -255,13 +256,30 @@ fn browse_row(
     components::pill_line(app, w, content, bg)
 }
 
+/// The queue pane for the source-neutral player views: whichever source is
+/// playing owns the queue shown, so Now Playing / Lyrics list the upcoming
+/// Spotify tracks while Spotify streams instead of a stale local queue. Radio has
+/// no queue, so it keeps the local one (empty or not) rather than inventing one.
+fn playing_queue(f: &mut Frame, area: Rect, app: &AppState) {
+    if app.now_playing_source() == Some(crate::app::NpSource::Spotify) {
+        components::spotify_queue(
+            f,
+            area,
+            app,
+            app.focus == crate::app::Focus::Pane(Panel::Queue),
+        );
+    } else {
+        components::queue(f, area, app);
+    }
+}
+
 /// 03 — Now Playing: a full-width playback bar at the bottom; above it the
 /// visualizer (or album art), with the queue docked beside/over it (not full
 /// height — it sits above the playback like on Home).
 pub fn nowplaying(f: &mut Frame, area: Rect, app: &AppState) {
     // same playback-bar height as every other view (#1–#4): `area` here is the
     // body (frame minus the 1-row status bar), so the frame height is area+1.
-    let play_h = components::now_bar_height(app.config.player_viz, area.height + 1);
+    let play_h = components::now_bar_height(app.config.player_viz, area.width, area.height + 1);
     let [content, play] =
         Layout::vertical([Constraint::Min(0), Constraint::Length(play_h)]).areas(area);
     components::now_bar(f, play, app);
@@ -272,10 +290,12 @@ pub fn nowplaying(f: &mut Frame, area: Rect, app: &AppState) {
     if q.shown && c.width >= 36 && c.height >= 4 {
         let span = components::pane_span(c, q.dock, q.size); // q.size is a percentage
         let (qr, rest) = components::dock_split(c, q.dock, span, span.min(c.height.max(2) / 2));
-        components::queue(f, qr, app);
+        playing_queue(f, qr, app);
         app.register_pane_edge(c, q.dock, qr, Panel::Queue);
+        app.register_focus(qr, crate::app::Focus::Pane(Panel::Queue));
         c = rest;
     }
+    app.register_focus(c, crate::app::Focus::Main);
 
     if app.panel(Panel::Visualizer).shown && c.height >= 4 {
         let mode = app.viz_mode();
@@ -360,13 +380,16 @@ pub fn concert(f: &mut Frame, area: Rect, app: &AppState) {
     ])
     .areas(meta);
 
-    let tk = app.current_track();
-    let title = tk.map(|t| t.title.clone()).unwrap_or_else(|| "—".into());
-    let artist = tk.map(|t| t.artist.to_string()).unwrap_or_default();
-    let album = tk.map(|t| t.album.to_string()).unwrap_or_default();
-    let year = tk.and_then(|t| t.year);
-    let rating = tk.map(|t| t.rating).unwrap_or(0);
-    let album_line = match year {
+    // whatever is playing — local, Spotify or radio (this view has no source)
+    let card = app.playing_card();
+    let title = card
+        .as_ref()
+        .map(|c| c.title.clone())
+        .unwrap_or_else(|| "—".into());
+    let artist = card.as_ref().map(|c| c.artist.clone()).unwrap_or_default();
+    let album = card.as_ref().map(|c| c.album.clone()).unwrap_or_default();
+    let rating = card.as_ref().map(|c| c.rating).unwrap_or(0);
+    let album_line = match card.as_ref().and_then(|c| c.year) {
         Some(y) if !album.is_empty() => format!("{album}  ·  {y}"),
         _ => album.clone(),
     };
@@ -405,24 +428,36 @@ pub fn concert(f: &mut Frame, area: Rect, app: &AppState) {
     );
 
     // progress row: `elapsed  ━━●── remaining`, full width, with a Seek hit-box
-    // registered over exactly the beam so clicking/dragging it seeks.
-    let pre = format!("{} ", components::mmss(app.player.elapsed));
-    let remaining = app.player.duration.saturating_sub(app.player.elapsed);
-    let suf = format!(" {}", components::mmss(remaining));
-    let (plen, slen) = (pre.chars().count() as u16, suf.chars().count() as u16);
-    let bar_w = prog_row.width.saturating_sub(plen + slen).max(1);
-    app.register_click(
-        Rect::new(prog_row.x + plen, prog_row.y, bar_w, 1),
-        MouseTarget::Seek,
-    );
-    let mut prog: Vec<Span> = vec![Span::styled(pre, Style::default().fg(th.text_dim.into()))];
-    prog.extend(components::progress_spans(
-        th,
-        app.player.progress(),
-        bar_w as usize,
-    ));
-    prog.push(Span::styled(suf, Style::default().fg(th.text_faint.into())));
-    f.render_widget(Paragraph::new(Line::from(prog)), prog_row);
+    // registered over exactly the beam so clicking/dragging it seeks. A live
+    // stream has no total to measure against, so it gets a LIVE badge instead of
+    // a beam that could never fill.
+    if card.as_ref().is_some_and(|c| c.live) {
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "● LIVE",
+                Style::default().fg(th.accent[0].into()),
+            )))
+            .alignment(Alignment::Center),
+            prog_row,
+        );
+    } else {
+        let (elapsed, duration, frac) = card
+            .as_ref()
+            .map(|c| (c.elapsed, c.duration, c.frac))
+            .unwrap_or_default();
+        let pre = format!("{} ", components::mmss(elapsed));
+        let suf = format!(" {}", components::mmss(duration.saturating_sub(elapsed)));
+        let (plen, slen) = (pre.chars().count() as u16, suf.chars().count() as u16);
+        let bar_w = prog_row.width.saturating_sub(plen + slen).max(1);
+        app.register_click(
+            Rect::new(prog_row.x + plen, prog_row.y, bar_w, 1),
+            MouseTarget::Seek,
+        );
+        let mut prog: Vec<Span> = vec![Span::styled(pre, Style::default().fg(th.text_dim.into()))];
+        prog.extend(components::progress_spans(th, frac, bar_w as usize));
+        prog.push(Span::styled(suf, Style::default().fg(th.text_faint.into())));
+        f.render_widget(Paragraph::new(Line::from(prog)), prog_row);
+    }
 
     if viz_h > 0 {
         // borderless — blends into the Concert background, no panel box. Uses the
@@ -435,7 +470,7 @@ pub fn concert(f: &mut Frame, area: Rect, app: &AppState) {
 /// visualizer (top) and queue (right). Self-contained — no shared bottom bar.
 pub fn lyrics(f: &mut Frame, area: Rect, app: &AppState) {
     // playback card at the bottom — same height as every other view (#1–#4)
-    let play_h = components::now_bar_height(app.config.player_viz, area.height + 1);
+    let play_h = components::now_bar_height(app.config.player_viz, area.width, area.height + 1);
     let [mut content, play] =
         Layout::vertical([Constraint::Min(5), Constraint::Length(play_h)]).areas(area);
     components::now_bar(f, play, app);
@@ -446,8 +481,9 @@ pub fn lyrics(f: &mut Frame, area: Rect, app: &AppState) {
         let span = components::pane_span(content, q.dock, q.size); // percentage
         let (qr, rest) =
             components::dock_split(content, q.dock, span, span.min(content.height / 2).max(4));
-        components::queue(f, qr, app);
+        playing_queue(f, qr, app);
         app.register_pane_edge(content, q.dock, qr, Panel::Queue);
+        app.register_focus(qr, crate::app::Focus::Pane(Panel::Queue));
         content = rest;
     }
     let viz_p = app.panel(Panel::Visualizer);
@@ -475,12 +511,14 @@ pub fn lyrics(f: &mut Frame, area: Rect, app: &AppState) {
         content = rest;
     }
 
+    app.register_focus(content, crate::app::Focus::Main);
     components::lyrics_panel(
         f,
         content,
         app,
         app.focus == crate::app::Focus::Main,
-        crate::app::LyricsPane::Local,
+        // follows whatever is playing — this view belongs to no single source
+        app.active_lyrics_pane(),
     );
 }
 

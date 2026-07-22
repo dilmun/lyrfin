@@ -1143,7 +1143,9 @@ impl AppState {
     /// the Spotify view, else the local player. Drives the lyrics karaoke wipe so
     /// it follows the right clock.
     pub fn playback_elapsed(&self) -> std::time::Duration {
-        let base = if self.showing_spotify() {
+        // same source as `active_lyrics_pane`, or the wipe would track one track's
+        // clock while showing another's words
+        let base = if self.lyrics_source_is_spotify() {
             std::time::Duration::from_secs_f64(self.spov.sp_pos.max(0.0))
         } else {
             self.player.elapsed

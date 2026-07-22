@@ -74,7 +74,7 @@ fn spotify_drill_in_pushes_and_back_restores_the_parent_list() {
     // drill into the selected album (Album = Web-API path, no live session)
     let item = a.spotify.items[1].clone();
     a.spotify_open(item);
-    assert_eq!(a.spotify.nav_stack_len(), 1, "one frame pushed");
+    assert_eq!(a.spotify.nav_depth(), 1, "one frame pushed");
     assert!(
         a.spotify.crumb.as_deref() == Some("◉ Album Two"),
         "breadcrumb names the container"
@@ -91,7 +91,7 @@ fn spotify_drill_in_pushes_and_back_restores_the_parent_list() {
 
     // Esc pops back: the parent list + cursor + crumb are restored verbatim
     a.spotify_cancel();
-    assert_eq!(a.spotify.nav_stack_len(), 0, "frame popped");
+    assert_eq!(a.spotify.nav_depth(), 0, "frame popped");
     assert_eq!(a.spotify.items.len(), 2, "parent albums restored");
     assert_eq!(a.spotify.items[1].name, "Album Two");
     assert_eq!(a.spotify.sel, 1, "parent cursor restored");
@@ -130,34 +130,30 @@ fn q_is_quit_only_and_back_keys_pop_a_spotify_drill_in() {
         mods: Mods::default(),
     };
     assert_eq!(crate::keymap::map(&a, q), Action::Quit, "q maps to Quit");
-    let ctrl_o = Key {
-        code: KeyCode::Char('o'),
+    let ctrl_bracket = Key {
+        code: KeyCode::Char('['),
         mods: Mods {
             ctrl: true,
             ..Default::default()
         },
     };
     assert_eq!(
-        crate::keymap::map(&a, ctrl_o),
+        crate::keymap::map(&a, ctrl_bracket),
         Action::Back,
-        "ctrl-o maps to Back (vim-style up one level)"
+        "ctrl-[ maps to Back (the bracket pair's back half)"
     );
 
-    // drill into an album, then Back (esc/ctrl-o) pops the level instead of quitting
+    // drill into an album, then Back (esc / ctrl-[) pops the level instead of quitting
     let item = a.spotify.items[1].clone();
     a.spotify_open(item);
-    assert_eq!(a.spotify.nav_stack_len(), 1, "drilled in");
+    assert_eq!(a.spotify.nav_depth(), 1, "drilled in");
     a.running = true;
     a.update(Action::Back);
     assert!(
         a.running,
         "Back on a Spotify drill-in pops the level — does NOT quit"
     );
-    assert_eq!(
-        a.spotify.nav_stack_len(),
-        0,
-        "Back popped the Spotify drill-in"
-    );
+    assert_eq!(a.spotify.nav_depth(), 0, "Back popped the Spotify drill-in");
 
     // at the top level (nothing to back out of), q quits the app
     a.update(Action::Quit);
@@ -1579,17 +1575,17 @@ fn artist_pane_opens_the_view_correct_page() {
     a.layout = Layout::Spotify;
     a.open_artist_page();
     assert_eq!(
-        a.spotify.nav_stack_len(),
+        a.spotify.nav_depth(),
         1,
         "the Spotify view's Artist pane opens the Spotify artist page"
     );
 
     // a local view → opens the local artist instead, leaving the Spotify nav alone
-    let before = a.spotify.nav_stack_len();
+    let before = a.spotify.nav_depth();
     a.layout = Layout::Dashboard;
     a.open_artist_page();
     assert_eq!(
-        a.spotify.nav_stack_len(),
+        a.spotify.nav_depth(),
         before,
         "a local view does not drill the Spotify nav"
     );

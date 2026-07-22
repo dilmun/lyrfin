@@ -155,6 +155,22 @@ pub enum Layout {
 pub const VIEW_NAME_W: u16 = 7;
 
 impl Layout {
+    /// Whether this view belongs to **no single source** and therefore shows
+    /// whatever is playing — Now Playing, Lyrics and Concert.
+    ///
+    /// Every other view is a *source* view: Home and Library browse the local
+    /// library, Spotify browses Spotify, Radio browses stations, and each shows
+    /// only its own source's playback. That boundary is deliberate — a station
+    /// must not bleed into the local browser (or vice versa) just because it is
+    /// audible. The player views have no browser to be consistent with, so they
+    /// follow the audio instead.
+    pub fn is_player_view(self) -> bool {
+        matches!(
+            self,
+            Layout::FullPlayer | Layout::LyricsFocus | Layout::Concert
+        )
+    }
+
     /// Human-facing name shown in the status bar and command palette. Kept short
     /// and ≤ [`VIEW_NAME_W`] so the status-bar view slot is a fixed width.
     pub fn title(self) -> &'static str {

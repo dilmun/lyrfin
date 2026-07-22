@@ -17,6 +17,11 @@ impl AppState {
             self.appearance_at = std::time::Instant::now();
             self.poll_system_appearance();
         }
+        // remember which source is actually audible, so the player views can still
+        // resolve to it once everything is paused
+        if let Some(src) = self.audible_source() {
+            self.last_source = Some(src);
+        }
         let sleep_was = self.fx.sleep_until.is_some();
         self.update_viz();
         self.tick_sleep_timer();

@@ -55,6 +55,12 @@ pub struct Session {
     // highlight positions
     pub selection: Option<usize>,
     pub queue_sel: Option<usize>,
+    /// Which source was last actually producing audio ("local" / "spotify" /
+    /// "radio"). Nothing streams on launch, so without this the player views
+    /// (Now Playing / Lyrics / Concert) fall back to whichever source happens to
+    /// hold a loaded item and would show the last local track after a Spotify
+    /// session. A stable key, not an enum index.
+    pub last_source: Option<String>,
     /// Local library drill-in: the selected section, the open-container drill path
     /// (stable name-based refs), + the cursor — restored on reopen.
     pub local_section: Option<String>,

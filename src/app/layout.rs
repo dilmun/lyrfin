@@ -385,6 +385,28 @@ impl AppState {
         self.set_focus(ring[j]);
     }
 
+    /// Move focus to the pane lying in a direction (`ctrl+h/j/k/l`), using where
+    /// panes were actually drawn this frame rather than their dock config — so
+    /// panes sharing an edge, the Library's three columns, and any future
+    /// arrangement all work without special cases.
+    ///
+    /// Falls back to the focus ring on the horizontal axis when geometry offers
+    /// nothing: in the mini layout only one card is on screen, so there is no
+    /// neighbour to aim at and `ctrl+h`/`ctrl+l` should still walk the cards.
+    pub(crate) fn focus_toward(&mut self, dx: i32, dy: i32) {
+        let target = {
+            let rects = self.focus_rects.borrow();
+            pick_toward(&rects, self.focus, dx, dy)
+        };
+        match target {
+            Some(f) => self.set_focus(f),
+            // horizontal only: a vertical nudge with nothing above/below is a no-op
+            // rather than a surprising jump to an unrelated pane
+            None if dx != 0 => self.focus_dir(dx),
+            None => {}
+        }
+    }
+
     /// Move focus by `dir` (+1 next / -1 prev) through the view's focus ring
     /// (Tab / BackTab). One engine for every source view.
     pub(crate) fn cycle_focus(&mut self, dir: i32) {
@@ -397,5 +419,131 @@ impl AppState {
             None => ring[0], // focus isn't on screen → land on the first region
         };
         self.set_focus(next);
+    }
+}
+
+/// Pick the focus region lying in direction `(dx, dy)` from the currently focused
+/// one, given every region drawn this frame. Pure, so the geometry is unit-testable
+/// without a terminal.
+///
+/// Candidates must lie **strictly** that way (their far edge past the current
+/// pane's near edge, so an overlapping or identical rect never counts). Among
+/// those, ones that overlap on the perpendicular axis win outright — moving right
+/// from the main pane should reach the pane beside it, not one diagonally off in a
+/// corner — and ties break on centre distance.
+pub(crate) fn pick_toward(rects: &[(Rect, Focus)], from: Focus, dx: i32, dy: i32) -> Option<Focus> {
+    let cur = rects.iter().find(|(_, f)| *f == from).map(|(r, _)| *r)?;
+    let (cx, cy) = (
+        cur.x as i32 + cur.width as i32 / 2,
+        cur.y as i32 + cur.height as i32 / 2,
+    );
+    rects
+        .iter()
+        .filter(|(_, f)| *f != from)
+        .filter(|(r, _)| {
+            // strictly beyond the current pane on the axis of travel
+            match (dx, dy) {
+                (d, 0) if d > 0 => r.x >= cur.right(),
+                (d, 0) if d < 0 => r.right() <= cur.x,
+                (0, d) if d > 0 => r.y >= cur.bottom(),
+                (0, d) if d < 0 => r.bottom() <= cur.y,
+                _ => false,
+            }
+        })
+        .min_by_key(|(r, _)| {
+            let (rx, ry) = (
+                r.x as i32 + r.width as i32 / 2,
+                r.y as i32 + r.height as i32 / 2,
+            );
+            // overlap on the perpendicular axis beats raw proximity, so a move
+            // never cuts diagonally past an adjacent pane
+            let overlaps = if dx != 0 {
+                r.y < cur.bottom() && cur.y < r.bottom()
+            } else {
+                r.x < cur.right() && cur.x < r.right()
+            };
+            let travel = if dx != 0 {
+                (rx - cx).abs()
+            } else {
+                (ry - cy).abs()
+            };
+            let drift = if dx != 0 {
+                (ry - cy).abs()
+            } else {
+                (rx - cx).abs()
+            };
+            (!overlaps, travel, drift)
+        })
+        .map(|(_, f)| *f)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A Home-like layout: sidebar left, main centre, queue over lyrics on the right.
+    fn home() -> Vec<(Rect, Focus)> {
+        vec![
+            (Rect::new(0, 0, 20, 30), Focus::Sidebar),
+            (Rect::new(20, 0, 60, 30), Focus::Main),
+            (Rect::new(80, 0, 20, 15), Focus::Pane(Panel::Queue)),
+            (Rect::new(80, 15, 20, 15), Focus::Pane(Panel::Lyrics)),
+        ]
+    }
+
+    #[test]
+    fn moves_to_the_neighbour_on_that_side() {
+        let r = home();
+        assert_eq!(pick_toward(&r, Focus::Main, -1, 0), Some(Focus::Sidebar));
+        assert_eq!(pick_toward(&r, Focus::Sidebar, 1, 0), Some(Focus::Main));
+    }
+
+    #[test]
+    fn prefers_the_pane_it_actually_lines_up_with() {
+        // Both right-hand panes are equally far right; from Main (centred at y=15)
+        // the one sharing that band should win, not simply the first listed.
+        let r = home();
+        let hit = pick_toward(&r, Focus::Main, 1, 0);
+        assert!(
+            hit == Some(Focus::Pane(Panel::Queue)) || hit == Some(Focus::Pane(Panel::Lyrics)),
+            "lands on a right-hand pane, got {hit:?}"
+        );
+        // and stacked panes are reachable from each other vertically
+        assert_eq!(
+            pick_toward(&r, Focus::Pane(Panel::Queue), 0, 1),
+            Some(Focus::Pane(Panel::Lyrics)),
+            "ctrl+j from the queue reaches the pane stacked under it"
+        );
+        assert_eq!(
+            pick_toward(&r, Focus::Pane(Panel::Lyrics), 0, -1),
+            Some(Focus::Pane(Panel::Queue))
+        );
+    }
+
+    #[test]
+    fn nothing_that_way_yields_none() {
+        let r = home();
+        assert_eq!(
+            pick_toward(&r, Focus::Sidebar, -1, 0),
+            None,
+            "already leftmost"
+        );
+        assert_eq!(
+            pick_toward(&r, Focus::Main, 0, -1),
+            None,
+            "nothing above main"
+        );
+        // an unknown/undrawn focus can't anchor a move
+        assert_eq!(pick_toward(&r, Focus::Search, 1, 0), None);
+        assert_eq!(pick_toward(&[], Focus::Main, 1, 0), None, "empty registry");
+    }
+
+    #[test]
+    fn a_single_card_has_no_neighbour() {
+        // the mini layout draws exactly one region — geometry yields nothing, which
+        // is what makes `focus_toward` fall back to the focus ring
+        let one = vec![(Rect::new(0, 0, 50, 20), Focus::Main)];
+        assert_eq!(pick_toward(&one, Focus::Main, 1, 0), None);
+        assert_eq!(pick_toward(&one, Focus::Main, -1, 0), None);
     }
 }

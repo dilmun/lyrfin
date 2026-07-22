@@ -144,6 +144,21 @@ pub(crate) fn time_label(th: &Theme, elapsed: Duration, duration: Duration) -> V
 /// [`NowPlaying`]; the layout/geometry is identical for every source.
 pub(crate) fn playback_bar(f: &mut Frame, area: Rect, app: &AppState, np: NowPlaying) {
     let th = &app.theme;
+    // mini layout: too few rows for the bordered bar — one shared compact form
+    if area.height <= MINI_NOW_H + 1 {
+        compact_bar(
+            f,
+            area,
+            app,
+            CompactNow {
+                playing: np.transport.playing,
+                title: &np.title,
+                subtitle: &np.artist,
+                progress: Some((np.frac, np.elapsed, np.duration)),
+            },
+        );
+        return;
+    }
     let block = rounded(th, "", false);
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -321,17 +336,130 @@ pub(crate) fn playback_bar(f: &mut Frame, area: Rect, app: &AppState, np: NowPla
 }
 
 // ---- now-playing transport bar ------------------------------------------
+/// Rows the mini layout's playback bar occupies: one naming what's playing, one
+/// for progress. Borderless — at this size a rounded frame would cost more rows
+/// than the content it wraps.
+pub const MINI_NOW_H: u16 = 2;
+
 /// Height of the playback bar, kept identical across every view (#1–#4): the
-/// tall layout (with the bar visualizer) when there's room, else the compact
-/// one. `frame_h` is the full frame height so all views agree on the threshold.
-pub fn now_bar_height(player_viz: bool, frame_h: u16) -> u16 {
-    if player_viz && frame_h >= 30 { 9 } else { 6 }
+/// compact 2-row bar on a mini-sized frame, else the tall layout (with the bar
+/// visualizer) when there's room, else the standard one. `frame_w`/`frame_h` are
+/// the full frame dimensions so all views agree on the thresholds.
+pub fn now_bar_height(player_viz: bool, frame_w: u16, frame_h: u16) -> u16 {
+    if crate::ui::breakpoint::is_mini(Rect::new(0, 0, frame_w, frame_h)) {
+        MINI_NOW_H
+    } else if player_viz && frame_h >= 30 {
+        9
+    } else {
+        6
+    }
+}
+
+/// What the compact bar shows, independent of source. `progress` is `None` for a
+/// live stream, which has a position but no total to measure it against.
+pub(crate) struct CompactNow<'a> {
+    pub playing: bool,
+    pub title: &'a str,
+    pub subtitle: &'a str,
+    pub progress: Option<(f32, Duration, Duration)>,
+}
+
+/// The mini layout's 2-row playback bar. Shared by every source — the local and
+/// Spotify bars reach it through [`playback_bar`], radio through
+/// [`radio_now_bar`] — so the narrow layout stays consistent across views.
+pub(crate) fn compact_bar(f: &mut Frame, area: Rect, app: &AppState, now: CompactNow<'_>) {
+    let th = &app.theme;
+    if area.width < 4 || area.height == 0 {
+        return;
+    }
+    let [top, bot] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
+
+    // ── line 1: status glyph, then title · subtitle, clipped to the row
+    let ic = if now.playing {
+        &app.icons.play
+    } else {
+        &app.icons.pause
+    };
+    let lead = format!("{ic} ");
+    let mut room = (area.width as usize).saturating_sub(lead.chars().count());
+    let mut spans = vec![Span::styled(
+        lead,
+        Style::default()
+            .fg(col(th.accent[0]))
+            .add_modifier(Modifier::BOLD),
+    )];
+    // the title is the point of the row; the subtitle only gets the leftovers, and
+    // only if enough survive to be worth a separator
+    let title = super::clip(now.title, room);
+    room = room.saturating_sub(title.chars().count());
+    spans.push(Span::styled(
+        title,
+        Style::default()
+            .fg(col(th.title_text()))
+            .add_modifier(Modifier::BOLD),
+    ));
+    if !now.subtitle.is_empty() && room > 4 {
+        let sub = super::clip(now.subtitle, room - 3);
+        spans.push(Span::styled(
+            format!(" · {sub}"),
+            Style::default().fg(col(th.meta_text())),
+        ));
+    }
+    f.render_widget(Paragraph::new(Line::from(spans)), top);
+
+    if bot.height == 0 {
+        return;
+    }
+    // ── line 2: elapsed ── bar ── total, with the same seek hit-box as the full bar
+    let Some((frac, elapsed, duration)) = now.progress else {
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "  ● LIVE",
+                Style::default().fg(col(th.accent[0])),
+            ))),
+            bot,
+        );
+        return;
+    };
+    let (l, r) = (mmss(elapsed), mmss(duration));
+    let times = l.chars().count() + r.chars().count() + 2;
+    let bar_w = (bot.width as usize).saturating_sub(times);
+    let dimmed = Style::default().fg(col(th.text_faint));
+    let mut prog = vec![Span::styled(format!("{l} "), dimmed)];
+    prog.extend(progress_spans(th, frac, bar_w));
+    prog.push(Span::styled(format!(" {r}"), dimmed));
+    if bar_w > 0 {
+        app.register_click(
+            Rect::new(bot.x + l.chars().count() as u16 + 1, bot.y, bar_w as u16, 1),
+            MouseTarget::Seek,
+        );
+    }
+    f.render_widget(Paragraph::new(Line::from(prog)), bot);
 }
 
 /// A friendly idle now-bar: a rounded frame with a bold headline and a faint
 /// hint, for when nothing is loaded — laid out like the active bars (a 1-col
 /// gutter then the text).
 fn idle_bar(f: &mut Frame, area: Rect, th: &Theme, head: &str, hint: &str) {
+    // mini layout: the rounded frame would consume both rows it wraps
+    if area.height <= MINI_NOW_H + 1 {
+        f.render_widget(
+            Paragraph::new(vec![
+                Line::from(Span::styled(
+                    head.to_string(),
+                    Style::default()
+                        .fg(col(th.text_dim))
+                        .add_modifier(Modifier::BOLD),
+                )),
+                Line::from(Span::styled(
+                    hint.to_string(),
+                    Style::default().fg(col(th.text_faint)),
+                )),
+            ]),
+            area,
+        );
+        return;
+    }
     let block = rounded(th, "", false);
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -355,9 +483,9 @@ fn idle_bar(f: &mut Frame, area: Rect, th: &Theme, head: &str, hint: &str) {
 
 pub fn now_bar(f: &mut Frame, area: Rect, app: &AppState) {
     let th = &app.theme;
-    // The bar belongs entirely to the view: the Radio view always shows the
-    // radio context (idle when nothing's tuned) and never the local track; every
-    // other view shows the local player and never the radio. The two never leak.
+    // A *source* view's bar belongs to that source: the Radio view always shows the
+    // radio context (idle when nothing's tuned) and never the local track, and the
+    // Spotify view likewise. Those two never leak into each other.
     if app.layout == AppLayout::Radio {
         radio_now_bar(f, area, app);
         return;
@@ -366,8 +494,27 @@ pub fn now_bar(f: &mut Frame, area: Rect, app: &AppState) {
         spotify_now_bar(f, area, app);
         return;
     }
-    // the local track ONLY — Radio/Spotify have their own bars (dispatched above)
-    // and never bleed in here.
+    // The player views (Now Playing / Lyrics / Concert) belong to no single
+    // source, so they follow whatever is playing — the same resolver the OS "Now
+    // Playing" bridge uses. Before this they showed the local player
+    // unconditionally and sat idle while Spotify or radio played. The local
+    // browser (Home / Library) is a *source* view and keeps showing local.
+    match app
+        .layout
+        .is_player_view()
+        .then(|| app.now_playing_source())
+        .flatten()
+    {
+        Some(crate::app::NpSource::Radio) => {
+            radio_now_bar(f, area, app);
+            return;
+        }
+        Some(crate::app::NpSource::Spotify) => {
+            spotify_now_bar(f, area, app);
+            return;
+        }
+        _ => {}
+    }
     let tk = app.current_track();
     // Nothing loaded (e.g. a fresh library, before anything is played) → a
     // friendly idle bar instead of a bare "—" and an empty seek line.
@@ -571,6 +718,32 @@ fn dvr_bar_spans(th: &Theme, frac: f32, width: usize) -> Vec<Span<'static>> {
 /// Also shows the live ICY song, the station, and a spectrum.
 pub(crate) fn radio_now_bar(f: &mut Frame, area: Rect, app: &AppState) {
     let th = &app.theme;
+    // mini layout: the shared compact bar, so radio reads like every other source
+    if area.height <= MINI_NOW_H + 1 {
+        let Some(st) = &app.rnow.now_station else {
+            idle_bar(f, area, th, "Radio", "No station — pick one and press ⏎");
+            return;
+        };
+        // headline = live ICY song if present, else the station name (as below)
+        let song = app
+            .rnow
+            .now_station_title
+            .as_deref()
+            .filter(|t| !t.is_empty());
+        compact_bar(
+            f,
+            area,
+            app,
+            CompactNow {
+                playing: !app.rnow.radio_paused,
+                title: song.unwrap_or(&st.name),
+                // once a song is showing, the station becomes the subtitle
+                subtitle: if song.is_some() { &st.name } else { "" },
+                progress: None, // a live stream has no total to measure against
+            },
+        );
+        return;
+    }
     let block = rounded(th, "", false);
     let inner = block.inner(area);
     f.render_widget(block, area);

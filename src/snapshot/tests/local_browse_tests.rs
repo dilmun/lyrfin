@@ -1,7 +1,7 @@
 //! Local library drill-in browse logic, over the demo library.
 
 use super::*;
-use crate::app::{LocalItem, LocalSection};
+use crate::app::{Focus, LocalItem, LocalSection, Panel};
 
 #[test]
 fn section_loads_tracks_or_containers() {
@@ -247,4 +247,120 @@ fn local_search_input_uses_the_shared_text_capture() {
         crate::keymap::map(&a, key(KeyCode::Esc)),
         Action::Back
     ));
+}
+
+#[test]
+fn back_then_forward_round_trips_the_drill_in() {
+    let mut a = demo();
+    a.local.section = LocalSection::Albums;
+    a.local_load_section();
+    let n_albums = a.local.items.len();
+
+    a.local.sel = 0;
+    a.local_open(a.local.items[0].clone());
+    let tracks = a.local.items.len();
+    let crumb = a.local.crumb.clone();
+    a.local.sel = 1;
+
+    assert!(a.local_back(), "Back leaves the album");
+    assert_eq!(a.local.items.len(), n_albums, "parent restored");
+
+    assert!(a.local_forward(), "Forward re-enters the album");
+    assert_eq!(a.local.nav.depth(), 1, "back at drill depth 1");
+    assert_eq!(a.local.items.len(), tracks, "child list restored verbatim");
+    assert_eq!(a.local.crumb, crumb, "breadcrumb restored");
+    assert_eq!(a.local.sel, 1, "cursor restored where it was left");
+    assert!(!a.local_forward(), "nothing further to redo");
+}
+
+#[test]
+fn a_new_drill_in_truncates_the_forward_branch() {
+    let mut a = demo();
+    a.local.section = LocalSection::Albums;
+    a.local_load_section();
+    assert!(!a.local.items.is_empty(), "demo seeds an album");
+
+    a.local.sel = 0;
+    a.local_open(a.local.items[0].clone());
+    assert!(a.local_back(), "Back stashes a forward frame");
+    assert!(a.local.nav.can_forward(), "forward is available");
+
+    // a fresh drill-in discards what we stepped out of, rather than leaving a
+    // stale redo pointing at a branch the user has navigated away from
+    a.local_open(a.local.items[0].clone());
+    assert!(
+        !a.local.nav.can_forward(),
+        "new navigation truncated forward"
+    );
+    assert!(!a.local_forward(), "Forward is now inert");
+}
+
+#[test]
+fn back_at_the_top_level_leaves_the_list_intact() {
+    // Regression: building the outgoing history frame `mem::take`s the visible
+    // list, so an eagerly-built frame would blank the pane on a no-op Back.
+    let mut a = demo();
+    a.local.section = LocalSection::Albums;
+    a.local_load_section();
+    let n = a.local.items.len();
+    assert!(n > 0, "demo seeds albums");
+
+    assert!(
+        !a.local_back(),
+        "nothing to back out of at the section level"
+    );
+    assert_eq!(a.local.items.len(), n, "the list survived the no-op Back");
+    assert!(!a.local_forward(), "nothing to redo either");
+    assert_eq!(
+        a.local.items.len(),
+        n,
+        "the list survived the no-op Forward"
+    );
+}
+
+#[test]
+fn back_restores_the_focus_the_drill_in_started_from() {
+    // Drilling in from the Artist pane used to dump you on Main on the way back,
+    // because `local_open` clobbered focus and `local_back` never restored it.
+    let mut a = demo();
+    a.local.section = LocalSection::Artists;
+    a.local_load_section();
+    a.local.sel = 0;
+
+    a.focus = Focus::Pane(Panel::Artist);
+    a.local_open(a.local.items[0].clone());
+    assert_eq!(a.focus, Focus::Main, "drill-in focuses the content");
+
+    assert!(a.local_back(), "Back pops the drill-in");
+    assert_eq!(
+        a.focus,
+        Focus::Pane(Panel::Artist),
+        "focus returns to the pane the drill-in started from"
+    );
+}
+
+#[test]
+fn back_clamps_focus_when_the_saved_pane_was_hidden() {
+    // The frame remembers the focus the drill-in started from, but that pane can
+    // be hidden in between — restoring it verbatim would strand focus on something
+    // that is no longer drawn.
+    let mut a = demo();
+    a.local.section = LocalSection::Artists;
+    a.local_load_section();
+    a.local.sel = 0;
+
+    a.focus = Focus::Pane(Panel::Artist);
+    a.local_open(a.local.items[0].clone());
+    a.toggle_panel(Panel::Artist); // hide it while drilled in
+    assert!(a.local_back(), "Back pops the drill-in");
+    assert_ne!(
+        a.focus,
+        Focus::Pane(Panel::Artist),
+        "focus must not land on a hidden pane"
+    );
+    assert!(
+        a.focus_order().contains(&a.focus),
+        "focus stays on this view's ring, got {:?}",
+        a.focus
+    );
 }

@@ -20,7 +20,9 @@ all pass across the CI matrix (Linux/macOS/Windows).
 | Spotify | ✅ | OAuth PKCE login; librespot playback; browse/search/library/playlists/artist pages. Requires Premium for playback. |
 | Internet radio | ✅ | Radio Browser directory; search, country/genre filters, sort, favorites. |
 | Podcasts | ✅ | Episode → public RSS feed → open MP3 stream. |
-| Mouse & responsive UI | ✅ | Clicks/scroll/drag-resize; movable/dockable panes; collapse on narrow terminals. |
+| Mouse & responsive UI | ✅ | Clicks/scroll/drag-resize; movable/dockable panes; collapse on narrow terminals, then a one-card-at-a-time mini layout under 64 columns. |
+| Unified player views | ✅ | Now Playing / Lyrics / Concert follow whatever is playing (local, Spotify or radio) — bar, visualizer, lyrics, queue and cover art. Source views still show only their own source. |
+| Browse history | ✅ | Back **and** forward across drill-ins (local + Spotify), restoring cursor, breadcrumb, focus and grid mode. |
 | OS "Now Playing" | ✅ | macOS Control Center + lock screen + media keys / AirPods; Linux MPRIS. Reports track/art/position and accepts play/pause/next/prev/seek (`souvlaki`); toggle with `os_media_controls`. |
 | CLI & session restore | ✅ | `lyrfin [PATHS] --theme --snapshot --size`; last view/queue/panel layout restored. |
 | Cross-platform CI + release | ✅ | GitHub Actions matrix + tag-triggered binary release + man page. |

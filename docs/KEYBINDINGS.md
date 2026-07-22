@@ -17,7 +17,9 @@ on the focused pane or the active view (noted below where relevant).
 | <kbd>:</kbd> | Command palette — type a name to find any action or setting; <kbd>⏎</kbd> runs / opens its value list, <kbd>→</kbd> reveals a setting in the Settings overlay |
 | <kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd> | Focus next / previous pane |
 | <kbd>Esc</kbd> | Back / up one level / close overlay |
-| <kbd>Ctrl</kbd>+<kbd>O</kbd> | Back (up one level) |
+| <kbd>Ctrl</kbd>+<kbd>B</kbd> / <kbd>Ctrl</kbd>+<kbd>F</kbd> | **Back / forward** through your browsing history |
+| <kbd>Ctrl</kbd>+<kbd>[</kbd> / <kbd>Ctrl</kbd>+<kbd>]</kbd> | Same, but only in terminals using the kitty keyboard protocol (Ghostty, Kitty) — see below |
+| <kbd>Ctrl</kbd>+<kbd>H</kbd> <kbd>J</kbd> <kbd>K</kbd> <kbd>L</kbd> | Focus the pane left / below / above / right |
 
 > **Focus scoping.** While a side-pane holds the focus it owns the keyboard: its own
 > keys (e.g. Queue reorder, Lyrics format) plus the universal keys — navigation,
@@ -25,6 +27,32 @@ on the focused pane or the active view (noted below where relevant).
 > view-switch <kbd>1</kbd>–<kbd>7</kbd>) — always work. Other view-content shortcuts
 > (theme, EQ, panel toggles…) are reachable from the main area — press <kbd>Tab</kbd>
 > to return there.
+
+> **Why <kbd>Ctrl</kbd>+<kbd>B</kbd>/<kbd>F</kbd> and not the brackets?** A terminal
+> encodes <kbd>Ctrl</kbd>+letter as one byte in the `0x01`–`0x1A` range, which every
+> terminal agrees on. Brackets fall outside it: <kbd>Ctrl</kbd>+<kbd>[</kbd> is
+> `0x1B`, which *is* Escape, and <kbd>Ctrl</kbd>+<kbd>]</kbd> is `0x1D`, which a
+> legacy terminal reports as <kbd>Ctrl</kbd>+<kbd>5</kbd>. Only terminals speaking
+> the kitty keyboard protocol can tell them apart. <kbd>Ctrl</kbd>+<kbd>[</kbd>
+> still works as back everywhere simply because Escape already is back. The same
+> problem rules out vim's <kbd>Ctrl</kbd>+<kbd>I</kbd> for forward — that byte is
+> <kbd>Tab</kbd>.
+
+> **Moving between panes.** <kbd>Tab</kbd> cycles them in order; <kbd>Ctrl</kbd> +
+> <kbd>h</kbd>/<kbd>j</kbd>/<kbd>k</kbd>/<kbd>l</kbd> jumps to the pane lying in that
+> direction, using where panes are actually drawn — so stacked panes and the
+> Library's three columns work without thinking about it. These always move focus,
+> whatever the focused pane does with the plain keys, so a cover grid or list that
+> uses <kbd>j</kbd>/<kbd>k</kbd> for its own selection can never trap you. In the
+> miniplayer, where one card fills the screen, <kbd>Ctrl</kbd>+<kbd>h</kbd>/<kbd>l</kbd>
+> step through the cards.
+
+> **Narrow terminals.** Under 64 columns the browse views (Home, Library, Radio,
+> Spotify) show one pane at a time as a full-width card. There, <kbd>h</kbd> and
+> <kbd>l</kbd> walk that card stack — <kbd>h</kbd> backs out of an album into
+> whatever you opened it from, <kbd>l</kbd> goes deeper or redoes a step you backed
+> out of — instead of moving focus between panes, since there are no side-by-side
+> panes to move between. Inside a cover grid they still move the selection.
 
 ## Layouts
 
