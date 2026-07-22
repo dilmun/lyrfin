@@ -2123,3 +2123,114 @@ fn lyrics_pane_focus_advertises_the_sync_shortcut() {
         "the Library view's Lyrics pane shows the sync hint"
     );
 }
+
+#[test]
+fn a_modal_suppresses_only_the_art_beneath_it() {
+    // Inline images composite above the text, so art *under* a modal bleeds through
+    // and must not be emitted — but art *beside* it (the artist pane far left, the
+    // edge carousel tiles) never overlaps the centred overlay and stays visible.
+    // Regression: the gate dropped every cover globally the instant a modal opened,
+    // so the artist pane photo vanished. A text snapshot can't see the image layer,
+    // so assert the per-rect predicate the render path gates on.
+    use ratatui::layout::Rect;
+    let mut app = demo();
+    app.config.overlay_size = 0; // pin the compact popup so the geometry is fixed
+    let _ = render_layout(&mut app, Layout::Dashboard, 120, 40);
+    assert!(
+        app.overlay_rect.get().is_none(),
+        "no modal → nothing suppressed"
+    );
+    app.update(crate::action::Action::OpenViewSettings);
+    let _ = render_layout(&mut app, Layout::Dashboard, 120, 40);
+    let o = app
+        .overlay_rect
+        .get()
+        .expect("an open modal records its rect");
+    let centre = Rect::new(o.x + o.width / 2, o.y + o.height / 2, 2, 2);
+    assert!(
+        app.art_occluded(centre),
+        "art under the modal is suppressed"
+    );
+    let far_left = Rect::new(0, o.y, 8, o.height);
+    assert!(
+        !app.art_occluded(far_left),
+        "art beside the modal (the artist pane) stays visible"
+    );
+    app.update(crate::action::Action::Back);
+    let _ = render_layout(&mut app, Layout::Dashboard, 120, 40);
+    assert!(
+        app.overlay_rect.get().is_none(),
+        "closing it restores every cover"
+    );
+}
+
+#[test]
+fn a_modal_keeps_an_image_its_edge_only_grazes() {
+    // Suppression is by the image's *centre*, not any intersection — so the overlay
+    // clipping the far edge of the artist photo keeps it (a thin strip bleeds, which
+    // reads as a partial cover) instead of vanishing the whole thing the instant the
+    // edges touch.
+    use ratatui::layout::Rect;
+    let mut app = demo();
+    app.config.overlay_size = 0;
+    app.update(crate::action::Action::OpenViewSettings);
+    let _ = render_layout(&mut app, Layout::Dashboard, 120, 40);
+    let o = app
+        .overlay_rect
+        .get()
+        .expect("an open modal records its rect");
+    // straddles the overlay's left edge, but its centre stays outside → kept
+    let grazed = Rect::new(o.x.saturating_sub(10), o.y + 2, 12, 6);
+    assert!(
+        !app.art_occluded(grazed),
+        "an edge graze keeps the image (centre is clear of the overlay)"
+    );
+    // shifted so its centre crosses inside → suppressed
+    let mostly_in = Rect::new(o.x.saturating_sub(2), o.y + 2, 12, 6);
+    assert!(
+        app.art_occluded(mostly_in),
+        "once the overlay covers the image's bulk, it is suppressed"
+    );
+}
+
+#[test]
+fn a_carousel_peek_row_renders_under_a_modal_without_panicking() {
+    // The peek (partial carousel row a modal's bottom edge cuts across) was the
+    // last content-image path not behind the modal gate — it bled where every
+    // other cover was clean. A text snapshot can't see the image layer, but this
+    // exercises the gated path: a Spotify search page (which renders carousels
+    // with a peek at the fold) with a modal open must render placeholders, not
+    // panic, and the suppression predicate must be set.
+    use crate::spotify::api::{Item, Kind};
+    let mut a = demo();
+    a.layout = Layout::Spotify;
+    a.spotify.conn = crate::spotify::ConnState::Connected {
+        name: "me".into(),
+        premium: true,
+    };
+    a.spotify.in_search = true;
+    a.spotify.query = "x".into();
+    // a leading track + several artist cards → a carousel that peeks at the fold
+    a.spotify.items = std::iter::once(Item {
+        name: "song".into(),
+        kind: Kind::Track,
+        ..Default::default()
+    })
+    .chain((0..12).map(|i| Item {
+        name: format!("Artist {i}"),
+        kind: Kind::Artist,
+        uri: format!("sp:artist:{i}"),
+        ..Default::default()
+    }))
+    .collect();
+
+    let _ = render_layout(&mut a, Layout::Spotify, 90, 20);
+    a.update(crate::action::Action::OpenViewSettings);
+    // render with the modal open — where it covers the peek, that path must take its
+    // gated placeholder branch rather than emitting an image, and must not panic
+    let _ = render_layout(&mut a, Layout::Spotify, 90, 20);
+    assert!(
+        a.overlay_rect.get().is_some(),
+        "the modal records its occlusion rect"
+    );
+}

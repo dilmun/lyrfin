@@ -96,7 +96,14 @@ impl AppState {
             // panel colour before anything is rebuilt below.
             self.sync_art_background();
         }
-        self.grid_art.borrow_mut().clear();
+        // An overlay covered the art and closed: the persistent covers just need
+        // fresh protocol ids to repaint (see `rebuild_persistent_covers`); the grid
+        // thumbnails are still valid and dropping them would force every visible
+        // cover to reload — a visible flash on every modal edge. The size / shape /
+        // theme changes below genuinely invalidate the pixels, so they still clear.
+        if change != ArtChange::Occluded {
+            self.grid_art.borrow_mut().clear();
+        }
         self.rebuild_persistent_covers();
         self.dirty = true;
     }
@@ -286,6 +293,15 @@ impl AppState {
             .map(|a| a.id)
             .and_then(|aid| self.library.tracks_of(aid).first().map(|t| t.path.clone()));
         Some(ArtSource::Artist { name, fallback })
+    }
+
+    /// The Concert view's fullscreen artist photo: the same source as the artist
+    /// pane, but always **square** and under its own [`ArtKey::ConcertArtist`] key so
+    /// the pane's (possibly circular) cached photo can't satisfy it. `None` when the
+    /// artist has no resolvable photo source.
+    pub(crate) fn concert_artist_art(&self, id: ArtistId) -> Option<(ArtKey, ArtSource)> {
+        let (_, source, _) = self.artist_pane_art(id)?;
+        Some((ArtKey::ConcertArtist(id), source))
     }
 
     /// Art request for the Artist pane's PHOTO: the same image as the grid card but

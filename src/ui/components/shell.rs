@@ -56,7 +56,7 @@ pub fn browser_shell(
             // field itself away. The dropped detail is about what is being listed,
             // which the search is replacing anyway.
             let context = main.title.split('·').next().unwrap_or("").trim();
-            let (left, right) = super::search_title(&app.theme, bar, context);
+            let (left, right) = super::search_title(&app.theme, bar, context, super::sel_caps(app));
             super::panel_titled_line(f, core, app, left, right, main.focused)
         }
         None => super::panel_titled(f, core, app, main.title, main.title_right, main.focused),

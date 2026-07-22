@@ -173,6 +173,9 @@ pub(crate) fn playing_cover(app: &AppState) -> &CoverState {
     // suppress the background cover while the art-search popup is open, so its
     // (persistent, kitty/iTerm) image doesn't fight the popup's preview image.
     const NONE: &CoverState = &None;
+    // suppress while the art-search popup is open (its preview image would fight
+    // this one); the modal-occlusion suppression is per-rect, handled by the
+    // `album_art` callers which know the target rect (see `art_occluded`).
     if app.tags.cover.is_some() {
         return NONE;
     }
@@ -188,14 +191,25 @@ pub(crate) fn playing_cover(app: &AppState) -> &CoverState {
 }
 
 pub fn album_art(f: &mut Frame, area: Rect, app: &AppState) {
-    render_cover(f, area, playing_cover(app), app);
+    // under a modal → gradient fallback, so the inline image can't bleed through it
+    let cover = if app.art_occluded(area) {
+        &None
+    } else {
+        playing_cover(app)
+    };
+    render_cover(f, area, cover, app);
 }
 
 /// Like [`album_art`] but *upscales* the cover to fill `area` (`Resize::Scale`),
 /// so small covers don't render tiny. The caller is responsible for passing an
 /// aspect-matched rect if it wants the result centred without letterboxing.
 pub fn album_art_filled(f: &mut Frame, area: Rect, app: &AppState) {
-    render_cover_filled(f, area, playing_cover(app), app);
+    let cover = if app.art_occluded(area) {
+        &None
+    } else {
+        playing_cover(app)
+    };
+    render_cover_filled(f, area, cover, app);
 }
 
 // ---- synced lyrics panel -------------------------------------------------

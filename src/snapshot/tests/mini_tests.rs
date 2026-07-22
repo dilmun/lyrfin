@@ -552,3 +552,50 @@ fn the_mini_bar_keeps_a_visualizer() {
         "the spectrum is drawn somewhere in the narrow layout"
     );
 }
+
+#[test]
+fn the_search_field_shows_in_the_mini_layout() {
+    // The mini card composes `panel` directly instead of going through the shell,
+    // so it never inherited the border-embedded search field: pressing `/` under
+    // 64 columns looked like it had done nothing at all.
+    use crate::action::Action;
+    let mut a = demo();
+    a.update(Action::BeginSearch);
+    let s = render_layout(&mut a, Layout::Dashboard, NARROW, 22);
+    let border = s
+        .lines()
+        .find(|l| l.contains("MUSIC"))
+        .expect("the card's border line");
+    assert!(
+        border.contains('⌕'),
+        "the field is on the mini card's border"
+    );
+    assert!(border.contains('▌'), "with a caret");
+
+    a.update(Action::SearchInput("neon".into()));
+    let s = render_layout(&mut a, Layout::Dashboard, NARROW, 22);
+    assert!(s.contains("neon"), "and the typed query");
+    assert!(s.contains("results"), "plus the live result count");
+}
+
+#[test]
+fn the_spotify_search_field_shows_in_the_mini_layout() {
+    use crate::spotify::ConnState;
+    let mut a = demo();
+    a.layout = Layout::Spotify;
+    a.spotify.conn = ConnState::Connected {
+        name: "me".into(),
+        premium: true,
+    };
+    a.spotify.searching = true;
+    let s = render_layout(&mut a, Layout::Spotify, NARROW, 22);
+    let border = s
+        .lines()
+        .find(|l| l.contains("SPOTIFY"))
+        .expect("the card's border line");
+    assert!(
+        border.contains('⌕'),
+        "Spotify's field shows when narrow too"
+    );
+    assert!(border.contains("search Spotify…"), "with its placeholder");
+}

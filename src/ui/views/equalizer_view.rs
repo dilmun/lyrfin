@@ -39,7 +39,7 @@ fn graph_height(app: &AppState) -> u16 {
 /// Overlay frame size: content-driven width (the fader block is fixed) and a
 /// height that grows with the overlay-size step (taller faders = finer control).
 /// Clamped to the screen so it always fits.
-fn eq_dims(app: &AppState, area: Rect) -> (u16, u16) {
+pub(crate) fn eq_dims(app: &AppState, area: Rect) -> (u16, u16) {
     let w = (content_width() as u16 + 6).min(area.width); // + side padding + borders
     // header(1) + gap(1) + values(1) + graph + labels(1) + tab/footer chrome(4)
     let h = (graph_height(app) + 8).min(area.height);

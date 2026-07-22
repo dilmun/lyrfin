@@ -625,7 +625,13 @@ fn render_peek_cover(
     }
     let slice = Rect::new(art.x, art.y, art.width, vis_h);
     let th = &app.theme;
-    if let Some((base, source)) = &card.art {
+    // Gated like every other content image: where a modal covers this slice the
+    // image is not emitted (it would bleed through the overlay — this peek is the
+    // partial carousel row a modal's bottom edge cuts across). Tiles clear of the
+    // overlay still show. The placeholder below keeps the tile's shape.
+    if !app.art_occluded(slice)
+        && let Some((base, source)) = &card.art
+    {
         let key = app.request_peek(
             *base,
             source.clone(),
@@ -831,7 +837,14 @@ pub(crate) fn fill_thumb(
     // rounds to whole cells (cells aren't exactly 2:1) the image can land a fraction
     // short; clearing to the panel bg makes that letterbox edge blend into the UI
     // instead of showing the placeholder tint as a strip.
-    if let Some(k) = key
+    //
+    // Skipped where a modal covers this tile (`art_occluded`): the image is a
+    // terminal-owned layer above the text, so it would bleed through the overlay.
+    // The placeholder path below still draws the tile's shape, so the grid keeps
+    // its layout — a covered tile shows solid until the modal closes; tiles clear
+    // of the overlay keep their real cover.
+    if !app.art_occluded(art)
+        && let Some(k) = key
         && let Some((_, crate::app::ArtThumb::Ready(proto))) = app.grid_art.borrow().get(&k)
         && let Ok(mut p) = proto.try_borrow_mut()
     {
@@ -857,6 +870,7 @@ pub(crate) fn fill_thumb(
     // is built synchronously (`ensure_solid_art`) so every cover-less circle is crisp
     // and consistent — no more blocky cell disc stuck behind the worker's queue.
     let drew = if circle
+        && !app.art_occluded(art)
         && let Some(solid) = app.ensure_solid_art(color, true)
         && let Some((_, crate::app::ArtThumb::Ready(proto))) = app.grid_art.borrow().get(&solid)
         && let Ok(mut p) = proto.try_borrow_mut()

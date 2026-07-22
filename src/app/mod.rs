@@ -860,6 +860,14 @@ pub struct AppState {
     /// open, only regions at/after this index are clickable, so clicks on the view
     /// behind the modal are ignored.
     pub overlay_hits: std::cell::Cell<usize>,
+    /// The rect of the modal overlay drawn this frame, if any — written by the
+    /// render layer at frame top (before the base view), read by the content-art
+    /// sites via [`Self::art_occluded`]. Inline covers are a terminal-owned layer
+    /// *above* the text, so one drawn under the overlay bleeds through it while one
+    /// beside it (the artist pane, the edge carousel tiles) is safe. Suppressing by
+    /// rect instead of globally keeps that side art visible. `None` when no modal
+    /// is open. Same interior-mutability contract as `frame`/`hit`.
+    pub overlay_rect: std::cell::Cell<Option<Rect>>,
     /// Per-frame pane-resize handles, populated by the render layer (a registry
     /// parallel to `hit`). Empty when mouse support is off. See `pane_resize`.
     pub resize_edges: std::cell::RefCell<Vec<ResizeEdge>>,
@@ -982,8 +990,30 @@ impl AppState {
         self.overlay_hits.set(self.hit.borrow().len());
     }
 
-    /// Whether a modal overlay owns input right now. Gates both global one-key
-    /// shortcuts and base-view mouse clicks so only the overlay reacts.
+    /// Whether an inline content image occupying `target` would fall under this
+    /// frame's modal overlay and so must be suppressed.
+    ///
+    /// Inline images (kitty / iTerm2 graphics) are a layer the *terminal* composites
+    /// **above** the text cells, so a modal drawn over the grid does not cover them —
+    /// they bleed through it. Draw order cannot fix that; the image must simply not
+    /// be emitted where the overlay sits. But an image *beside* the overlay (the
+    /// artist pane on the far left, the edge carousel tiles) is safe to keep — so
+    /// this gates per-rect rather than globally.
+    ///
+    /// Suppression triggers on the image's **centre**, not on any intersection: a
+    /// mere edge graze (the overlay's edge clipping the far side of the artist
+    /// photo) keeps the image — a thin strip bleeds, which reads as a partial cover,
+    /// not a vanished one — while an image whose bulk is under the overlay is
+    /// dropped. The overlay's rect is recorded by the render layer at frame top
+    /// (`overlay_rect`). Returns `false` when no modal is open.
+    pub fn art_occluded(&self, target: Rect) -> bool {
+        self.overlay_rect.get().is_some_and(|o| {
+            let cx = target.x + target.width / 2;
+            let cy = target.y + target.height / 2;
+            cx >= o.x && cx < o.right() && cy >= o.y && cy < o.bottom()
+        })
+    }
+
     pub fn modal_open(&self) -> bool {
         self.tags_open()
             || self.palette.is_some()

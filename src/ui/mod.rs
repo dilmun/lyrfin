@@ -11,7 +11,7 @@ pub mod theme;
 pub mod views;
 
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout};
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::widgets::Block;
 
@@ -22,6 +22,11 @@ pub fn render(f: &mut Frame, app: &AppState) {
     let area = f.area();
     // record the frame so the input layer can ask which layout is on screen
     app.frame.set(area);
+    // record the modal overlay's rect (if any) *before* the base view renders, so
+    // its content-art sites suppress only the inline covers that fall under the
+    // overlay — the art beside it stays visible. The overlays drawn at the bottom
+    // of this fn size themselves the same way.
+    app.overlay_rect.set(active_overlay_rect(app, area));
     // base background
     f.render_widget(
         Block::default().style(Style::default().bg(app.theme.bg.into())),
@@ -162,4 +167,58 @@ pub fn render(f: &mut Frame, app: &AppState) {
     if app.palette.is_some() {
         components::command_palette(f, area, app);
     }
+}
+
+/// The rect the open modal overlay(s) occupy this frame, or `None` when none is
+/// open. Mirrors the draw dispatch at the bottom of [`render`] and each overlay's
+/// own sizing so content-art suppression lines up with what's actually drawn. When
+/// several stack, returns their bounding union — a safe superset (it can only
+/// over-suppress the gap between them, never let an image bleed).
+fn active_overlay_rect(app: &AppState, area: Rect) -> Option<Rect> {
+    use components::{centered, overlay_dims};
+    let mut acc: Option<Rect> = None;
+    let mut cover = |r: Rect| acc = Some(acc.map_or(r, |a: ratatui::layout::Rect| a.union(r)));
+
+    // Big centred content overlays (Settings / Info / Tag editor) all share
+    // `overlay_dims`; each renders through `overlay_frame` → `centered`.
+    if app.settings.overlay || app.info.is_some() || app.tags_open() {
+        let (w, h) = overlay_dims(app, area);
+        cover(centered(area, w, h));
+    }
+    // Per-view quick-settings popup (`;`) — the compact tabbed sibling.
+    if app.settings.popup.is_some() {
+        let (w, h) = views::popup_dims(app, area);
+        cover(centered(area, w, h));
+    }
+    // Equalizer overlay.
+    if app.eq_open() {
+        let (w, h) = views::eq_dims(app, area);
+        cover(centered(area, w, h));
+    }
+    // Add-to-playlist is content-sized (it can grow tall with many playlists), so
+    // it needs its own dims; the naming dialog it hosts is the fixed small size.
+    if !app.input.add_targets.is_empty() {
+        let (w, h) = components::add_playlist_dims(app, area);
+        cover(centered(area, w, h));
+    } else if app.input.naming.is_some() {
+        let (w, h) = components::dialog_dims(area, 52, 7);
+        cover(centered(area, w, h));
+    }
+    // The fixed 52×7 confirm / picker dialogs.
+    if app.input.confirm_delete.is_some()
+        || app.spotify.pl_modal.is_some()
+        || app.spotify.pl_confirm_delete.is_some()
+    {
+        let (w, h) = components::dialog_dims(area, 52, 7);
+        cover(centered(area, w, h));
+    }
+    // Command palette — top-anchored (not centred), narrow. Use its max height as a
+    // safe superset so a tile just below it can't bleed.
+    if app.palette.is_some() {
+        let w = 58u16.min(area.width.saturating_sub(4));
+        let h = 23u16.min(area.height.saturating_sub(2));
+        let x = area.x + area.width.saturating_sub(w) / 2;
+        cover(Rect::new(x, area.y + 2, w, h));
+    }
+    acc
 }

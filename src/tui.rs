@@ -79,6 +79,33 @@ fn reset_pointer_shape() {
     write_osc22("default");
 }
 
+/// Erase every inline image on screen by sweeping the grid with ECH (`CSI n X`,
+/// erase-character) row by row.
+///
+/// This is how images actually get cleared under the kitty / iTerm2 protocols —
+/// it is exactly what `ratatui-image` emits before redrawing one. A normal screen
+/// clear (`CSI 2J`, what `Terminal::clear` sends) resets the *text* but leaves the
+/// terminal's image layer intact, so a cover drawn before a modal opened lingers
+/// on top of the overlay. Called only on the modal-open/-close edge, never per
+/// frame, so the cost is one escape burst on a transition.
+fn erase_inline_images(cols: u16, rows: u16) {
+    use std::io::Write;
+    let mut out = std::io::stdout();
+    let _ = out.write_all(ech_erase_seq(cols, rows).as_bytes());
+    let _ = out.flush();
+}
+
+/// Build the ECH screen-erase byte sequence: cursor-home, then `CSI cols X`
+/// (erase-character) + `CSI 1 B` (down one) per row. Pure, so the escape
+/// construction is unit-testable without a terminal.
+fn ech_erase_seq(cols: u16, rows: u16) -> String {
+    let mut seq = String::from("\x1b[H"); // cursor home
+    for _ in 0..rows {
+        seq.push_str(&format!("\x1b[{cols}X\x1b[1B"));
+    }
+    seq
+}
+
 pub fn run(mut app: AppState) -> Result<()> {
     // Start the system light/dark watcher (Linux D-Bus; no-op elsewhere) before the
     // palette query below, so its off-thread read has that window to publish the
@@ -276,21 +303,34 @@ fn event_loop(
             media = crate::media::MediaBridge::new("lyrfin", app.config.os_media_controls);
             media_on = app.config.os_media_controls;
         }
-        // Modal-close edge: an overlay drawn over inline images destroys them —
-        // they're a layer the terminal owns, and the protocol won't re-transmit
-        // because its area hasn't changed. Tell the art layer why; it decides what
-        // that costs. Done before the draw so the repaint lands this frame.
+        // Modal edges: an overlay and the terminal-owned inline-image layer don't
+        // compose cleanly (covers bleed through it on open; its text sticks to
+        // image "skip" cells on close), so each edge forces a repaint. Done before
+        // the draw so it lands this frame.
         let modal_now = app.modal_open();
-        if modal_prev && !modal_now {
+        if modal_now && !modal_prev {
+            // Modal OPEN. Covers drawn the frame before persist on the terminal's
+            // image layer ABOVE the text, so they bleed through the overlay. A cell
+            // overwrite doesn't remove an inline image — only ECH does (what
+            // ratatui-image itself emits before redrawing one) — and after ECH the
+            // ratatui diff would leave the erased cells blank, so a full clear
+            // forces the next frame to repaint from scratch. This is the one edge
+            // that must blank the screen; the repaint then re-emits only the covers
+            // that clear the overlay (per-rect gate — `art_occluded`), so the art
+            // beside the modal comes back while nothing bleeds under it.
+            let sz = terminal.size().unwrap_or_default();
+            erase_inline_images(sz.width, sz.height);
             app.invalidate_art(crate::app::ArtChange::Occluded);
-            // ...and force a FULL repaint. Rebuilding the art is not enough on its
-            // own: ratatui renders by diffing against the previous buffer, so every
-            // cell the overlay drew is "unchanged" the moment the overlay stops
-            // being drawn, and is therefore never repainted. Over an inline image
-            // that leaves the overlay's text stranded on top of the artwork —
-            // looking like a frozen modal that Esc failed to close, when in fact the
-            // modal closed and only its pixels remained. Clearing discards the
-            // previous buffer so the next draw emits every cell.
+            let _ = terminal.clear();
+        } else if !modal_now && modal_prev {
+            // Modal CLOSE. The overlay drew its text over content-image cells (the
+            // artist photo, grid covers), which ratatui marks "skip" so the backend
+            // never overwrites them — re-emitting the image doesn't wipe that text,
+            // leaving a ghost column at the overlay's edge (its row initials stuck
+            // beside the artist photo). Only a full clear forces every cell to
+            // repaint, so it takes one to blank the residue. Re-mint the persistent
+            // covers too so any occluded one repaints.
+            app.invalidate_art(crate::app::ArtChange::Occluded);
             let _ = terminal.clear();
         }
         modal_prev = modal_now;
@@ -704,9 +744,30 @@ fn convert_key(k: ratatui::crossterm::event::KeyEvent) -> Key {
 #[cfg(test)]
 mod tests {
     use super::{
-        disagrees, iterm2_protocol_from, osc22_seq, parse_cell_size_override, protocol_from_name,
+        disagrees, ech_erase_seq, iterm2_protocol_from, osc22_seq, parse_cell_size_override,
+        protocol_from_name,
     };
     use ratatui_image::picker::ProtocolType;
+
+    #[test]
+    fn ech_erase_sweeps_every_row() {
+        // cursor home, then erase-character + down-one per row — the sequence that
+        // actually removes an inline image (a plain CSI 2J does not).
+        let seq = ech_erase_seq(80, 3);
+        assert!(seq.starts_with("\x1b[H"), "starts at cursor home");
+        assert_eq!(
+            seq.matches("\x1b[80X").count(),
+            3,
+            "one ECH per row, full width"
+        );
+        assert_eq!(
+            seq.matches("\x1b[1B").count(),
+            3,
+            "steps down after each row"
+        );
+        // a zero-height screen produces just the home move, no erases
+        assert_eq!(ech_erase_seq(80, 0), "\x1b[H");
+    }
 
     #[test]
     fn detects_iterm2_from_term_program() {

@@ -307,6 +307,68 @@ pub fn nowplaying(f: &mut Frame, area: Rect, app: &AppState) {
     }
 }
 
+/// Draw the now-playing artist's photo into `region` (square, filled, centred),
+/// returning whether it drew. `false` means no artist photo is available yet — the
+/// caller falls back to the album cover.
+///
+/// Resolved by the playing source, mirroring the artist *pane*: local artists come
+/// from the grid artwork cache (requested here, since a player view has no pane to
+/// request it), Spotify from its Web-API artist image. Radio has no artist, so it
+/// always falls back.
+fn draw_concert_artist(f: &mut Frame, region: Rect, app: &AppState) -> bool {
+    use crate::app::NpSource;
+    let font = components::image_font(app);
+    let rect = components::square_image_rect(region, font, 100_000);
+    // a modal floats over Concert too — where it covers the photo, let the
+    // (suppressed) album fallback handle it rather than emitting an image that
+    // would bleed through the overlay
+    if app.art_occluded(rect) {
+        return false;
+    }
+    match app.now_playing_source() {
+        Some(NpSource::Spotify) => {
+            // `sp_artist_cover` is fetched circle-masked for the round pane avatar,
+            // so it can't be reused here. Request a SQUARE copy of the same photo
+            // through the grid art cache (its own key), and draw it when decoded.
+            let Some(url) = app.spov.sp_artist_cover_url.clone() else {
+                return false;
+            };
+            let key = crate::artwork::ArtKey::square(&url);
+            app.request_art(key, crate::artwork::ArtSource::Url(url), false);
+            if !app.art_ready(key) {
+                return false;
+            }
+            components::fill_thumb(f, rect, app, Some(key), "", false, None);
+            true
+        }
+        Some(NpSource::Local) => {
+            let Some(id) = app.current_track().and_then(|t| t.artist_id) else {
+                return false;
+            };
+            let Some((key, source)) = app.concert_artist_art(id) else {
+                return false;
+            };
+            // fire the (coalesced) request so it loads; draw only once decoded, so
+            // the album cover shows in the meantime instead of a placeholder box.
+            // `circle=false` — its own key, so this never collides with the pane's
+            // (possibly circular) photo of the same artist.
+            app.request_art(key, source, false);
+            if !app.art_ready(key) {
+                return false;
+            }
+            let name = app
+                .current_track()
+                .map(|t| t.album_artist.to_string())
+                .unwrap_or_default();
+            // Concert's photo is a full SQUARE, never the grid's circle — it is the
+            // centrepiece here, not a small round pane thumbnail.
+            components::fill_thumb(f, rect, app, Some(key), &name, false, None);
+            true
+        }
+        _ => false,
+    }
+}
+
 /// Concert / Focus — fullscreen, distraction-free now-playing: large centered
 /// album art, the title/artist/album, star rating, the progress beam, and a
 /// visualizer strip. No panels or shared chrome.
@@ -362,7 +424,14 @@ pub fn concert(f: &mut Frame, area: Rect, app: &AppState) {
         }
         _ => art, // no cover → gradient fills the whole region
     };
-    components::album_art_filled(f, art_rect, app);
+    // Concert leads with the ARTIST's photo — the view is about who is playing.
+    // The album cover is the fallback: the artist photo needs an online fetch (and
+    // radio has none), so before it lands, or when there is none, the album shows
+    // instead. `art_rect` is the album-aspect rect; the square artist photo gets
+    // its own square rect from the same region.
+    if !draw_concert_artist(f, art, app) {
+        components::album_art_filled(f, art_rect, app);
+    }
 
     // meta: a centred text block, then a full-width progress row
     let [text, _gap, prog_row] = Layout::vertical([
