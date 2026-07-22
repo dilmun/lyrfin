@@ -692,6 +692,13 @@ impl AppState {
     /// feedback reads the same in every view, not just Spotify. Shared by the `s` key
     /// and the transport-button click.
     pub(crate) fn toggle_shuffle_active(&mut self) {
+        // A live stream has no queue to shuffle. Falling through would toggle the
+        // *hidden* local player instead: the key would look inert while quietly
+        // changing something off-screen, which surfaces later as a surprise.
+        if self.showing_radio() {
+            self.notify("Shuffle: not for a live stream".into());
+            return;
+        }
         let on = if self.showing_spotify() {
             self.spotify_toggle_shuffle();
             self.spov.sp_shuffle
@@ -706,6 +713,11 @@ impl AppState {
     /// Cycle repeat on the active source + the same unified toast. Shared by the `r`
     /// key and the transport-button click.
     pub(crate) fn cycle_repeat_active(&mut self) {
+        // as `toggle_shuffle_active`: nothing to repeat on a live stream
+        if self.showing_radio() {
+            self.notify("Repeat: not for a live stream".into());
+            return;
+        }
         let repeat = if self.showing_spotify() {
             self.spotify_cycle_repeat();
             self.spov.sp_repeat

@@ -283,6 +283,15 @@ fn event_loop(
         let modal_now = app.modal_open();
         if modal_prev && !modal_now {
             app.invalidate_art(crate::app::ArtChange::Occluded);
+            // ...and force a FULL repaint. Rebuilding the art is not enough on its
+            // own: ratatui renders by diffing against the previous buffer, so every
+            // cell the overlay drew is "unchanged" the moment the overlay stops
+            // being drawn, and is therefore never repainted. Over an inline image
+            // that leaves the overlay's text stranded on top of the artwork —
+            // looking like a frozen modal that Esc failed to close, when in fact the
+            // modal closed and only its pixels remained. Clearing discards the
+            // previous buffer so the next draw emits every cell.
+            let _ = terminal.clear();
         }
         modal_prev = modal_now;
 

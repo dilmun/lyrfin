@@ -400,3 +400,68 @@ fn the_player_views_host_no_dock_panes() {
     // the browsing views keep theirs
     assert!(!L::Dashboard.panels().is_empty());
 }
+
+#[test]
+fn shuffle_and_repeat_follow_the_playing_source() {
+    use crate::action::Action;
+    // Spotify: the local player's own flags must not move.
+    let mut a = demo();
+    spotify_playing(&mut a);
+    a.layout = L::LyricsFocus;
+    let (shuf, rep) = (a.player.shuffle, a.player.repeat);
+    a.update(Action::ToggleShuffle);
+    a.update(Action::CycleRepeat);
+    assert_eq!(a.player.shuffle, shuf, "local shuffle untouched");
+    assert_eq!(a.player.repeat, rep, "local repeat untouched");
+
+    // Radio has neither — the keys must not silently toggle the hidden local
+    // player, which is what falling through used to do.
+    let mut b = demo();
+    radio_playing(&mut b);
+    b.layout = L::Concert;
+    let (shuf, rep) = (b.player.shuffle, b.player.repeat);
+    b.update(Action::ToggleShuffle);
+    b.update(Action::CycleRepeat);
+    assert_eq!(
+        b.player.shuffle, shuf,
+        "a live stream has no queue to shuffle"
+    );
+    assert_eq!(b.player.repeat, rep, "nor anything to repeat");
+
+    // Local still works normally.
+    let mut c = demo();
+    c.player.status = crate::core::player::Status::Playing;
+    c.layout = L::FullPlayer;
+    let shuf = c.player.shuffle;
+    c.update(Action::ToggleShuffle);
+    assert_ne!(c.player.shuffle, shuf, "local shuffle still toggles");
+}
+
+#[test]
+fn next_and_previous_never_touch_the_local_queue_from_a_player_view() {
+    use crate::action::Action;
+    // Reported three times, so pinned properly: n/p in a player view showing
+    // Spotify or radio must leave the local queue exactly where it was.
+    for (label, setup) in [
+        ("spotify", spotify_playing as fn(&mut AppState)),
+        ("radio", radio_playing as fn(&mut AppState)),
+    ] {
+        for view in [L::FullPlayer, L::LyricsFocus, L::Concert] {
+            let mut a = demo();
+            setup(&mut a);
+            a.layout = view;
+            let pos = a.player.queue.position;
+            let cur = a.player.current;
+            a.update(Action::Next);
+            a.update(Action::Previous);
+            assert_eq!(
+                a.player.queue.position, pos,
+                "{label} in {view:?}: local queue position unchanged"
+            );
+            assert_eq!(
+                a.player.current, cur,
+                "{label} in {view:?}: local track unchanged"
+            );
+        }
+    }
+}
