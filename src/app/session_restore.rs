@@ -126,6 +126,11 @@ impl AppState {
             self.spov.spotify_paused = true;
             self.spov.sp_started = false;
         }
+        // which source the player views should open on — see `last_source`
+        self.last_source = s
+            .last_source
+            .as_deref()
+            .and_then(crate::app::NpSource::from_key);
         if let Some(q) = &s.spotify_queue {
             self.spov.sp_queue = q.clone();
         }
@@ -305,6 +310,7 @@ impl AppState {
             speed: Some(self.player.speed),
             selection: Some(self.selection),
             queue_sel: Some(self.queue_sel),
+            last_source: self.last_source.map(|s| s.key().to_string()),
             local_section: Some(self.local.section.key().to_string()),
             local_open: Some(self.local_open_path()),
             local_sel: Some(self.local.sel),

@@ -5,6 +5,7 @@
 
 use super::*;
 use crate::app::Focus;
+use crate::app::nav::{Frame, NavDir};
 
 /// Items-per-shelf step for a drilled-in browse grid: the initial `browsePage`
 /// fetch, and how much each scroll-triggered "load more" grows it by.
@@ -487,21 +488,7 @@ impl AppState {
         if self.spotify.searching {
             self.spotify.searching = false;
             true
-        } else if let Some(frame) = self.spotify.nav.pop() {
-            // restore the parent list verbatim (no refetch) + its search/open context
-            self.spotify.items = frame.items;
-            self.spotify.sel = frame.sel;
-            self.spotify.crumb = frame.crumb;
-            self.spotify.open_item = frame.ctx.open_item;
-            self.spotify.in_search = frame.ctx.in_search;
-            self.spotify.query = frame.ctx.query;
-            self.spotify.note = frame.ctx.note;
-            self.spotify.loading = false;
-            // the restored parent is shown verbatim (no refetch), so its load-more
-            // paging can't be resumed — disable it until the page is re-drilled
-            self.spotify.browse_page = None;
-            self.spotify.browse_loading_more = false;
-            self.spotify.browse_exhausted = false;
+        } else if self.spotify_step(NavDir::Back) {
             true
         } else if self.spotify.open_item.is_some() {
             // a cache-restored drill-in has no cached back-stack (only the visible list
@@ -516,6 +503,70 @@ impl AppState {
         } else {
             false
         }
+    }
+
+    /// Step forward again after a back step, restoring the list stepped out of.
+    /// Returns `true` if it moved (else nothing to redo).
+    pub(crate) fn spotify_forward(&mut self) -> bool {
+        self.spotify_step(NavDir::Forward)
+    }
+
+    /// Swap the current Spotify browse location with one from the history — the
+    /// Spotify analogue of `local_step`, and the shared body of back and forward.
+    ///
+    /// `self.spotify` is destructured so `nav` and the fields the outgoing frame is
+    /// built from are *disjoint* borrows, keeping the frame a lazy closure: building
+    /// it `mem::take`s the visible list, which must not happen when the step turns
+    /// out to be unavailable.
+    fn spotify_step(&mut self, dir: NavDir) -> bool {
+        let focus = self.focus;
+        let super::Spotify {
+            items,
+            sel,
+            crumb,
+            open_item,
+            in_search,
+            query,
+            note,
+            nav,
+            ..
+        } = &mut self.spotify;
+        let outgoing = || Frame {
+            items: std::mem::take(items),
+            sel: *sel,
+            crumb: crumb.take(),
+            focus,
+            ctx: super::SpCtx {
+                open_item: open_item.take(),
+                in_search: *in_search,
+                query: std::mem::take(query),
+                note: std::mem::take(note),
+            },
+        };
+        let restored = match dir {
+            NavDir::Back => nav.back(outgoing),
+            NavDir::Forward => nav.forward(outgoing),
+        };
+        let Some(f) = restored else { return false };
+        // restore the list verbatim (no refetch) + its search/open context
+        self.spotify.items = f.items;
+        self.spotify.sel = f.sel;
+        self.spotify.crumb = f.crumb;
+        self.spotify.open_item = f.ctx.open_item;
+        self.spotify.in_search = f.ctx.in_search;
+        self.spotify.query = f.ctx.query;
+        self.spotify.note = f.ctx.note;
+        self.spotify.loading = false;
+        // the saved focus may name a pane hidden since the drill-in — clamp it back
+        // onto this view's ring rather than stranding focus on something undrawn
+        self.focus = f.focus;
+        self.clamp_focus();
+        // the restored list is shown verbatim (no refetch), so its load-more paging
+        // can't be resumed — disable it until the page is re-drilled
+        self.spotify.browse_page = None;
+        self.spotify.browse_loading_more = false;
+        self.spotify.browse_exhausted = false;
+        true
     }
 
     /// ⏎ in the Spotify view. Sidebar focus → load that section. List focus →
@@ -634,6 +685,7 @@ impl AppState {
             std::mem::take(&mut self.spotify.items),
             self.spotify.sel,
             self.spotify.crumb.take(),
+            self.focus, // pre-drill focus, restored on back
             super::SpCtx {
                 open_item: self.spotify.open_item.take(),
                 in_search: self.spotify.in_search,

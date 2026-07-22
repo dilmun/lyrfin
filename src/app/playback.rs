@@ -151,7 +151,41 @@ impl AppState {
     /// over the per-source toggles ([`toggle_spotify_play`] / [`toggle_radio_play`]
     /// / [`toggle_local_play`]); the OS-media-control path routes to those same
     /// helpers by the *active audio* source instead (see `app/nowplaying.rs`).
+    /// The source a transport key should drive, when the current view has no
+    /// source of its own.
+    ///
+    /// A source view answers this itself: `space` in Home means "play my music"
+    /// even while Spotify streams, and in the Spotify view it means "pause
+    /// Spotify". The player views (Now Playing / Lyrics / Concert) show whatever
+    /// is playing, so their transport has to drive that same thing — otherwise
+    /// the view shows a Spotify track and `space` starts a local one underneath
+    /// it. `None` = not a player view, so the existing per-view routing applies.
+    pub(crate) fn player_view_source(&self) -> Option<crate::app::NpSource> {
+        self.layout
+            .is_player_view()
+            .then(|| self.now_playing_source())
+            .flatten()
+    }
+
     pub(crate) fn toggle_play(&mut self) {
+        // A player view drives whatever it is showing (see `player_view_source`).
+        match self.player_view_source() {
+            Some(crate::app::NpSource::Spotify) => {
+                self.toggle_spotify_play();
+                return;
+            }
+            Some(crate::app::NpSource::Radio) => {
+                self.toggle_radio_play();
+                return;
+            }
+            // local, or nothing loaded → the local toggle at the end
+            Some(crate::app::NpSource::Local) | None => {
+                if self.layout.is_player_view() {
+                    self.toggle_local_play();
+                    return;
+                }
+            }
+        }
         // In the Spotify view, play/pause controls the librespot stream only.
         if self.showing_spotify() {
             self.toggle_spotify_play();
@@ -357,6 +391,18 @@ impl AppState {
     /// Advance to the next track in the queue (wrapping under repeat-all). Used by
     /// Next + auto-advance.
     pub(crate) fn advance_next(&mut self) {
+        // a player view steps whatever it is showing (see `player_view_source`)
+        match self.player_view_source() {
+            Some(crate::app::NpSource::Spotify) => {
+                self.spotify_track(1);
+                return;
+            }
+            Some(crate::app::NpSource::Radio) => {
+                self.radio_station(1);
+                return;
+            }
+            _ => {}
+        }
         // local next: in the Radio view, n/p change station via RadioStation, so
         // this path is always about the local queue (and stops any radio overlay)
         let before = self.player.queue.position;
@@ -370,6 +416,18 @@ impl AppState {
 
     /// Previous track (the queue's history; linear step back as a fallback).
     pub(crate) fn advance_prev(&mut self) {
+        // a player view steps whatever it is showing (see `player_view_source`)
+        match self.player_view_source() {
+            Some(crate::app::NpSource::Spotify) => {
+                self.spotify_track(-1);
+                return;
+            }
+            Some(crate::app::NpSource::Radio) => {
+                self.radio_station(-1);
+                return;
+            }
+            _ => {}
+        }
         self.player.previous();
         self.play_current();
     }

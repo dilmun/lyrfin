@@ -23,6 +23,37 @@ pub struct ModalInput {
 }
 
 impl AppState {
+    /// `a` — add to a playlist, routed to the destination that matches what the
+    /// track actually *is*.
+    ///
+    /// A source view already routes this itself (the Spotify and Radio keymaps
+    /// claim `a` before the global binding). The player views (Now Playing /
+    /// Lyrics / Concert) browse nothing, so `a` used to fall through to the local
+    /// path unconditionally and add `player.current` — a stale local track — while
+    /// Spotify or radio was playing. Here it follows the audio instead.
+    pub(crate) fn add_to_playlist_prompt(&mut self) {
+        if self.layout.is_player_view() {
+            match self.now_playing_source() {
+                Some(crate::app::NpSource::Spotify) => {
+                    self.spotify_add_to_playlist_prompt();
+                    return;
+                }
+                Some(crate::app::NpSource::Radio) => {
+                    self.radio_add_current_to_playlist();
+                    return;
+                }
+                // local, or nothing loaded → the local picker below
+                _ => {}
+            }
+        }
+        let ids = self.selected_track_ids();
+        if !ids.is_empty() {
+            self.input.add_targets = ids;
+            self.input.add_sel = 0;
+            self.marks.anchor = None;
+        }
+    }
+
     /// The playlist id selected in the Playlists section (if the cursor is on a
     /// `LocalItem::Playlist` row). Resolves the target for rename / delete /
     /// add-current while browsing the flat Playlists section.

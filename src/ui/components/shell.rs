@@ -38,6 +38,9 @@ pub fn browser_shell(
     main: ShellPane,
 ) {
     let core = super::dock_panels(f, area, app, panels, dock);
+    // the main pane's slot, for directional focus movement (ctrl+h/j/k/l); the
+    // docked panes register themselves inside `dock_panels`
+    app.register_focus(core, crate::app::Focus::Main);
     let inner = super::panel_titled(f, core, app, main.title, main.title_right, main.focused);
     (main.render)(f, inner, app);
 }

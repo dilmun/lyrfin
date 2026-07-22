@@ -96,6 +96,24 @@ impl AppState {
         true
     }
 
+    /// Step forward again after a [`Self::go_back`], redoing one drill-in. Returns
+    /// `true` if it moved.
+    ///
+    /// Deliberately *not* the mirror image of `go_back`: that one is a priority
+    /// ladder because Esc has to pop overlays, prompts and selections before it
+    /// reaches navigation. Forward has no such duties — `Action::Forward` is absent
+    /// from [`Action::allowed_in_overlay`], so the keymap suppresses it while a
+    /// modal owns the screen and it only ever reaches a live browse view.
+    pub(crate) fn go_forward(&mut self) -> bool {
+        match self.layout {
+            Layout::Dashboard => self.local_forward(),
+            Layout::Spotify => self.spotify_forward(),
+            // Radio's back is an ad-hoc ladder with no saved frames, and the Miller
+            // / player / lyrics views keep no browse history — nothing to redo.
+            _ => false,
+        }
+    }
+
     /// The sole state transition. Returns side-effect commands in later
     /// milestones (e.g. `Vec<Command>` for the audio/library workers); for now
     /// it mutates state directly.
@@ -178,7 +196,9 @@ impl AppState {
                 // (accelerating, debounced) seek while it's the playing source; every
                 // other case — local playback, a timeshifted radio DVR — goes through
                 // `seek_relative`, which is itself gated to the right view.
-                if self.layout == Layout::Spotify && self.spov.now_spotify.is_some() {
+                let spotify_is_playing_here = self.layout == Layout::Spotify
+                    || self.player_view_source() == Some(crate::app::NpSource::Spotify);
+                if spotify_is_playing_here && self.spov.now_spotify.is_some() {
                     self.spotify_seek(delta);
                 } else {
                     self.seek_relative(delta);
@@ -470,6 +490,10 @@ impl AppState {
             Back => {
                 self.go_back();
             }
+            Forward => {
+                self.go_forward();
+            }
+            FocusToward(dx, dy) => self.focus_toward(dx, dy),
             QuitOrBack => {
                 // `q`: pop the current context — an open overlay, a drilled-into
                 // album/playlist, or a selection. If there's nothing to pop (top
@@ -521,14 +545,7 @@ impl AppState {
                     self.notify("Added to playlist".into());
                 }
             }
-            AddToPlaylistPrompt => {
-                let ids = self.selected_track_ids();
-                if !ids.is_empty() {
-                    self.input.add_targets = ids;
-                    self.input.add_sel = 0;
-                    self.marks.anchor = None;
-                }
-            }
+            AddToPlaylistPrompt => self.add_to_playlist_prompt(),
             ToggleMark => self.toggle_mark(),
             VisualSelect => self.toggle_visual(),
             BeginTagEdit => self.begin_tag_edit(),

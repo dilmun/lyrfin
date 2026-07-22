@@ -171,11 +171,31 @@ fn library_view_is_a_three_column_browser() {
 #[test]
 fn playback_bar_height_is_consistent_across_views() {
     // every view (#1–#4) sizes its playback bar with the same helper, so the
-    // tall (9) / compact (6) choice is identical everywhere
-    use crate::ui::components::now_bar_height;
-    assert_eq!(now_bar_height(true, 36), 9, "tall window → full bar");
-    assert_eq!(now_bar_height(true, 24), 6, "short window → compact bar");
-    assert_eq!(now_bar_height(false, 36), 6, "no bar-viz → compact bar");
+    // tall (9) / standard (6) / mini (2) choice is identical everywhere
+    use crate::ui::components::{MINI_NOW_H, now_bar_height};
+    assert_eq!(now_bar_height(true, 120, 36), 9, "tall window → full bar");
+    assert_eq!(
+        now_bar_height(true, 120, 24),
+        6,
+        "short window → standard bar"
+    );
+    assert_eq!(
+        now_bar_height(false, 120, 36),
+        6,
+        "no bar-viz → standard bar"
+    );
+    // a mini-width frame collapses the bar regardless of the viz setting; height
+    // alone never does (a short-but-wide window keeps the full layout)
+    assert_eq!(
+        now_bar_height(true, 50, 36),
+        MINI_NOW_H,
+        "narrow frame → compact 2-row bar"
+    );
+    assert_eq!(
+        now_bar_height(true, 120, 18),
+        6,
+        "short but wide keeps the standard bar"
+    );
 }
 
 #[test]

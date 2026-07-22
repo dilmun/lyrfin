@@ -103,11 +103,16 @@ in ceremony — the dispatch is a plain `match self.layout` instead.)
 **Shared chrome** (`ui/components/`):
 
 - `shell::browser_shell` — the docked-panes + `[ sidebar | main ]` frame. It owns
-  the borders, the responsive split (percentage-derived sidebar), and the
-  collapse-to-single-pane below `COLLAPSE_WIDTH` (~80 cols). Panes are freely
-  movable (the 4-edge `Dock`) with a vertical/horizontal stacking setting.
+  the borders and the responsive split (percentage-derived sidebar). Panes are
+  freely movable (the 4-edge `Dock`) with a vertical/horizontal stacking setting.
+  When a pane no longer fits, `dock_panels` drops the least important one at a
+  time by `Panel::collapse_rank` (Lyrics → Visualizer → Artist → Queue → Sidebar)
+  until the rest fit — there is no single collapse-width constant.
 - `queue::queue_pane` draws the played / now-playing / upcoming list over a
-  uniform `QueueRow`; `artist::{artist_panel, spotify_artist_panel}` share
+  uniform `QueueRow`. Below `breakpoint::MINI_W` (64 cols) the pane docking is
+  bypassed entirely for the browse views and `views::mini` takes over: one pane at
+  a time as a full-width card, walked with the `app::nav` history (see **Mini
+  layout** below). `artist::{artist_panel, spotify_artist_panel}` share
   `artist_scroll_region` + `bio_lines`; `now_bar::playback_bar` draws the
   transport from a source-agnostic `NowPlaying` snapshot (`::local` / `::spotify`);
   `table::columns_table` is the responsive columnar engine; `lyrics_panel` +
@@ -136,6 +141,88 @@ a render fn composing `browser_shell` with the shared panes (supplying rows from
 the new source's state), add a `focus_order` arm, add `move_selection` /
 `activate` arms, and a `keymap` handler that reuses `text_capture` for its search
 box. No new shell, focus enum, or transport bar.
+
+## Source views vs player views
+
+The seven layouts split in two, and the distinction decides what playback each
+one shows (`Layout::is_player_view`):
+
+- **Source views** — Home and Library (local), Spotify, Radio — each browse one
+  source and show **only that source's** playback. A station must not appear in
+  the local browser just because it is audible, and vice versa.
+- **Player views** — Now Playing, Lyrics, Concert — browse nothing, so they have
+  no source to be consistent with. They follow **whatever is playing**, resolved
+  by `AppState::now_playing_source()` — the same resolver the OS "Now Playing"
+  bridge uses, so Control Center and the UI can never disagree.
+
+`now_playing_source` prefers the *audible* source (only one drives the audio
+engine at a time), then the on-screen source view, then `last_source` — the
+source that most recently produced audio, recorded each tick. That last step is
+what makes pausing Spotify and opening Lyrics still show Spotify, instead of
+falling back to whatever local track happens to be loaded.
+
+What this reaches: the playback bar (`now_bar` dispatch), the visualizer's
+liveness gate (`update_viz`), the lyrics pane + its fetch target
+(`active_lyrics_pane` / `reload_lyrics`, which must agree or one source's words
+get cached under another's key), the queue pane, cover art (`playing_cover`), and
+Concert's whole card via `AppState::playing_card()` — a source-neutral snapshot,
+the sibling of the OS `now_playing_snapshot`.
+
+Two model gaps are handled rather than faked: `year`/`rating` are local-library
+concepts and are simply absent for other sources, and radio has no duration, so
+`PlayingCard::live` makes Concert draw a LIVE badge instead of a progress beam
+that could never fill.
+
+**The visualizer needs no per-source plumbing.** Every source's PCM already flows
+through the one audio ring (the Spotify bridge via `SetExternalSource`, radio via
+the internal decoder), so the FFT always sees what is audible. Only the liveness
+gate was layout-based, which is why Concert sat flat while Spotify streamed.
+
+## Mini layout (narrow terminals)
+
+The normal response to a shrinking window is to *drop* things — panes by
+`collapse_rank`, table columns by `drop_rank`, the now-bar's art below 56 cols.
+That degrades well until it runs out of things to drop: the sidebar is gone, so no
+section is reachable, and the dock panes are simply unavailable.
+
+Below `ui::breakpoint::MINI_W` (64 cols) `ui::views::mini` switches strategy: one
+pane at a time, full width, as a stack of cards.
+
+- **Why 64.** `Panel::Sidebar` defaults to `size: 22` — a *percentage* of the
+  window — and a pane collapses under `MIN_PANE_W = 14` cells. `14 / 0.22 ≈ 63.6`,
+  so below ~64 columns the sidebar cannot survive as a percentage pane anyway.
+- **Width only.** Height barely constrains this layout (the panes that matter dock
+  left/right, so they're bounded by columns), and the playback bar already shrinks
+  on short frames. Triggering cards on height would flatten working layouts.
+- **No new card state.** `app.focus` already names the region on screen, so mini
+  renders whatever it points at. The wide layout's two axes — the pane axis
+  (`focus`) and the drill axis (`app::nav`) — flatten into one sequence that Back
+  and Forward walk. Dock panes are *lateral*: their toggle keys make them the
+  current card, Esc returns to Main.
+- **Scope.** Only the four pane-based browse views take part (Home, Library,
+  Radio, Spotify). Now Playing, Lyrics and Concert already own their whole body
+  and degrade on their own, so a card shell would add chrome without adding reach.
+- **Bypasses `dock_panels`.** Not stylistic: `MIN_MAIN_W` structurally reserves a
+  main rect and `PanelCfg.size` is clamped 10–60, so "one pane at 100% width" is
+  not expressible through `PanelCfg`.
+
+### Browse history (`app::nav`)
+
+`NavStack<T, C>` holds the locations either side of the current one — parents
+(Back) and locations stepped out of (Forward) — restored verbatim, no refetch.
+Browser semantics: a fresh drill-in truncates the forward branch. A `Frame`
+carries `items`/`sel`/`crumb` plus `focus` (so backing out of a drill-in started
+from a dock pane returns you to that pane) and a per-source `ctx` (Spotify's
+search/open state; the local library's grid-vs-list mode, which is per *location*
+rather than per section).
+
+`back`/`forward` take the outgoing frame as a **closure**, not a value — building
+one `mem::take`s the caller's live `items`, so an eager argument would blank the
+visible list whenever the step turns out to be unavailable.
+
+Two sources participate (local, Spotify). Radio keeps an ad-hoc back ladder, and
+the Library Miller view needs no history at all: its three columns are a fixed
+hierarchy, so `browser.col` already *is* the card index.
 
 ## Cover-art grid
 

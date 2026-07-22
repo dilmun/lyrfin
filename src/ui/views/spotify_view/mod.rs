@@ -27,17 +27,14 @@ pub fn spotify(f: &mut Frame, area: Rect, app: &AppState) {
     }
 }
 
-/// Connected library/search browser: sections sidebar + a result list.
-fn spotify_browser(f: &mut Frame, area: Rect, app: &AppState) {
-    use crate::app::Focus;
+/// The main pane's title — section / drill-in crumb / search. While searching, the
+/// query lives in the inline `search_bar` row over the list, so the title just names
+/// the mode. Shared with the mini layout, which titles its main card the same way.
+pub(in crate::ui::views) fn spotify_main_title(app: &AppState) -> String {
     use crate::spotify::api::Group;
     let sp = &app.spotify;
     let n = sp.items.len();
-
-    // main pane title — section / drill-in crumb / search. While searching, the
-    // query lives in the inline `search_bar` row over the list (drawn below), so the
-    // title just names the mode.
-    let title = if sp.searching || sp.in_search {
+    if sp.searching || sp.in_search {
         "SPOTIFY  ·  SEARCH".to_string()
     } else if let Some(crumb) = &sp.crumb {
         // shape the (possibly Arabic) drill-in name for display, exactly like the
@@ -58,7 +55,14 @@ fn spotify_browser(f: &mut Frame, area: Rect, app: &AppState) {
             sp.section.label().to_uppercase()
         };
         format!("SPOTIFY  ·  {label}  ·  {n}")
-    };
+    }
+}
+
+/// Connected library/search browser: sections sidebar + a result list.
+fn spotify_browser(f: &mut Frame, area: Rect, app: &AppState) {
+    use crate::app::Focus;
+    let sp = &app.spotify;
+    let title = spotify_main_title(app);
     // searching highlights the whole main border + title in the accent colour
     let main_focus = app.focus == Focus::Main || sp.searching;
 
@@ -156,7 +160,7 @@ fn spotify_account_chip(app: &AppState) -> Option<Line<'static>> {
 }
 
 /// The Spotify sidebar's section list (drawn into the shell's inner rect).
-fn spotify_sidebar_body(f: &mut Frame, inner: Rect, app: &AppState) {
+pub(in crate::ui::views) fn spotify_sidebar_body(f: &mut Frame, inner: Rect, app: &AppState) {
     use crate::app::Focus;
     use crate::spotify::api::Section;
     let th = &app.theme;
@@ -196,7 +200,7 @@ fn spotify_sidebar_body(f: &mut Frame, inner: Rect, app: &AppState) {
 
 /// The Spotify main pane content (empty states / artist page / columnar tracks /
 /// search+section list), drawn into the shell's inner rect `m`.
-fn spotify_main_body(f: &mut Frame, m: Rect, app: &AppState) {
+pub(in crate::ui::views) fn spotify_main_body(f: &mut Frame, m: Rect, app: &AppState) {
     use crate::app::Focus;
     use crate::spotify::api::{Kind, Section};
     let th = &app.theme;
@@ -563,7 +567,7 @@ fn spotify_track_carousels(
 }
 
 /// The connection/auth panel (a smooth in-TUI login) shown until connected.
-fn spotify_auth(f: &mut Frame, area: Rect, app: &AppState) {
+pub(in crate::ui::views) fn spotify_auth(f: &mut Frame, area: Rect, app: &AppState) {
     use crate::spotify::ConnState;
     let th = &app.theme;
     let inner = components::panel(f, area, app, "SPOTIFY", true);

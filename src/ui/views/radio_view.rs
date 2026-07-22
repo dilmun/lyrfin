@@ -66,7 +66,7 @@ pub fn radio(f: &mut Frame, area: Rect, app: &AppState) {
 }
 
 /// The main-pane title: the active section, or `PLAYLISTS · <name>` when drilled in.
-fn radio_main_title(r: &crate::app::Radio) -> String {
+pub(in crate::ui::views) fn radio_main_title(r: &crate::app::Radio) -> String {
     if r.section == RadioSection::Playlists
         && let Some(id) = r.pl.open
         && let Some(p) = r.playlists.iter().find(|p| p.id == id)
@@ -78,7 +78,7 @@ fn radio_main_title(r: &crate::app::Radio) -> String {
 
 /// The RADIO section sidebar: a flat drill-in list of [`RadioSection`]s, rendered
 /// with the shared `section_list` widget so it matches the library/Spotify sidebars.
-fn radio_sidebar(f: &mut Frame, inner: Rect, app: &AppState) {
+pub(in crate::ui::views) fn radio_sidebar(f: &mut Frame, inner: Rect, app: &AppState) {
     if inner.height == 0 {
         return;
     }
@@ -272,7 +272,7 @@ fn radio_playlist_modal(f: &mut Frame, area: Rect, app: &AppState) {
 
 /// The Radio view body (search box + filter chips + station list), drawn into the
 /// shell's inner rect.
-fn radio_body(f: &mut Frame, inner: Rect, app: &AppState) {
+pub(in crate::ui::views) fn radio_body(f: &mut Frame, inner: Rect, app: &AppState) {
     let th = &app.theme;
     let r = &app.radio;
     if inner.height < 3 {

@@ -42,11 +42,19 @@ pub fn map(app: &AppState, key: Key) -> Action {
         .or_else(|| confirm_input(app, key))
         .or_else(|| half_page(key))
         .or_else(|| modal_overlay(app, key))
+        // Directional pane focus outranks every view/pane handler below: the whole
+        // point is that it works even where the focused pane binds the plain key to
+        // its own thing (a cover grid moving a card, the Library switching column).
+        // Those handlers match on `KeyCode::Char('h')` without inspecting modifiers,
+        // so they would otherwise swallow ctrl+h before it reached the key table.
+        // Still below the modal handlers above — an open modal owns the keyboard.
+        .or_else(|| focus_jump(app, key))
         .or_else(|| pane_context(app, key))
         .or_else(|| spotify_view(app, key))
         .or_else(|| radio_view(app, key))
         .or_else(|| sidebar_playlists_context(app, key))
         .or_else(|| grid_context(app, key))
+        .or_else(|| mini_view(app, key))
         .or_else(|| library_view(app, key))
         .or_else(|| visual_select(app, key))
         .unwrap_or_else(|| global_binding(app, key))
@@ -78,6 +86,14 @@ fn normalize_shift(key: Key) -> Key {
     key
 }
 
+/// Directional pane focus (`ctrl+h/j/k/l` by default), resolved through the normal
+/// key table so a user rebinding still applies — this only changes *when* it is
+/// consulted, not what it binds.
+fn focus_jump(app: &AppState, key: Key) -> Option<Action> {
+    let action = global_binding(app, key);
+    matches!(action, Action::FocusToward(..)).then_some(action)
+}
+
 /// Library (#2) 3-column browser: while the columns are focused, h/l/←/→ switch the
 /// active column (otherwise they'd shift focus between panes). Vertical motion,
 /// Enter, and every global binding fall through unchanged.
@@ -88,6 +104,35 @@ fn library_view(app: &AppState, key: Key) -> Option<Action> {
     Some(match key.code {
         KeyCode::Char('h') | KeyCode::Left => Action::Move(Motion::Left),
         KeyCode::Char('l') | KeyCode::Right => Action::Move(Motion::Right),
+        _ => return None,
+    })
+}
+
+/// Mini (narrow) layout: `h`/`l` walk the browse history as a card stack.
+///
+/// Only the two steps the focus ring cannot express are intercepted — popping a
+/// drill level, and redoing one. Everything else already does the right thing and
+/// falls through: Sidebar ↔ Main is exactly `FocusDir`, the Miller view's three
+/// columns are already its cards (`library_view` maps h/l to column moves), and a
+/// cover grid keeps h/l for card movement (`grid_context` runs first).
+///
+/// Runs only while the mini layout is actually on screen, so the wide layout's
+/// h/l — move focus between panes — is untouched. There, Back/Forward are
+/// `esc`/`ctrl-o` and `ctrl-]`.
+fn mini_view(app: &AppState, key: Key) -> Option<Action> {
+    if !crate::ui::views::mini::active(app) || app.focus != Focus::Main || app.is_searching() {
+        return None;
+    }
+    let (depth, forward) = match app.layout {
+        Layout::Dashboard => (app.local.nav.depth(), app.local.nav.can_forward()),
+        Layout::Spotify => (app.spotify.nav_depth(), app.spotify.can_forward()),
+        // Radio keeps no frame stack, and the Miller columns are their own card
+        // sequence — neither has a drill level to pop.
+        _ => return None,
+    };
+    Some(match key.code {
+        KeyCode::Char('h') | KeyCode::Left if depth > 0 => Action::Back,
+        KeyCode::Char('l') | KeyCode::Right if forward => Action::Forward,
         _ => return None,
     })
 }
@@ -1159,6 +1204,14 @@ fn parse_action(s: &str, app: &AppState) -> Action {
                 "right" => FocusDir(1),
                 _ => Noop,
             },
+            // directional pane jump — geometry, not the focus ring (see focus_toward)
+            "focus_move" => match arg {
+                "left" => FocusToward(-1, 0),
+                "right" => FocusToward(1, 0),
+                "up" => FocusToward(0, -1),
+                "down" => FocusToward(0, 1),
+                _ => Noop,
+            },
             "resize_pane" => arg.parse::<i32>().map(ResizeFocusedPane).unwrap_or(Noop),
             "resize_pane_h" => arg.parse::<i32>().map(ResizePaneHeight).unwrap_or(Noop),
             "volume" => arg.parse::<i8>().map(VolumeDelta).unwrap_or(Noop),
@@ -1212,6 +1265,7 @@ fn parse_action(s: &str, app: &AppState) -> Action {
         "cycle_repeat" => CycleRepeat,
         "activate" => Activate,
         "back" => Back,
+        "forward" => Forward,
         "toggle_lyrics" => ToggleLyrics,
         "toggle_artist_info" => ToggleArtistInfo,
         "toggle_queue" => ToggleQueue,

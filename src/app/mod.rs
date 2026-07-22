@@ -162,6 +162,7 @@ mod mouse;
 mod nav;
 mod navigation;
 mod nowplaying;
+pub use nowplaying::NpSource;
 mod palette;
 mod pane_resize;
 pub use palette::{Palette, PaletteCtx};
@@ -837,6 +838,23 @@ pub struct AppState {
     workers: Workers,
     /// Per-frame clickable regions, populated by the render layer.
     pub hit: std::cell::RefCell<Vec<(Rect, MouseTarget)>>,
+    /// The source that last actually produced audio. Resolves the ambiguity when
+    /// several sources hold a paused item at once: pausing Spotify and opening the
+    /// Lyrics view should still show Spotify, not whatever local track is loaded.
+    /// Updated each tick from [`AppState::audible_source`].
+    pub(crate) last_source: Option<nowplaying::NpSource>,
+    /// Focusable regions drawn this frame, as `(rect, focus)` — populated by the
+    /// render layer alongside the mouse hit-map, and read by directional focus
+    /// movement (`ctrl+h/j/k/l`). Geometry rather than dock config, so panes
+    /// sharing an edge (Queue stacked over Lyrics on the right) and the Library's
+    /// three columns are all handled without special cases.
+    pub focus_rects: std::cell::RefCell<Vec<(Rect, Focus)>>,
+    /// The frame rect from the last render. Interior mutability, same as `hit`:
+    /// written by the render layer (which only holds `&AppState`) and read by the
+    /// input layer, which needs to know whether the mini card layout is on screen
+    /// before it can decide what `h`/`l` mean. Defaults to a comfortably wide rect
+    /// so a never-rendered state (tests, startup) reads as the normal layout.
+    pub frame: std::cell::Cell<Rect>,
     /// Index in `hit` where the topmost open overlay's regions begin (set by
     /// `mark_overlay_hits` just before overlays draw). While a modal overlay is
     /// open, only regions at/after this index are clickable, so clicks on the view
@@ -945,6 +963,16 @@ impl AppState {
         self.hit.borrow_mut().clear();
         self.overlay_hits.set(0);
         self.resize_edges.borrow_mut().clear();
+        self.focus_rects.borrow_mut().clear();
+    }
+
+    /// Record a focusable region drawn this frame, for directional focus movement.
+    /// Called by the render layer; a region drawn more than once (or not at all)
+    /// simply changes what `ctrl+<dir>` can reach, never correctness elsewhere.
+    pub fn register_focus(&self, rect: Rect, focus: Focus) {
+        if rect.width > 0 && rect.height > 0 {
+            self.focus_rects.borrow_mut().push((rect, focus));
+        }
     }
 
     /// Mark the boundary between the base view's click regions and an overlay's,

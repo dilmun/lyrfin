@@ -31,6 +31,15 @@ pub const DEFAULT_BINDINGS: &[(&str, &str)] = &[
     ("left", "focus:left"),
     ("h", "focus:left"),
     ("l", "focus:right"),
+    // ctrl+h/j/k/l jump to the pane lying in that direction, whatever the focused
+    // pane does with the plain keys — so a grid or list that consumes j/k can never
+    // trap the focus. All four are safe: Backspace is DEL (0x7F) not ctrl-h, and in
+    // raw mode crossterm does not fold ctrl-j into Enter. (ctrl-i IS Tab, ctrl-m IS
+    // Enter — which is why neither is used here.)
+    ("ctrl-h", "focus_move:left"),
+    ("ctrl-l", "focus_move:right"),
+    ("ctrl-k", "focus_move:up"),
+    ("ctrl-j", "focus_move:down"),
     ("$", "go_live"),
     ("0", "go_stream_start"),
     ("+", "volume:+5"),
@@ -47,8 +56,26 @@ pub const DEFAULT_BINDINGS: &[(&str, &str)] = &[
     ("pageup", "move:pageup"),
     ("pagedown", "move:pagedown"),
     ("enter", "activate"),
-    ("esc", "back"),               // back / up one level / close
-    ("ctrl-o", "back"),            // vim-style jump back / up one level (q is quit-only)
+    ("esc", "back"), // back / up one level / close
+    // History: back / forward.
+    //
+    // ctrl-b / ctrl-f are the pair that works everywhere. Both sit in the
+    // 0x01..=0x1A control range, which every terminal encodes as ctrl+<letter>,
+    // and "back"/"forward" is the obvious mnemonic. (Neither is vim's page
+    // scroll here — paging is ctrl-d / ctrl-u.)
+    ("ctrl-b", "back"),
+    ("ctrl-f", "forward"),
+    // The bracket pair also works, but ONLY under the kitty keyboard protocol
+    // (Ghostty, Kitty), and the two halves fail differently in a legacy terminal:
+    //
+    //   ctrl-[ = 0x1B = Escape          → still "back", because Esc already is
+    //   ctrl-] = 0x1D → decoded as ctrl-5 (the 0x1C..=0x1F range maps to digits)
+    //
+    // So ctrl-[ degrades harmlessly while ctrl-] simply vanishes. Kept as aliases
+    // for the terminals that can tell them apart; ctrl-b/ctrl-f is what the docs
+    // teach. vim's ctrl-i is unusable for forward either way — that is 0x09 = Tab.
+    ("ctrl-[", "back"),
+    ("ctrl-]", "forward"),
     ("y", "copy_error"),           // yank the last error message to the clipboard
     ("1", "layout:dashboard"),     // Home
     ("2", "layout:library_focus"), // Library (Artists ▸ Albums ▸ Tracks)
@@ -106,6 +133,8 @@ pub const DEFAULT_BINDINGS: &[(&str, &str)] = &[
 /// default (see `crate::config::Keymap::load`). Append a row whenever a default
 /// binding's action changes.
 pub const RETIRED_BINDINGS: &[(&str, &str)] = &[
+    // back moved off ctrl-o onto the symmetric ctrl-[ / ctrl-] bracket pair.
+    ("ctrl-o", "back"),
     // `toggle_queue` moved from `q` to `u`; `q` was `quit_or_back`, now `quit`.
     ("q", "toggle_queue"),
     // `q` is now quit-only — back / up-one-level moved to esc + ctrl-o.
@@ -169,6 +198,11 @@ pub fn keybind_desc(action: &str) -> String {
         "cycle_repeat" => "Cycle repeat",
         "activate" => "Activate / play selection",
         "back" => "Back / up one level / cancel",
+        "focus_move:left" => "Focus the pane to the left",
+        "focus_move:right" => "Focus the pane to the right",
+        "focus_move:up" => "Focus the pane above",
+        "focus_move:down" => "Focus the pane below",
+        "forward" => "Forward / redo one level",
         "copy_error" => "Copy last error message",
         "toggle_favorite" => "Toggle favorite",
         "add_to_playlist" => "Add to playlist",

@@ -44,8 +44,10 @@ pub enum Action {
 
     // ---- navigation / focus ----
     Move(Motion),
-    Activate, // enter / play selected
-    Back,     // escape / pop
+    Activate,              // enter / play selected
+    Back,                  // escape / pop
+    Forward,               // redo one popped drill-in (the counterpart to Back)
+    FocusToward(i32, i32), // move focus to the pane in this direction (ctrl+h/j/k/l)
     /// `q`: pop one context layer (overlay / drill / selection), or quit the app
     /// if there's nothing to pop. See `AppState::go_back`.
     QuitOrBack,

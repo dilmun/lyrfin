@@ -807,11 +807,17 @@ pub(crate) struct SpCtx {
     pub note: String,
 }
 
-#[cfg(test)]
 impl Spotify {
-    /// Current drill-in depth (0 at the section/search level) — used by tests that
-    /// assert push/pop without reaching into the frames.
-    pub(crate) fn nav_stack_len(&self) -> usize {
+    /// Current drill-in depth (0 at the section/search level). Read by the mini
+    /// layout to decide whether Back goes anywhere, and by tests asserting
+    /// push/pop without reaching into the frames.
+    pub(crate) fn nav_depth(&self) -> usize {
         self.nav.depth()
+    }
+
+    /// Whether a Forward step is available — a Back was taken and no fresh
+    /// drill-in has truncated the branch.
+    pub(crate) fn can_forward(&self) -> bool {
+        self.nav.can_forward()
     }
 }

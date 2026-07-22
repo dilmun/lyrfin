@@ -61,6 +61,7 @@ mod tests {
     mod equalizer_tests;
     mod layout_tests;
     mod local_browse_tests;
+    mod mini_tests;
     mod mouse_session_tests;
     mod nowplaying_tests;
     mod overlays_tests;
@@ -68,6 +69,7 @@ mod tests {
     mod playback_tests;
     mod settings_tests;
     mod tags_search_tests;
+    mod unified_views_tests;
 
     fn demo() -> AppState {
         // point persistence at a throwaway dir so `cargo test` never touches the

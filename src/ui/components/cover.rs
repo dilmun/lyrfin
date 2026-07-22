@@ -163,31 +163,39 @@ pub(crate) fn render_proto_peek(
     );
 }
 
-pub fn album_art(f: &mut Frame, area: Rect, app: &AppState) {
+/// The cover for whatever is playing, for the source-neutral player views.
+///
+/// Local keeps its full-size decoded cover; Spotify has only the bar-size one it
+/// fetches (`sp_cover`), which upscales acceptably and beats showing the wrong
+/// album entirely. Radio has no cover at all — its country flag stands in, drawn
+/// by the radio bar, so the caller falls back to the gradient placeholder.
+pub(crate) fn playing_cover(app: &AppState) -> &CoverState {
     // suppress the background cover while the art-search popup is open, so its
     // (persistent, kitty/iTerm) image doesn't fight the popup's preview image.
-    let none: CoverState = None;
-    let cover = if app.tags.cover.is_some() {
-        &none
-    } else {
-        &app.art.full
-    };
-    render_cover(f, area, cover, app);
+    const NONE: &CoverState = &None;
+    if app.tags.cover.is_some() {
+        return NONE;
+    }
+    if !app.layout.is_player_view() {
+        return &app.art.full; // a source view shows its own source's art
+    }
+    match app.now_playing_source() {
+        Some(crate::app::NpSource::Spotify) => &app.spov.sp_cover,
+        // radio has no cover — its country flag stands in, drawn by the radio bar
+        Some(crate::app::NpSource::Radio) => NONE,
+        _ => &app.art.full,
+    }
+}
+
+pub fn album_art(f: &mut Frame, area: Rect, app: &AppState) {
+    render_cover(f, area, playing_cover(app), app);
 }
 
 /// Like [`album_art`] but *upscales* the cover to fill `area` (`Resize::Scale`),
 /// so small covers don't render tiny. The caller is responsible for passing an
 /// aspect-matched rect if it wants the result centred without letterboxing.
 pub fn album_art_filled(f: &mut Frame, area: Rect, app: &AppState) {
-    // suppress the background cover while the art-search popup is open, so its
-    // (persistent) preview image doesn't fight this one.
-    let none: CoverState = None;
-    let cover = if app.tags.cover.is_some() {
-        &none
-    } else {
-        &app.art.full
-    };
-    render_cover_filled(f, area, cover, app);
+    render_cover_filled(f, area, playing_cover(app), app);
 }
 
 // ---- synced lyrics panel -------------------------------------------------

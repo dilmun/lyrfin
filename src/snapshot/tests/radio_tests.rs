@@ -164,8 +164,9 @@ fn radio_vim_nav_ctrl_o_back_and_ctrl_np() {
     };
     assert_eq!(crate::keymap::map(&a, h), Action::FocusPane(Focus::Sidebar));
 
-    // ctrl-o = back (not swallowed by `o` = cycle-sort); ctrl-n/p still navigate
-    assert_eq!(crate::keymap::map(&a, ctrl('o')), Action::Back);
+    // ctrl-[ = back, and ctrl-] = forward; ctrl-n/p still navigate
+    assert_eq!(crate::keymap::map(&a, ctrl('[')), Action::Back);
+    assert_eq!(crate::keymap::map(&a, ctrl(']')), Action::Forward);
     assert_eq!(crate::keymap::map(&a, ctrl('n')), Action::NavDown);
     assert_eq!(crate::keymap::map(&a, ctrl('p')), Action::NavUp);
 

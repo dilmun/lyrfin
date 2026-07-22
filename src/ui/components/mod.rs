@@ -9,7 +9,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders};
 
-use crate::app::{AppState, Dock, Panel};
+use crate::app::{AppState, Dock, Focus, Panel};
 
 /// The main content keeps at least this slice (cells): bands are clamped so a
 /// pane can never push the main below it — a percentage would otherwise blank the
@@ -149,10 +149,22 @@ where
         render(f, slot, app, panel);
         // drag-to-resize handle on the pane's edge facing `main` (changes its size)
         app.register_pane_edge(area, app.panel(panel).dock, slot, panel);
+        // where this pane sits, for directional focus movement (ctrl+h/j/k/l)
+        app.register_focus(slot, focus_of(panel));
     }
     // dividers between panes sharing an edge (drag shifts their stacked split)
     app.register_pane_dividers(area, &slots);
     main
+}
+
+/// The [`Focus`] a docked [`Panel`] carries. The sidebar is docked like any other
+/// pane but focuses as `Focus::Sidebar`, not `Focus::Pane(Sidebar)` — it predates
+/// the movable-pane system and every view's focus ring still names it directly.
+fn focus_of(panel: Panel) -> Focus {
+    match panel {
+        Panel::Sidebar => Focus::Sidebar,
+        p => Focus::Pane(p),
+    }
 }
 
 /// Split `area` into a docked panel rect and the remaining main rect. `w` is the
