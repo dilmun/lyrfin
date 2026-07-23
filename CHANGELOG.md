@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.4.0](https://github.com/dilmun/lyrfin/compare/v0.3.0...v0.4.0) (2026-07-23)
+
+
+### Features
+
+* miniplayer card layout with browse history and directional focus ([#19](https://github.com/dilmun/lyrfin/issues/19)) ([1d1fce9](https://github.com/dilmun/lyrfin/commit/1d1fce949540f53eae805b3d44128e147f18eea7))
+* **mini:** run the standard playback bar and visualizer in the narrow layout ([#24](https://github.com/dilmun/lyrfin/issues/24)) ([ce5450b](https://github.com/dilmun/lyrfin/commit/ce5450b4c8abfc01e3cca7c5937a8ad67f672996))
+* **views:** make the player views act on one source ([#23](https://github.com/dilmun/lyrfin/issues/23)) ([aff20b0](https://github.com/dilmun/lyrfin/commit/aff20b0dae33aec9e9bdef560c137251390d2cdf))
+
+
+### Bug Fixes
+
+* **search:** put the search field in the pane border ([#21](https://github.com/dilmun/lyrfin/issues/21)) ([c60c7d0](https://github.com/dilmun/lyrfin/commit/c60c7d043bdee4ea23e3f334933d117d0cc4938f))
+* **ui:** keep cover art beside overlays, suppress only what it covers ([#25](https://github.com/dilmun/lyrfin/issues/25)) ([995d05d](https://github.com/dilmun/lyrfin/commit/995d05d9ac5fbf741b0b195c2cbf5604e5244599))
+
 ## [0.3.0](https://github.com/dilmun/lyrfin/compare/v0.2.0...v0.3.0) (2026-07-20)
 
 
