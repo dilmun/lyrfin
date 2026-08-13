@@ -24,18 +24,27 @@ pub fn is_supported(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// Spawn a background scan of `roots`, streaming events on `tx`. `cache` holds
-/// the previously-scanned tracks (path → Track); files whose mtime is unchanged
-/// are reused from it instead of re-parsing their tags, so a sync of an unchanged
-/// library does almost no work. Files missing from the new walk are dropped.
-pub fn spawn(roots: Vec<PathBuf>, cache: HashMap<PathBuf, Track>, tx: Sender<LibraryEvent>) {
+/// Spawn a background scan of `roots`, streaming events on `tx`.
+///
+/// The previously-scanned catalogue is read from (and written back to) the cache
+/// in `dir`, on this thread: files whose mtime is unchanged are reused instead of
+/// re-parsing their tags, so a sync of an unchanged library does almost no work,
+/// and files missing from the new walk are dropped. Doing both here keeps the UI
+/// loop clear of the deep copy the snapshot used to cost it, and of encoding +
+/// writing the whole catalogue when the scan lands.
+pub fn spawn(roots: Vec<PathBuf>, dir: PathBuf, tx: Sender<LibraryEvent>) {
     std::thread::Builder::new()
         .name("lyrfin-scan".into())
-        .spawn(move || scan_into(roots, cache, tx))
+        .spawn(move || scan_into(roots, dir, tx))
         .expect("spawn scanner");
 }
 
-fn scan_into(roots: Vec<PathBuf>, cache: HashMap<PathBuf, Track>, tx: Sender<LibraryEvent>) {
+fn scan_into(roots: Vec<PathBuf>, dir: PathBuf, tx: Sender<LibraryEvent>) {
+    let cache: HashMap<PathBuf, Track> = crate::library::store::LibraryCache::load(&dir)
+        .tracks
+        .into_iter()
+        .map(|t| (t.path.clone(), t))
+        .collect();
     let _ = tx.send(LibraryEvent::ScanStarted { roots: roots.len() });
 
     // collect candidate files first (cheap) for a progress denominator
@@ -110,8 +119,15 @@ fn scan_into(roots: Vec<PathBuf>, cache: HashMap<PathBuf, Track>, tx: Sender<Lib
     }
 
     let n = tracks.len();
+    // Refresh the on-disk cache so the next launch is instant. After the UI has
+    // its tracks (it must not wait on the encode), and on this thread — it is the
+    // whole catalogue, far too much work for the event loop.
+    let snapshot = crate::library::store::LibraryCache {
+        tracks: tracks.clone(),
+    };
     let _ = tx.send(LibraryEvent::Loaded(tracks));
     let _ = tx.send(LibraryEvent::ScanFinished { tracks: n });
+    snapshot.save(&dir);
 }
 
 fn codec_from_ext(path: &Path) -> Codec {

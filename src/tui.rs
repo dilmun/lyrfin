@@ -196,7 +196,11 @@ pub fn run(mut app: AppState) -> Result<()> {
     // syncs almost instantly; new/changed files are parsed, removed ones dropped.
     let (tx, rx) = unbounded::<LibraryEvent>();
     if !app.config.music_dirs.is_empty() {
-        scanner::spawn(app.config.music_dirs.clone(), app.cache_map(), tx.clone());
+        scanner::spawn(
+            app.config.music_dirs.clone(),
+            app.config.dir.clone(),
+            tx.clone(),
+        );
     }
 
     let mut terminal = ratatui::init();
@@ -458,7 +462,7 @@ fn event_loop(
         if let Some(dirs) = app.take_rescan()
             && !dirs.is_empty()
         {
-            scanner::spawn(dirs, app.cache_map(), lib_tx.clone());
+            scanner::spawn(dirs, app.config.dir.clone(), lib_tx.clone());
         }
         app.pump_audio(); // sets dirty itself on audio events
         app.pump_spotify(); // drain Spotify auth/resume events

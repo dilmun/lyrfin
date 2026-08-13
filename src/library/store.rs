@@ -390,6 +390,16 @@ impl LibraryCache {
         }
     }
 
+    /// Persist on a worker thread. Encoding and fsyncing the whole catalogue is
+    /// far too much work for the event loop, and no one is waiting on the result —
+    /// it only has to be there by the next launch. Concurrent saves are safe: the
+    /// write is atomic, so the last one to land wins with a complete file.
+    pub fn save_detached(self, dir: PathBuf) {
+        let _ = std::thread::Builder::new()
+            .name("lyrfin-libcache".into())
+            .spawn(move || self.save(&dir));
+    }
+
     /// Encoded straight into the temp file (no intermediate blob in memory) and
     /// renamed into place, so an interrupted save leaves the previous cache
     /// readable instead of a truncated one the next launch has to rebuild from.
