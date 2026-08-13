@@ -289,8 +289,11 @@ impl AppState {
         self.spov.session_cmd = None; // drop the session → its thread exits, audio stops
         self.spov.session_rx = None;
         self.spotify_reset_browse_and_queue(); // don't leak this account's data into the next
-        crate::spotify::Tokens::clear(&self.config.dir);
+        crate::spotify::Tokens::clear(&self.config.dir); // both legs
         self.spotify.tokens = None;
+        self.spotify.audio_tokens = None;
+        self.spotify.audio_auth = AudioAuth::Unknown;
+        self.spotify.audio_heal_tried = false;
         self.spotify.account_id = None;
         self.spotify.restored_account = None;
         self.spotify.auth_rx = None;
@@ -303,6 +306,30 @@ impl AppState {
             }
             .into(),
         );
+    }
+
+    /// Re-authorize the playback/browse (keymaster) leg after Spotify rejected or
+    /// never received it — the self-heal for the failure that otherwise shows up
+    /// as every track skipping and an empty browse pane.
+    ///
+    /// Runs at most once per connection (`audio_heal_tried`): if the fresh token is
+    /// rejected too, the cause is not a stale credential and reopening the browser
+    /// would only loop. Never fires while another login is in flight, and never
+    /// without a Web session to belong to.
+    pub(crate) fn spotify_heal_audio_auth(&mut self) {
+        let connected = matches!(
+            self.spotify.conn,
+            crate::spotify::ConnState::Connected { .. }
+        );
+        if self.spotify.audio_heal_tried || self.spotify.auth_rx.is_some() || !connected {
+            return;
+        }
+        self.spotify.audio_heal_tried = true;
+        // The cached one is what Spotify just refused — drop it so a failed heal
+        // can't leave a known-bad token behind for the next launch to retry.
+        self.spotify.audio_tokens = None;
+        self.notify("Spotify playback needs re-authorizing — opening your browser…".into());
+        self.spotify.auth_rx = Some(crate::spotify::spawn_audio_login(self.config.dir.clone()));
     }
 
     /// Wipe all per-account Spotify state — queue, browse list, drill-in, search,
@@ -366,16 +393,55 @@ impl AppState {
         self.dirty = true;
         for ev in events {
             match ev {
-                crate::spotify::AuthEvent::Waiting { url } => {
-                    self.spotify.conn = crate::spotify::ConnState::Connecting { url: Some(url) };
+                crate::spotify::AuthEvent::Waiting { url, playback } => {
+                    let connected = matches!(
+                        self.spotify.conn,
+                        crate::spotify::ConnState::Connected { .. }
+                    );
+                    // A self-heal runs on a live session: keep the user's view (and
+                    // any playing track) instead of collapsing back to the login
+                    // panel for a leg that only re-authorizes playback.
+                    if playback && connected {
+                        self.notify(format!("Authorize playback in your browser: {url}"));
+                    } else {
+                        if playback {
+                            self.notify(
+                                "One more sign-in: authorize playback + browse (Spotify's shared app)"
+                                    .into(),
+                            );
+                        }
+                        self.spotify.conn =
+                            crate::spotify::ConnState::Connecting { url: Some(url) };
+                    }
+                }
+                // The playback/browse leg finished on its own (self-heal): adopt the
+                // token and drop the rejected session so the next play spawns one
+                // that can actually authenticate.
+                crate::spotify::AuthEvent::AudioReady { tokens } => {
+                    self.spotify.audio_tokens = Some(tokens);
+                    self.spotify.audio_auth = AudioAuth::Unknown;
+                    self.spotify.auth_rx = None;
+                    self.spov.session_cmd = None;
+                    self.spov.session_rx = None;
+                    self.spotify_clear_cooldown();
+                    self.notify("Spotify playback authorized — try again".into());
+                    self.spotify_load_section(); // a browse pane blocked on this reloads
                 }
                 crate::spotify::AuthEvent::Connected {
                     tokens,
+                    audio_tokens,
                     account_id,
                     name,
                     premium,
                 } => {
                     self.spotify.tokens = Some(tokens);
+                    self.spotify.audio_auth = if audio_tokens.is_some() {
+                        AudioAuth::Unknown // unproven until a session connects
+                    } else {
+                        AudioAuth::Missing
+                    };
+                    self.spotify.audio_tokens = audio_tokens;
+                    self.spotify.audio_heal_tried = false; // fresh login → allow one heal
                     self.spotify.auth_rx = None;
                     self.spotify.reconnect_at = None; // reached Spotify → stop retrying
                     self.spotify.reconnect_attempts = 0;
@@ -664,7 +730,13 @@ impl AppState {
         // (its command channel disconnects), then respawn fresh below.
         self.spov.session_cmd = None;
         self.spov.session_rx = None;
-        let Some(tokens) = self.spotify.tokens.clone() else {
+        // librespot runs on the AUDIO token, never the Web one: Spotify only
+        // exchanges stored credentials minted by the client id the session
+        // presents. Without it, authorize that leg rather than spawning a session
+        // that is guaranteed to be rejected.
+        let Some(tokens) = self.spotify.audio_tokens.clone() else {
+            self.spotify.audio_auth = AudioAuth::Missing;
+            self.spotify_heal_audio_auth();
             return false;
         };
         let (cmd, rx, bridge) = crate::spotify::session::spawn(
@@ -684,6 +756,24 @@ impl AppState {
     }
 }
 
+/// State of the credentials backing playback + browse, independent of the Web
+/// login: the two use different client ids and fail independently, and only this
+/// one can be rejected by librespot's login5 exchange.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum AudioAuth {
+    /// Not exercised yet this run (no session spawned).
+    #[default]
+    Unknown,
+    /// A session connected and Spotify exchanged its credentials — playback and
+    /// browse work.
+    Ok,
+    /// No keymaster token cached. Happens with a private client id configured and
+    /// only the Web leg completed (e.g. upgrading from a single-token install).
+    Missing,
+    /// Spotify refused the credential exchange; the reason is kept for the pane.
+    Rejected(&'static str),
+}
+
 /// Spotify view + connection state. Auth runs on a worker thread; `auth_rx`
 /// carries its progress, drained by [`AppState::pump_spotify`]. Library/search
 /// fields arrive in later phases.
@@ -691,8 +781,19 @@ impl AppState {
 pub struct Spotify {
     /// Connection/login state shown in the view.
     pub conn: crate::spotify::ConnState,
-    /// The current token set once connected (used by the Web API + librespot).
+    /// The current Web API token set once connected (search, library, playlists).
     pub tokens: Option<crate::spotify::Tokens>,
+    /// The keymaster token set the librespot session runs on — playback and the
+    /// pathfinder browse feed. Identical to `tokens` unless a private client id is
+    /// configured, in which case it is minted by its own login leg. `None` means
+    /// playback + browse are unauthorized (see [`Self::audio_auth`]).
+    pub audio_tokens: Option<crate::spotify::Tokens>,
+    /// Health of the playback/browse credentials, shown in the Info→Health pane so
+    /// this failure names itself instead of surfacing as "unavailable".
+    pub audio_auth: AudioAuth,
+    /// Guards the self-heal: one automatic re-authorization per connection, so a
+    /// persistently-rejected account can't spin the browser open in a loop.
+    pub audio_heal_tried: bool,
     /// In-flight auth/resume event stream, if a login or resume is running.
     pub auth_rx: Option<crossbeam_channel::Receiver<crate::spotify::AuthEvent>>,
     /// When set (unix seconds), a transient reconnect is scheduled: the last resume

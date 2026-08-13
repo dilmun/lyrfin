@@ -5,6 +5,32 @@
 
 use super::*;
 
+/// Whether a browse failure is Spotify refusing the session's credentials rather
+/// than a problem with the feed itself. The pathfinder client reports the failing
+/// stage in its message ("auth token: …"), and login5's refusal carries
+/// `INVALID_CREDENTIALS`.
+fn is_audio_auth_error(err: &str) -> bool {
+    err.contains("INVALID_CREDENTIALS") || err.starts_with("auth token") || err.contains("401")
+}
+
+/// A browse failure stated as its actual cause. Getting this wrong is expensive:
+/// "Spotify API changed" sends the reader hunting for a rotated query hash when
+/// the real fault is a credential Spotify won't exchange, which the app can fix
+/// by itself.
+fn browse_error_note(err: &str) -> String {
+    if is_audio_auth_error(err) {
+        "Browse needs re-authorizing — Spotify refused these credentials".into()
+    } else if err.contains("429") {
+        "Spotify is rate-limiting browse right now — try again shortly".into()
+    } else if err.contains("PersistedQuery") || err.starts_with("graphql") {
+        // The genuine "Spotify changed its browse API" case: the persisted-query
+        // hash this build ships was retired server-side.
+        "Browse is unavailable — Spotify changed its browse API (update lyrfin)".into()
+    } else {
+        format!("Browse unavailable ({err})")
+    }
+}
+
 impl AppState {
     /// Fold librespot's own WARN/ERROR log lines (captured by the log probe) into
     /// lyrfin's error log, so the real reason a track failed — region lock, premium
@@ -33,6 +59,9 @@ impl AppState {
         for ev in events {
             match ev {
                 Connected => {
+                    // The session verified its credential exchange before sending
+                    // this, so playback + browse are known good.
+                    self.spotify.audio_auth = crate::app::spotify::AudioAuth::Ok;
                     // If this is the fresh session spawned by a reconnect-and-retry,
                     // it's now up: a failure from here on is real (the track is
                     // genuinely unavailable), not an echo from the dead session.
@@ -40,9 +69,34 @@ impl AppState {
                         self.spov.sp_recovery = SpRecovery::Reconnected;
                     }
                 }
+                // Spotify refused to exchange the session's stored credentials, so
+                // nothing that needs an spclient token can work. Re-authorize that
+                // leg automatically instead of failing every track from here on.
+                AudioAuthRejected(msg) => {
+                    log::warn!(target: "lyrfin::spotify", "audio auth rejected: {msg}");
+                    self.spotify.audio_auth = crate::app::spotify::AudioAuth::Rejected(
+                        if msg.contains("INVALID_CREDENTIALS") {
+                            "credentials not accepted for this app"
+                        } else {
+                            "token exchange refused"
+                        },
+                    );
+                    self.spov.session_cmd = None; // the session thread has exited
+                    self.spov.session_rx = None;
+                    self.log_error(format!(
+                        "Spotify refused the playback credentials ({msg}). Re-authorizing."
+                    ));
+                    self.spotify_heal_audio_auth();
+                }
                 TokenRefreshed(tokens) => {
-                    // adopt the fresh token so the Web API uses it too
-                    self.spotify.tokens = Some(tokens);
+                    // the session refreshed the token it runs on — keep our copy
+                    // current. Without a private client id the two sets ARE one, so
+                    // the Web copy must follow or it keeps a refresh token Spotify
+                    // has rotated away (mirrors `auth::save_session_tokens`).
+                    if !crate::spotify::auth::has_custom_client_id() {
+                        self.spotify.tokens = Some(tokens.clone());
+                    }
+                    self.spotify.audio_tokens = Some(tokens);
                 }
                 ArtistMeta {
                     key,
@@ -234,8 +288,13 @@ impl AppState {
                             Some(err) => {
                                 log::warn!(target: "lyrfin::spotify", "browse failed: {err}");
                                 self.spotify.items.clear();
-                                self.spotify.note =
-                                    "Browse unavailable (Spotify API changed)".into();
+                                self.spotify.note = browse_error_note(&err);
+                                // An auth refusal is fixable — it means the browse
+                                // feed is riding credentials Spotify won't exchange,
+                                // the same fault that stops playback.
+                                if is_audio_auth_error(&err) {
+                                    self.spotify_heal_audio_auth();
+                                }
                             }
                             None if self.spotify.browse_loading_more => {
                                 // a scroll-triggered "load more": the same page re-fetched

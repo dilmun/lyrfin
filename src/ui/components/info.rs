@@ -317,6 +317,23 @@ fn health_body(f: &mut Frame, area: Rect, app: &AppState, info: &Info) {
             *premium && !blocked,
         ));
     }
+    // Playback + browse ride a different token than the Web API (Spotify's shared
+    // app id, which librespot's credential exchange requires). It fails on its own
+    // — a rejection here is why tracks skip and browse comes up empty while search
+    // still works — so it gets its own row rather than hiding behind "connected".
+    if !matches!(app.spotify.conn, ConnState::Disconnected) {
+        use crate::app::spotify::AudioAuth;
+        let (ok, detail) = match app.spotify.audio_auth {
+            AudioAuth::Ok => (true, "authorized (shared app)".to_string()),
+            AudioAuth::Unknown => (true, "not exercised yet".to_string()),
+            AudioAuth::Missing => (
+                false,
+                "not authorized — playback + browse need a sign-in".to_string(),
+            ),
+            AudioAuth::Rejected(why) => (false, format!("refused by Spotify: {why}")),
+        };
+        lines.push(row("Playback auth", detail, ok));
+    }
     lines.push(row(
         "Library",
         format!("{} tracks", app.library.tracks.len()),

@@ -15,7 +15,13 @@ impl AppState {
         let radio_favorites = crate::library::store::RadioFavorites::load(&config.dir);
         let radio_history = crate::library::store::RadioHistory::load(&config.dir);
         let radio_playlists = crate::library::store::RadioPlaylists::load(&config.dir);
-        let spotify_tokens = crate::spotify::Tokens::load(&config.dir);
+        let spotify_tokens =
+            crate::spotify::Tokens::load(&config.dir, crate::spotify::auth::TokenKind::Web);
+        // The playback/browse token is resolved from the Web one: they are the same
+        // set unless a private client id splits them (see `auth::session_tokens`).
+        let spotify_audio_tokens = spotify_tokens
+            .as_ref()
+            .and_then(|web| crate::spotify::auth::session_tokens(&config.dir, web));
         let eq_presets = config.load_eq_presets(); // custom EQ presets (before `config` moves)
         let sort = parse_sort(&config.sort_order);
         // surface a config.toml parse error as a long-lived, copyable status-bar
@@ -71,6 +77,7 @@ impl AppState {
             spotify: {
                 let mut s = Spotify::default();
                 s.tokens = spotify_tokens;
+                s.audio_tokens = spotify_audio_tokens;
                 s
             },
             spov: spotify::SpOverlay {

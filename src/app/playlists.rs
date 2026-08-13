@@ -209,11 +209,21 @@ impl AppState {
                     self.spov.session_rx = None;
                     crate::spotify::Tokens::clear(&self.config.dir);
                     self.spotify.tokens = None;
+                    // Changing the client id splits the two logins apart (see
+                    // `auth::TokenKind`): the cached playback token is cleared with
+                    // the Web one, so drop it here too rather than leaving the app
+                    // holding a token that no longer exists on disk.
+                    self.spotify.audio_tokens = None;
+                    self.spotify.audio_auth = crate::app::spotify::AudioAuth::Unknown;
+                    self.spotify.audio_heal_tried = false;
                     self.spotify.items.clear();
                     self.spotify.conn = crate::spotify::ConnState::Connecting { url: None };
                     self.spotify.auth_rx =
                         Some(crate::spotify::spawn_login(self.config.dir.clone()));
-                    self.notify("Saved your Client ID — logging in with your app…".into());
+                    self.notify(
+                        "Saved your Client ID — logging in (two authorizations: Web + playback)…"
+                            .into(),
+                    );
                 }
                 None => {}
             }

@@ -107,8 +107,15 @@ pub enum SessionCommand {
 pub enum SessionEvent {
     Connected,
     ConnectError(String),
-    /// The cached access token was expired; the session refreshed it. The app
-    /// adopts the fresh set so the Web API benefits too.
+    /// Spotify accepted the session but refused to exchange its stored credentials
+    /// for an API token (login5 `INVALID_CREDENTIALS`). That exchange backs every
+    /// spclient call, so playback AND the pathfinder browse feed are dead until the
+    /// credentials are re-minted with the client id librespot presents — which is
+    /// what the app does in response (see `spawn_audio_login`). Checked once at
+    /// connect so the failure surfaces here, not as a per-track "key denied".
+    AudioAuthRejected(String),
+    /// The cached *audio* access token was expired; the session refreshed it. The
+    /// app adopts the fresh set so its cached copy stays current.
     TokenRefreshed(Tokens),
     Playing {
         position_ms: u32,
@@ -566,9 +573,9 @@ pub fn spawn(
             // Refresh a stale token here, on this plain thread (not the UI thread,
             // not yet inside the tokio runtime) — a blocking ureq call is fine.
             let token = if tokens.is_expired() {
-                match auth::refresh(&tokens.refresh_token) {
+                match auth::refresh(auth::TokenKind::Audio, &tokens.refresh_token) {
                     Ok(fresh) => {
-                        fresh.save(&dir);
+                        auth::save_session_tokens(&dir, &fresh);
                         let _ = evt_tx.send(SessionEvent::TokenRefreshed(fresh.clone()));
                         fresh.access_token
                     }
@@ -634,6 +641,19 @@ pub fn spawn(
                         ));
                         return;
                     }
+                }
+                // The AP handshake succeeding is not enough: every spclient call
+                // (storage-resolve for playback, pathfinder for browse) first
+                // exchanges the session's stored credentials for an API token via
+                // login5, and Spotify refuses that exchange when the credentials
+                // were minted by a different client id than the session presents.
+                // Verify it once here — otherwise the only symptom is every track
+                // "skipping, unable to load" and an empty browse pane.
+                if let Err(e) = meta_session.login5().auth_token().await {
+                    let msg = e.to_string();
+                    log::warn!(target: "lyrfin::spotify", "login5 token exchange failed: {msg}");
+                    let _ = evt_tx.send(SessionEvent::AudioAuthRejected(msg));
+                    return;
                 }
                 let _ = evt_tx.send(SessionEvent::Connected);
 

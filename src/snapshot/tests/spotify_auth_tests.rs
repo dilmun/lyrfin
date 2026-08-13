@@ -221,6 +221,7 @@ fn spotify_drops_restored_state_from_a_different_account() {
             expires_at: u64::MAX,
             scopes: String::new(),
         },
+        audio_tokens: None,
         account_id: "bob".into(),
         name: "Bob".into(),
         premium: true,
@@ -537,6 +538,7 @@ fn spotify_reconnect_drops_a_stale_pre_refresh_session() {
             expires_at: crate::datetime::now_unix() + 3600,
             scopes: String::new(),
         },
+        audio_tokens: None,
         account_id: "acct".into(),
         name: "Me".into(),
         premium: true,
@@ -575,6 +577,7 @@ fn spotify_reconnect_keeps_an_actively_streaming_session() {
             expires_at: crate::datetime::now_unix() + 3600,
             scopes: String::new(),
         },
+        audio_tokens: None,
         account_id: "acct".into(),
         name: "Me".into(),
         premium: true,
@@ -798,6 +801,11 @@ fn spotify_reconnect_fires_only_when_due_idle_and_holding_a_token() {
 #[test]
 fn spotify_client_id_persists_in_its_own_file() {
     use crate::spotify::auth::{load_persisted_client_id, persist_client_id};
+    // persist_client_id applies the id live (process-global), so this test shares
+    // the client-id lock with the auth unit tests — cargo runs them in parallel.
+    let _guard = crate::spotify::auth::CLIENT_ID_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let dir = std::env::temp_dir().join("lyrfin_client_id_persist_test");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -823,4 +831,112 @@ fn spotify_client_id_persists_in_its_own_file() {
     assert_eq!(load_persisted_client_id(&dir), None, "empty clears it");
 
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The failure that cost an afternoon: Spotify refuses to exchange the librespot
+/// session's stored credentials, and EVERY symptom (tracks skipping, an empty
+/// browse pane) points somewhere else. The session must report it as an auth
+/// rejection, the app must say so, and it must re-authorize instead of dead-ending.
+#[test]
+fn rejected_playback_credentials_self_heal_and_are_named_in_health() {
+    use crate::app::spotify::AudioAuth;
+    use crate::spotify::ConnState;
+    use crate::spotify::session::SessionEvent;
+    let mut a = demo();
+    a.layout = Layout::Spotify;
+    a.spotify.conn = ConnState::Connected {
+        name: "Me".into(),
+        premium: true,
+    };
+    let (tx, rx) = crossbeam_channel::unbounded();
+    tx.send(SessionEvent::AudioAuthRejected(
+        "Invalid state { Login request was denied: INVALID_CREDENTIALS }".into(),
+    ))
+    .unwrap();
+    a.spov.session_rx = Some(rx);
+    a.pump_spotify_session();
+
+    assert_eq!(
+        a.spotify.audio_auth,
+        AudioAuth::Rejected("credentials not accepted for this app"),
+        "the Health pane names the real cause, not a vague 'unavailable'"
+    );
+    assert!(
+        a.spotify.audio_heal_tried,
+        "the app re-authorizes the playback leg by itself"
+    );
+    assert!(
+        a.spotify.audio_tokens.is_none(),
+        "the refused token is dropped, so a failed heal leaves nothing bad cached"
+    );
+    assert!(
+        a.error_log
+            .iter()
+            .any(|e| e.msg.contains("playback credentials")),
+        "and it is recorded where the user looks: {:?}",
+        a.error_log.iter().map(|e| &e.msg).collect::<Vec<_>>()
+    );
+
+    // A SECOND rejection must not reopen the browser: if a freshly-minted token is
+    // refused too, the cause isn't a stale credential and re-prompting would loop.
+    a.spotify.auth_rx = None;
+    let (tx2, rx2) = crossbeam_channel::unbounded();
+    tx2.send(SessionEvent::AudioAuthRejected(
+        "INVALID_CREDENTIALS".into(),
+    ))
+    .unwrap();
+    a.spov.session_rx = Some(rx2);
+    a.pump_spotify_session();
+    assert!(
+        a.spotify.auth_rx.is_none(),
+        "one automatic re-authorization per connection — no browser loop"
+    );
+}
+
+/// A browse failure must be reported as what it is. Blaming "the Spotify API
+/// changed" for a credential problem sends the reader hunting a rotated query
+/// hash while the app could have fixed itself.
+#[test]
+fn browse_failures_are_reported_as_their_actual_cause() {
+    use crate::spotify::ConnState;
+    use crate::spotify::session::SessionEvent;
+    let note_for = |err: &str| {
+        let mut a = demo();
+        a.layout = Layout::Spotify;
+        a.spotify.conn = ConnState::Connected {
+            name: "Me".into(),
+            premium: true,
+        };
+        let (tx, rx) = crossbeam_channel::unbounded();
+        // the empty key matches the fresh `spotify.key` default (as the other
+        // browse-event tests do), so the result is accepted rather than ignored
+        tx.send(SessionEvent::Browse {
+            key: String::new(),
+            items: Vec::new(),
+            error: Some(err.into()),
+        })
+        .unwrap();
+        a.spov.session_rx = Some(rx);
+        a.pump_spotify_session();
+        a.spotify.note.clone()
+    };
+
+    let auth = note_for("auth token: FaultyRequest(INVALID_CREDENTIALS)");
+    assert!(
+        auth.contains("re-authoriz"),
+        "a refused credential says so: {auth}"
+    );
+    assert!(
+        !auth.contains("API changed"),
+        "and never blames Spotify's API for it: {auth}"
+    );
+    // the genuine API-change case keeps its own message — a retired query hash is
+    // NOT something the app can re-authorize its way out of
+    let stale = note_for("graphql: [{\"message\":\"PersistedQueryNotFound\"}]");
+    assert!(
+        stale.contains("changed its browse API"),
+        "a retired persisted query is the real 'API changed': {stale}"
+    );
+    let limited = note_for("HTTP 429 Too Many Requests");
+    assert!(limited.contains("rate-limiting"), "got: {limited}");
 }
