@@ -849,8 +849,10 @@ pub struct Spotify {
     /// them: a persistent failure settles on a stable message rather than
     /// re-fetching forever. Reset by any successful load.
     pub reload_attempts: u32,
-    /// In-flight auth/resume event stream, if a login or resume is running.
-    pub auth_rx: Option<crossbeam_channel::Receiver<crate::spotify::AuthEvent>>,
+    /// In-flight auth/resume worker, if a login or resume is running. Clearing it
+    /// cancels the worker (see [`crate::spotify::AuthSession`]), so abandoning a
+    /// browser sign-in releases the loopback port instead of leaking it.
+    pub auth_rx: Option<crate::spotify::AuthSession>,
     /// When set (unix seconds), a transient reconnect is scheduled: the last resume
     /// failed to reach Spotify (network/rate-limit), so [`AppState::pump_spotify`]
     /// respawns it once this deadline passes. Cleared on connect or a fresh login.

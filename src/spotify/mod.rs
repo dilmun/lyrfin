@@ -13,10 +13,50 @@ pub mod session;
 pub mod view_cache;
 
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use crossbeam_channel::{Receiver, Sender, unbounded};
+use crossbeam_channel::{Receiver, Sender, TryRecvError, unbounded};
 
 pub use auth::Tokens;
+
+/// A running login/resume worker: its event stream plus the cancel flag the
+/// worker polls while waiting on the browser.
+///
+/// Dropping it cancels the login — which is exactly what the app already does
+/// when it clears `auth_rx`, so abandoning a sign-in now releases the loopback
+/// port and the worker thread instead of leaking both. Combined with
+/// [`auth::LOGIN_TIMEOUT`], a browser tab the user never authorizes can no longer
+/// leave the app stuck reporting "a login is already running" forever.
+pub struct AuthSession {
+    rx: Receiver<AuthEvent>,
+    cancel: Arc<AtomicBool>,
+}
+
+impl AuthSession {
+    /// Next event from the worker, if any (the app polls this each loop).
+    pub fn try_recv(&self) -> Result<AuthEvent, TryRecvError> {
+        self.rx.try_recv()
+    }
+}
+
+impl Drop for AuthSession {
+    fn drop(&mut self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+impl AuthSession {
+    /// Wrap a bare receiver for tests that drive auth events by hand — there is
+    /// no worker thread behind it, so the cancel flag has nothing to stop.
+    pub(crate) fn for_test(rx: Receiver<AuthEvent>) -> Self {
+        Self {
+            rx,
+            cancel: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
 
 /// Progress/result of a background login (or token resume), drained by the app.
 #[derive(Debug, Clone)]
@@ -72,7 +112,11 @@ pub enum ConnState {
 /// One browser round-trip: bind the loopback listener, open the authorize URL for
 /// `kind`, and exchange the returned code for tokens. Both login legs share it —
 /// they differ only in the client id and scopes carried by `kind`.
-fn browser_leg(kind: auth::TokenKind, tx: &Sender<AuthEvent>) -> Result<Tokens, String> {
+fn browser_leg(
+    kind: auth::TokenKind,
+    tx: &Sender<AuthEvent>,
+    cancel: &AtomicBool,
+) -> Result<Tokens, String> {
     let listener = auth::bind_listener().map_err(|e| {
         format!(
             "Couldn't start the local login server on 127.0.0.1:{} ({e}). \
@@ -87,8 +131,24 @@ Another login may be in progress — wait a moment and retry.",
         url,
         playback: kind == auth::TokenKind::Audio,
     });
-    let code = auth::wait_for_code(&listener, &state)?;
+    let deadline = std::time::Instant::now() + auth::LOGIN_TIMEOUT;
+    let code = auth::wait_for_code(&listener, &state, deadline, cancel)?;
     auth::exchange_code(kind, &code, &verifier)
+}
+
+/// Spawn a login/resume worker: builds the event channel + cancel flag, hands
+/// both to `job`, and returns the handle the app polls (and drops to cancel).
+fn spawn_auth<F>(name: &str, job: F) -> AuthSession
+where
+    F: FnOnce(Sender<AuthEvent>, Arc<AtomicBool>) + Send + 'static,
+{
+    let (tx, rx) = unbounded();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let worker_cancel = cancel.clone();
+    let _ = std::thread::Builder::new()
+        .name(name.into())
+        .spawn(move || job(tx, worker_cancel));
+    AuthSession { rx, cancel }
 }
 
 /// Run the full interactive login on a worker thread; the app drains the events.
@@ -97,48 +157,43 @@ Another login may be in progress — wait a moment and retry.",
 /// search, playlists) and the keymaster one that librespot and browse require.
 /// Without a private id the single Web token is already keymaster-minted and
 /// serves both, so the second leg is skipped.
-pub fn spawn_login(dir: PathBuf) -> Receiver<AuthEvent> {
-    let (tx, rx) = unbounded();
-    let _ = std::thread::Builder::new()
-        .name("lyrfin-spotify-login".into())
-        .spawn(move || {
-            let tokens = match browser_leg(auth::TokenKind::Web, &tx) {
-                Ok(t) => t,
+pub fn spawn_login(dir: PathBuf) -> AuthSession {
+    spawn_auth("lyrfin-spotify-login", move |tx, cancel| {
+        let tokens = match browser_leg(auth::TokenKind::Web, &tx, &cancel) {
+            Ok(t) => t,
+            Err(msg) => {
+                let _ = tx.send(AuthEvent::Error { msg });
+                return;
+            }
+        };
+        // The audio leg is best-effort: a failure here still leaves a working
+        // Web login (search + library), so report it as a playback-only
+        // problem rather than failing the whole sign-in.
+        let audio = if auth::has_custom_client_id() {
+            match browser_leg(auth::TokenKind::Audio, &tx, &cancel) {
+                Ok(t) => {
+                    t.save(&dir, auth::TokenKind::Audio);
+                    Some(t)
+                }
                 Err(msg) => {
-                    let _ = tx.send(AuthEvent::Error { msg });
-                    return;
+                    log::warn!(target: "lyrfin::spotify", "playback sign-in failed: {msg}");
+                    None
                 }
-            };
-            // The audio leg is best-effort: a failure here still leaves a working
-            // Web login (search + library), so report it as a playback-only
-            // problem rather than failing the whole sign-in.
-            let audio = if auth::has_custom_client_id() {
-                match browser_leg(auth::TokenKind::Audio, &tx) {
-                    Ok(t) => {
-                        t.save(&dir, auth::TokenKind::Audio);
-                        Some(t)
-                    }
-                    Err(msg) => {
-                        log::warn!(target: "lyrfin::spotify", "playback sign-in failed: {msg}");
-                        None
-                    }
-                }
-            } else {
-                Some(tokens.clone())
-            };
-            finish(tokens, audio, &dir, &tx);
-        });
-    rx
+            }
+        } else {
+            Some(tokens.clone())
+        };
+        finish(tokens, audio, &dir, &tx);
+    })
 }
 
 /// Mint ONLY the playback/browse (keymaster) token, leaving the Web login alone.
 /// This is the self-heal path: the librespot session reports that Spotify refused
 /// its stored credentials, and the app re-authorizes just that leg.
-pub fn spawn_audio_login(dir: PathBuf) -> Receiver<AuthEvent> {
-    let (tx, rx) = unbounded();
-    let _ = std::thread::Builder::new()
-        .name("lyrfin-spotify-audio-login".into())
-        .spawn(move || match browser_leg(auth::TokenKind::Audio, &tx) {
+pub fn spawn_audio_login(dir: PathBuf) -> AuthSession {
+    spawn_auth(
+        "lyrfin-spotify-audio-login",
+        move |tx, cancel| match browser_leg(auth::TokenKind::Audio, &tx, &cancel) {
             Ok(tokens) => {
                 tokens.save(&dir, auth::TokenKind::Audio);
                 let _ = tx.send(AuthEvent::AudioReady { tokens });
@@ -146,8 +201,8 @@ pub fn spawn_audio_login(dir: PathBuf) -> Receiver<AuthEvent> {
             Err(msg) => {
                 let _ = tx.send(AuthEvent::Error { msg });
             }
-        });
-    rx
+        },
+    )
 }
 
 /// The "session expired" recovery message. When the refresh was rejected as
@@ -167,11 +222,11 @@ fn session_expired_msg(err: &str, has_custom_client: bool) -> String {
 
 /// Resume from a cached token on a worker thread (refresh if near expiry, then
 /// confirm via the profile). No browser needed.
-pub fn spawn_resume(dir: PathBuf, tokens: Tokens) -> Receiver<AuthEvent> {
-    let (tx, rx) = unbounded();
-    let _ = std::thread::Builder::new()
-        .name("lyrfin-spotify-resume".into())
-        .spawn(move || {
+pub fn spawn_resume(dir: PathBuf, tokens: Tokens) -> AuthSession {
+    // A resume never waits on the browser, so it has nothing to cancel — it only
+    // makes bounded (20s) token/profile calls and then reports.
+    spawn_auth("lyrfin-spotify-resume", move |tx, _cancel| {
+        {
             let toks = if tokens.is_expired() {
                 match auth::refresh(auth::TokenKind::Web, &tokens.refresh_token) {
                     Ok(t) => t,
@@ -214,8 +269,8 @@ pub fn spawn_resume(dir: PathBuf, tokens: Tokens) -> Receiver<AuthEvent> {
                 }
             });
             finish(toks, audio, &dir, &tx);
-        });
-    rx
+        }
+    })
 }
 
 fn finish(

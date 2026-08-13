@@ -320,6 +320,26 @@ pub fn bind_listener() -> std::io::Result<TcpListener> {
     TcpListener::bind(("127.0.0.1", REDIRECT_PORT))
 }
 
+/// How long a browser sign-in may stay open before it gives up. Generous enough
+/// for a password + 2FA on a slow phone, bounded so an abandoned tab can't pin
+/// the loopback port — and the app's "a login is running" gate — for the rest of
+/// the run (which left playback stuck on "Connecting…" with no way to retry).
+pub const LOGIN_TIMEOUT: Duration = Duration::from_secs(180);
+
+/// The user-facing timeout message, matched by the app to keep the cached token
+/// (a timeout says nothing about whether the token is still good).
+pub const LOGIN_TIMEOUT_MSG: &str =
+    "Spotify sign-in timed out — the browser tab was never authorized. Press ⏎ to try again.";
+
+/// How long an accepted connection has to send its request line. The browser
+/// also *preconnects* to this port (a socket opened with no request), and a
+/// blocking read on one of those would hang the whole login — the redirect that
+/// follows on another socket would never be read.
+const CALLBACK_READ_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// How often the accept loop re-checks the deadline and the cancel flag.
+const ACCEPT_POLL: Duration = Duration::from_millis(100);
+
 /// Block until Spotify redirects back, validate `state`, and return the code.
 /// Always writes a friendly page to the browser tab.
 ///
@@ -329,11 +349,46 @@ pub fn bind_listener() -> std::io::Result<TcpListener> {
 /// that consumed the first connection whatever it was would fail whenever one of
 /// those arrived first. That is easy to hit with two logins back to back, where
 /// the previous page's favicon request can land on this listener.
-pub fn wait_for_code(listener: &TcpListener, expect_state: &str) -> Result<String, String> {
-    for mut stream in listener.incoming().flatten() {
+///
+/// Bounded three ways, because every one of them is a real browser behaviour:
+/// `deadline` caps the whole wait (an abandoned tab), `cancel` lets the app drop
+/// the login (see [`crate::spotify::AuthSession`]), and each accepted socket gets
+/// a read timeout (a preconnect that never sends a request).
+pub fn wait_for_code(
+    listener: &TcpListener,
+    expect_state: &str,
+    deadline: std::time::Instant,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<String, String> {
+    use std::sync::atomic::Ordering;
+    // Non-blocking accept so the deadline/cancel checks below actually run; the
+    // accepted socket is put back into blocking mode (with a read timeout) since
+    // the request line is read synchronously.
+    listener
+        .set_nonblocking(true)
+        .map_err(|e| format!("couldn't watch the login port ({e})"))?;
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            return Err("login cancelled".into());
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(LOGIN_TIMEOUT_MSG.into());
+        }
+        let mut stream = match listener.accept() {
+            Ok((s, _)) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(ACCEPT_POLL);
+                continue;
+            }
+            // a failed accept says nothing about the login; keep waiting for the
+            // real redirect rather than failing the whole sign-in
+            Err(_) => continue,
+        };
+        let _ = stream.set_nonblocking(false);
+        let _ = stream.set_read_timeout(Some(CALLBACK_READ_TIMEOUT));
         let mut line = String::new();
         if BufReader::new(&stream).read_line(&mut line).is_err() {
-            continue; // a half-open connection tells us nothing; wait for the real one
+            continue; // half-open, or a preconnect that never spoke; wait for the real one
         }
         // request line: `GET /login?code=...&state=... HTTP/1.1`
         let path = line.split_whitespace().nth(1).unwrap_or("");
@@ -377,7 +432,6 @@ Content-Length: {}\r\nConnection: close\r\n\r\n{}",
             .filter(|c| !c.is_empty())
             .ok_or_else(|| "no authorization code was returned".into());
     }
-    Err("login listener closed".into())
 }
 
 #[derive(Deserialize)]
@@ -602,6 +656,14 @@ pub(crate) static CLIENT_ID_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::
 mod tests {
     use super::*;
 
+    /// No cancellation requested — the common case for the wait tests.
+    static NOT_CANCELLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+    /// A deadline far enough out that the test's own progress decides the outcome.
+    fn never() -> std::time::Instant {
+        std::time::Instant::now() + Duration::from_secs(30)
+    }
+
     /// Take [`CLIENT_ID_TEST_LOCK`], ignoring poisoning: a panic in one client-id
     /// test must not cascade into "everything else fails too".
     fn client_id_guard() -> std::sync::MutexGuard<'static, ()> {
@@ -697,6 +759,9 @@ mod tests {
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind");
         let port = listener.local_addr().expect("addr").port();
         let client = std::thread::spawn(move || {
+            // a preconnect (opened, never written) precedes the favicon + the real
+            // redirect: the login must survive all three, in order
+            let _silent = TcpStream::connect(("127.0.0.1", port)).expect("preconnect");
             for req in [
                 "GET /favicon.ico HTTP/1.1\r\nHost: localhost\r\n\r\n",
                 "GET /login?code=THE_CODE&state=st8 HTTP/1.1\r\nHost: localhost\r\n\r\n",
@@ -709,11 +774,34 @@ mod tests {
             }
         });
         assert_eq!(
-            wait_for_code(&listener, "st8").as_deref(),
+            wait_for_code(&listener, "st8", never(), &NOT_CANCELLED).as_deref(),
             Ok("THE_CODE"),
-            "the favicon request is skipped and the real redirect is read"
+            "a silent preconnect and the favicon request are skipped; the real redirect is read"
         );
         client.join().expect("client thread");
+    }
+
+    /// A deadline that has already passed: the browser never came back (the tab
+    /// was closed / the user walked away). Without this the login thread — and
+    /// the loopback port — would be pinned for the rest of the run, and the app
+    /// would refuse every retry with "a login is already running".
+    #[test]
+    fn wait_for_code_gives_up_at_the_deadline() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind");
+        let err = wait_for_code(&listener, "st8", std::time::Instant::now(), &NOT_CANCELLED)
+            .expect_err("an elapsed deadline ends the wait");
+        assert_eq!(err, LOGIN_TIMEOUT_MSG);
+    }
+
+    /// Dropping the [`crate::spotify::AuthSession`] raises this flag; the wait
+    /// must end promptly rather than holding the port until the full timeout.
+    #[test]
+    fn wait_for_code_honours_cancellation() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind");
+        let cancel = std::sync::atomic::AtomicBool::new(true);
+        let err = wait_for_code(&listener, "st8", never(), &cancel)
+            .expect_err("a cancelled login ends the wait");
+        assert!(err.contains("cancelled"), "got: {err}");
     }
 
     #[test]

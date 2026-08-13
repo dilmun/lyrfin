@@ -227,7 +227,7 @@ fn spotify_drops_restored_state_from_a_different_account() {
         premium: true,
     })
     .unwrap();
-    a.spotify.auth_rx = Some(rx);
+    a.spotify.auth_rx = Some(crate::spotify::AuthSession::for_test(rx));
     a.pump_spotify();
     assert!(
         a.spov.now_spotify.is_none(),
@@ -506,7 +506,7 @@ fn spotify_ensure_session_defers_while_auth_is_in_flight() {
     // a login/resume is mid-flight — spawning a session now would fire a SECOND,
     // racing refresh of the same single-use token (corruption risk)
     let (_tx, rx) = crossbeam_channel::unbounded::<crate::spotify::AuthEvent>();
-    a.spotify.auth_rx = Some(rx);
+    a.spotify.auth_rx = Some(crate::spotify::AuthSession::for_test(rx));
     assert!(
         !a.spotify_ensure_session(),
         "no session is spawned while a refresh/login is in flight"
@@ -544,7 +544,7 @@ fn spotify_reconnect_drops_a_stale_pre_refresh_session() {
         premium: true,
     })
     .unwrap();
-    a.spotify.auth_rx = Some(rx);
+    a.spotify.auth_rx = Some(crate::spotify::AuthSession::for_test(rx));
     a.pump_spotify();
     assert!(
         a.spov.session_cmd.is_none(),
@@ -583,7 +583,7 @@ fn spotify_reconnect_keeps_an_actively_streaming_session() {
         premium: true,
     })
     .unwrap();
-    a.spotify.auth_rx = Some(rx);
+    a.spotify.auth_rx = Some(crate::spotify::AuthSession::for_test(rx));
     a.pump_spotify();
     assert!(
         a.spov.session_cmd.is_some(),
@@ -634,7 +634,7 @@ fn spotify_dropped_connection_reconnects_instead_of_backing_off() {
     let mut a = playing_with_dead_session();
     // block the real respawn so no socket is opened; the recovery decision still runs
     let (_atx, arx) = crossbeam_channel::unbounded::<crate::spotify::AuthEvent>();
-    a.spotify.auth_rx = Some(arx);
+    a.spotify.auth_rx = Some(crate::spotify::AuthSession::for_test(arx));
     // the next track's load fails (dead-session audio-key timeout → Unavailable)
     let (tx, rx) = crossbeam_channel::unbounded();
     tx.send(SessionEvent::Unavailable).unwrap();
@@ -715,7 +715,7 @@ fn spotify_transient_connection_loss_keeps_token_and_schedules_a_retry() {
         msg: "can't reach Spotify (Connection Failed) — check your connection/VPN".into(),
     })
     .unwrap();
-    a.spotify.auth_rx = Some(rx);
+    a.spotify.auth_rx = Some(crate::spotify::AuthSession::for_test(rx));
     a.pump_spotify();
     assert!(
         a.spotify.tokens.is_some(),
@@ -752,7 +752,7 @@ fn spotify_terminal_auth_error_is_not_auto_retried() {
         msg: "Session expired (Spotify rejected the login). Press ⏎ to log in again.".into(),
     })
     .unwrap();
-    a.spotify.auth_rx = Some(rx);
+    a.spotify.auth_rx = Some(crate::spotify::AuthSession::for_test(rx));
     a.pump_spotify();
     assert!(
         matches!(a.spotify.conn, ConnState::Error { .. }),
@@ -780,7 +780,7 @@ fn spotify_reconnect_fires_only_when_due_idle_and_holding_a_token() {
     assert!(a.spotify_reconnect_due(), "a due, armed reconnect fires");
     // a resume already in flight → don't double-spawn
     let (_tx, rx) = crossbeam_channel::unbounded::<crate::spotify::AuthEvent>();
-    a.spotify.auth_rx = Some(rx);
+    a.spotify.auth_rx = Some(crate::spotify::AuthSession::for_test(rx));
     assert!(
         !a.spotify_reconnect_due(),
         "not while a resume is in flight"
