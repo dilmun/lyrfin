@@ -11,7 +11,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use crossbeam_channel::{Receiver, Sender, TryRecvError, unbounded};
+use crossbeam_channel::{Receiver, Sender, unbounded};
 use librespot::core::authentication::Credentials;
 use librespot::core::config::SessionConfig;
 use librespot::core::session::Session;
@@ -31,6 +31,10 @@ use crate::spotify::auth::{self, Tokens};
 /// librespot decodes Vorbis/AAC at 44.1 kHz, interleaved stereo. lyrfin's engine
 /// resamples this to the device rate.
 const SRC_RATE: u32 = 44_100;
+/// How often the loop samples the audio-key probe flag when no command arrives.
+/// It only reads an atomic, and librespot's stall is already seconds long, so a
+/// relaxed tick costs nothing and keeps the thread asleep the rest of the time.
+const KEY_PROBE_INTERVAL: Duration = Duration::from_millis(250);
 /// Cap the bridge buffer (~1s stereo) so the sink applies backpressure rather
 /// than ballooning memory if the consumer stalls.
 const BRIDGE_CAP: usize = (SRC_RATE as usize) * 2;
@@ -180,33 +184,71 @@ pub enum SessionEvent {
     },
 }
 
+/// How long the sink sleeps between checks while the bridge is full.
+const BACKPRESSURE_SLICE: Duration = Duration::from_millis(5);
+
 /// Lock-protected FIFO of f32 samples bridging librespot's sink (producer) to
 /// lyrfin's engine (consumer). Interleaved stereo at [`SRC_RATE`].
 #[derive(Debug, Default)]
 pub struct Bridge {
     buf: Mutex<VecDeque<f32>>,
     active: AtomicBool,
+    /// The engine has detached this bridge, so nothing will drain it again until
+    /// playback restarts. Ends the sink's backpressure wait — see [`Self::release`].
+    released: AtomicBool,
 }
 
 impl Bridge {
-    fn push(&self, s: &[f32]) {
-        self.buf.lock().unwrap().extend(s.iter().copied());
+    /// The queue lock. Poisoning is recovered rather than propagated: the buffer is
+    /// plain samples, always in a consistent state, and panicking here would take
+    /// down the audio path over a fault elsewhere.
+    fn queue(&self) -> std::sync::MutexGuard<'_, VecDeque<f32>> {
+        self.buf.lock().unwrap_or_else(|e| e.into_inner())
     }
+
+    /// Append librespot's decoded samples, converting to f32 as they're queued
+    /// (rather than collecting an intermediate Vec per packet).
+    fn push(&self, s: &[f64]) {
+        self.queue().extend(s.iter().map(|&x| x as f32));
+    }
+
     fn len(&self) -> usize {
-        self.buf.lock().unwrap().len()
+        self.queue().len()
     }
+
     /// Drop buffered audio (used on stop/track-change to avoid stale playback).
     pub fn clear(&self) {
-        self.buf.lock().unwrap().clear();
+        self.queue().clear();
+    }
+
+    /// The engine detached this bridge (playback failed, or local/radio audio took
+    /// the output). Drop what's buffered and stop the sink's wait.
+    ///
+    /// Without this, the sink sits in its backpressure loop forever — nothing is
+    /// draining the bridge — which also blocks librespot's player loop, so the
+    /// `Pause` sent alongside the release is never processed and it keeps fetching
+    /// and decoding a track no one can hear.
+    pub fn release(&self) {
+        self.released.store(true, Ordering::Release);
+        self.clear();
+    }
+
+    /// Playback is taking the bridge again (a fresh `Load`).
+    fn attach(&self) {
+        self.released.store(false, Ordering::Release);
+    }
+
+    fn is_released(&self) -> bool {
+        self.released.load(Ordering::Acquire)
     }
 }
 
 impl ExternalAudioSource for Bridge {
     fn pull(&self, out: &mut [f32]) -> usize {
-        let mut q = self.buf.lock().unwrap();
+        let mut q = self.queue();
         let n = out.len().min(q.len());
-        for slot in out.iter_mut().take(n) {
-            *slot = q.pop_front().unwrap();
+        for (slot, sample) in out.iter_mut().zip(q.drain(..n)) {
+            *slot = sample;
         }
         n
     }
@@ -234,12 +276,17 @@ impl Sink for BridgeSink {
     }
     fn write(&mut self, packet: AudioPacket, _converter: &mut Converter) -> SinkResult<()> {
         if let AudioPacket::Samples(samples) = packet {
-            // backpressure: throttle librespot if lyrfin hasn't drained the bridge
-            while self.bridge.len() > BRIDGE_CAP {
-                std::thread::sleep(Duration::from_millis(5));
+            // Backpressure: throttle librespot while lyrfin catches up. Waiting
+            // indefinitely is right while playback is merely paused (no audio is
+            // lost, and the engine drains again on resume) but wrong once the
+            // bridge is released — then nothing will ever drain it.
+            while self.bridge.len() > BRIDGE_CAP && !self.bridge.is_released() {
+                std::thread::sleep(BACKPRESSURE_SLICE);
             }
-            let f32s: Vec<f32> = samples.iter().map(|&x| x as f32).collect();
-            self.bridge.push(&f32s);
+            if self.bridge.is_released() {
+                return Ok(()); // detached: this audio has nowhere to go
+            }
+            self.bridge.push(&samples);
         }
         Ok(())
     }
@@ -526,6 +573,7 @@ fn handle_command(cmd: SessionCommand, player: &Player, bridge: &Bridge) {
         SessionCommand::Load { uri, position_ms } => {
             if let Ok(parsed) = SpotifyUri::from_uri(&uri) {
                 bridge.clear(); // a hard cut — drop any buffered audio
+                bridge.attach(); // …and take the bridge back if it was released
                 player.load(parsed, true, position_ms);
             }
         }
@@ -697,11 +745,41 @@ pub fn spawn(
                     }
                 });
 
-                // poll the (sync) command channel; player methods are non-blocking,
-                // metadata fetches run as detached tasks (slow, must not stall here)
+                // Commands arrive on a sync channel; a blocking forwarder turns
+                // them into an async stream so this loop can AWAIT them. Polling
+                // added up to a poll interval of latency to every play/pause/seek
+                // and woke this thread 25x a second while idle for nothing.
+                let (async_tx, mut async_rx) =
+                    tokio::sync::mpsc::unbounded_channel::<SessionCommand>();
+                tokio::task::spawn_blocking(move || {
+                    // ends when the app drops the sender — the same condition that
+                    // ends the loop below, so neither outlives the other
+                    while let Ok(cmd) = cmd_rx.recv() {
+                        if async_tx.send(cmd).is_err() {
+                            break;
+                        }
+                    }
+                });
+
+                // player methods are non-blocking; metadata fetches run as detached
+                // tasks (slow, must not stall here)
                 loop {
-                    match cmd_rx.try_recv() {
-                        Ok(SessionCommand::FetchTracks { uri, artist, key }) => {
+                    // Wake on a command, or on the probe tick: librespot logs an
+                    // audio-key denial and then stalls silently (no player event),
+                    // so that flag has to be sampled on a timer either way.
+                    let cmd = tokio::select! {
+                        next = async_rx.recv() => match next {
+                            Some(cmd) => Some(cmd),
+                            None => break, // the app dropped the session
+                        },
+                        _ = tokio::time::sleep(KEY_PROBE_INTERVAL) => None,
+                    };
+                    if crate::spotify::logprobe::AUDIO_KEY_DENIED.swap(false, Ordering::Relaxed) {
+                        let _ = evt_tx.send(SessionEvent::AudioKeyDenied);
+                    }
+                    let Some(cmd) = cmd else { continue };
+                    match cmd {
+                        SessionCommand::FetchTracks { uri, artist, key } => {
                             let s = meta_session.clone();
                             let tx = evt_tx.clone();
                             tokio::spawn(async move {
@@ -726,7 +804,7 @@ pub fn spawn(
                                 let _ = tx.send(SessionEvent::Tracks { key, items });
                             });
                         }
-                        Ok(SessionCommand::FetchArtistPage { uri, key }) => {
+                        SessionCommand::FetchArtistPage { uri, key } => {
                             let s = meta_session.clone();
                             let tx = evt_tx.clone();
                             tokio::spawn(async move {
@@ -734,7 +812,7 @@ pub fn spawn(
                                 let _ = tx.send(SessionEvent::ArtistPage { key, items });
                             });
                         }
-                        Ok(SessionCommand::FetchPlaylistUris { uri, key }) => {
+                        SessionCommand::FetchPlaylistUris { uri, key } => {
                             let s = meta_session.clone();
                             let tx = evt_tx.clone();
                             tokio::spawn(async move {
@@ -747,7 +825,7 @@ pub fn spawn(
                                 });
                             });
                         }
-                        Ok(SessionCommand::ResolveEpisode { uri, position_ms }) => {
+                        SessionCommand::ResolveEpisode { uri, position_ms } => {
                             let s = meta_session.clone();
                             let tx = evt_tx.clone();
                             tokio::spawn(async move {
@@ -759,7 +837,7 @@ pub fn spawn(
                                 });
                             });
                         }
-                        Ok(SessionCommand::FetchHome { key }) => {
+                        SessionCommand::FetchHome { key } => {
                             let s = meta_session.clone();
                             let tx = evt_tx.clone();
                             tokio::spawn(async move {
@@ -771,7 +849,7 @@ pub fn spawn(
                                 let _ = tx.send(SessionEvent::Browse { key, items, error });
                             });
                         }
-                        Ok(SessionCommand::FetchBrowsePage { uri, key, limit }) => {
+                        SessionCommand::FetchBrowsePage { uri, key, limit } => {
                             let s = meta_session.clone();
                             let tx = evt_tx.clone();
                             tokio::spawn(async move {
@@ -784,21 +862,40 @@ pub fn spawn(
                                 let _ = tx.send(SessionEvent::Browse { key, items, error });
                             });
                         }
-                        Ok(cmd) => handle_command(cmd, &player, &bridge_thread),
-                        Err(TryRecvError::Empty) => {
-                            // librespot logs an audio-key denial then stalls silently
-                            // (no player event), so surface it from the log probe.
-                            if crate::spotify::logprobe::AUDIO_KEY_DENIED
-                                .swap(false, Ordering::Relaxed)
-                            {
-                                let _ = evt_tx.send(SessionEvent::AudioKeyDenied);
-                            }
-                            tokio::time::sleep(Duration::from_millis(40)).await;
-                        }
-                        Err(TryRecvError::Disconnected) => break,
+                        cmd => handle_command(cmd, &player, &bridge_thread),
                     }
                 }
             });
         });
     (cmd_tx, evt_rx, bridge)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The consumer takes samples in order and only as many as were queued.
+    #[test]
+    fn bridge_pulls_queued_samples_in_order() {
+        let b = Bridge::default();
+        b.push(&[0.25, -0.5, 1.0]);
+        let mut out = [0.0f32; 4];
+        assert_eq!(b.pull(&mut out), 3);
+        assert_eq!(&out[..3], &[0.25, -0.5, 1.0]);
+        assert_eq!(b.pull(&mut out), 0, "drained");
+    }
+
+    /// Releasing the bridge is what lets librespot's sink stop waiting for room
+    /// that will never free up (the engine has stopped draining it). It must also
+    /// drop the stale audio, and a fresh Load must take the bridge back.
+    #[test]
+    fn release_drops_buffered_audio_and_attach_takes_it_back() {
+        let b = Bridge::default();
+        b.push(&[1.0, 1.0]);
+        b.release();
+        assert!(b.is_released());
+        assert_eq!(b.len(), 0, "buffered audio is dropped, not left stale");
+        b.attach();
+        assert!(!b.is_released(), "a fresh Load resumes normal backpressure");
+    }
 }

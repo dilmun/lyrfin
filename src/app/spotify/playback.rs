@@ -1301,6 +1301,13 @@ impl AppState {
         } else {
             self.engine.send(AudioCommand::ClearExternalSource);
         }
+        // Tell the bridge too: the engine has stopped draining it, so its buffered
+        // audio is stale and librespot's sink must stop waiting for room that will
+        // never free up — while it waits, librespot can't process the Pause we send
+        // alongside this and keeps streaming a track nothing will play.
+        if let Some(bridge) = &self.spov.sp_bridge {
+            bridge.release();
+        }
     }
 
     /// Stream an externally-hosted episode's MP3 through lyrfin's own engine —
