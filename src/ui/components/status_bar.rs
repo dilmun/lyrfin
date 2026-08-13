@@ -18,7 +18,7 @@ use crate::app::{AppState, Layout as AppLayout};
 pub fn status_bar(f: &mut Frame, area: Rect, app: &AppState) {
     let th = &app.theme;
     f.render_widget(
-        Block::default().style(Style::default().bg(col(th.bg))),
+        Block::default().style(Style::default().bg(th.bg_color())),
         area,
     );
     // four zones: nav/help (left) · next-track hint (centre) · toggles · the

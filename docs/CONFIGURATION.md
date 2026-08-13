@@ -24,6 +24,7 @@ wipe your settings).
 | `theme` | string | `"aurora"` | Theme name (built-in or a file in `themes/`). |
 | `album_art` | bool | `true` | Show inline cover art. |
 | `dynamic_accent` | bool | `false` | Drive the accent gradient from the current album art. |
+| `transparent` | bool | `false` | Show the terminal's own background instead of painting the theme's — needed for a transparent window (see below). |
 | `panes_horizontal` | bool | `false` | Stack Queue/Artist/Lyrics panes side-by-side instead of vertically. |
 | `grid_circle` | bool | `true` | Render grid cards as circles (vs rounded squares). |
 | `grid_card_size` | `small`\|`medium`\|`large` | `medium` | Cover-grid card size. |
@@ -173,6 +174,34 @@ character in.
 `spotify_client_id` may be set here, but lyrfin also stores it in a dedicated
 `spotify_client_id` file so a `config.toml` parse error can never wipe it. See
 [`SPOTIFY.md`](SPOTIFY.md).
+
+## Transparent background
+
+Set `transparent = true` (or Settings ▸ Theme ▸ *Transparent background*) to let
+a translucent terminal window show through lyrfin.
+
+It exists because terminals disagree about what their window opacity applies to:
+
+- **Ghostty, kitty** apply `background-opacity` only to cells left at the
+  terminal's *default* background. A cell painted with an explicit colour — which
+  is what lyrfin normally does everywhere, to draw its panels — is composited
+  fully opaque. So without this setting the window stays solid no matter how low
+  the opacity is set.
+- **iTerm2** blends the whole window with what is behind it, painted backgrounds
+  included, so it looks transparent either way. (This is why the difference
+  reads as "works in iTerm2, not in Ghostty".)
+
+With it on, lyrfin paints no canvas or panel background and leaves your
+terminal's alone — it also stops overriding the terminal's default background
+colour (OSC 11), so your configured background, opacity and blur are exactly what
+you see. The trade-off is that panels no longer sit on a slightly lighter fill
+than the canvas; their rounded borders carry the layout instead. Selections, the
+now-playing row and accents still paint, so the UI stays readable.
+
+Album art keeps real transparency under the Kitty protocol (Ghostty, kitty), so
+covers blend with whatever is behind the window. Protocols that can't composite
+per cell (iTerm2, sixel) flatten art onto a solid colour before sending it, so a
+cover there stays a solid rectangle.
 
 ## Inline album art
 

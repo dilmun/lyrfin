@@ -75,9 +75,47 @@ pub struct Theme {
     pub good: Rgb,
     /// Semantic colour roles (overrides; defaults computed from the palette).
     pub roles: Roles,
+    /// Leave the terminal's own background showing through instead of painting
+    /// [`Self::bg`] / [`Self::panel`].
+    ///
+    /// Runtime state, not part of a theme file: it mirrors the `transparent`
+    /// setting and is stamped on whenever the live theme is resolved, so it
+    /// survives a theme switch. See [`Self::bg_color`].
+    pub transparent: bool,
 }
 
 impl Theme {
+    // ---- surface fills ----
+    /// Background for the base canvas and any full-surface fill.
+    ///
+    /// [`Color::Reset`] when transparency is on, which leaves the cell at the
+    /// terminal's *default* background — the only thing a terminal's window
+    /// opacity applies to. Painting an explicit colour there is what makes a TUI
+    /// stay opaque under Ghostty/kitty however low `background-opacity` is set
+    /// (iTerm2 differs: it blends the whole window, so a painted background goes
+    /// translucent with everything else).
+    pub fn bg_color(&self) -> ratatui::style::Color {
+        self.surface(self.bg)
+    }
+
+    /// Background for a panel / card fill — see [`Self::bg_color`]. Transparent
+    /// mode drops the panel-vs-canvas contrast (both become the terminal's
+    /// background); the rounded borders keep the layout readable.
+    pub fn panel_color(&self) -> ratatui::style::Color {
+        self.surface(self.panel)
+    }
+
+    /// A surface fill: the palette colour, or the terminal's own background when
+    /// transparency is on. Highlights (selection, accents) deliberately don't go
+    /// through this — they are *meant* to be painted, and stay opaque.
+    fn surface(&self, c: Rgb) -> ratatui::style::Color {
+        if self.transparent {
+            ratatui::style::Color::Reset
+        } else {
+            c.into()
+        }
+    }
+
     // ---- semantic role accessors (the only colours widgets should read) ----
     /// Panel / box title colour. Unfocused panels dim toward the panel bg.
     pub fn title_color(&self, focused: bool) -> Rgb {
@@ -177,6 +215,7 @@ impl TerminalPalette {
                 marked: Some(red),
                 ..Roles::default()
             },
+            transparent: false,
         })
     }
 }
@@ -216,6 +255,7 @@ impl Theme {
             warning: Rgb(0xFF, 0xD7, 0x00),
             good: Rgb(0x00, 0xFF, 0x00),
             roles: Roles::default(),
+            transparent: false,
         }
     }
 
@@ -281,6 +321,7 @@ impl Theme {
                 special: f.special.and_then(|s| parse_hex(&s)),
                 marked: f.marked.and_then(|s| parse_hex(&s)),
             },
+            transparent: false,
         })
     }
 
@@ -303,6 +344,7 @@ impl Theme {
             warning: Rgb(0xF7, 0xC4, 0x5A),
             good: Rgb(0x54, 0xDD, 0xA0),
             roles: Roles::default(),
+            transparent: false,
         }
     }
 
@@ -325,6 +367,7 @@ impl Theme {
             warning: Rgb(0xFF, 0xC4, 0x5A),
             good: Rgb(0x54, 0xDD, 0xA0),
             roles: Roles::default(),
+            transparent: false,
         }
     }
 
@@ -347,6 +390,7 @@ impl Theme {
             warning: Rgb(0xF7, 0xC4, 0x5A),
             good: Rgb(0x54, 0xDD, 0xA0),
             roles: Roles::default(),
+            transparent: false,
         }
     }
 
@@ -369,6 +413,7 @@ impl Theme {
             warning: Rgb(0xD6, 0xDA, 0xE2),
             good: Rgb(0xC0, 0xC6, 0xD2),
             roles: Roles::default(),
+            transparent: false,
         }
     }
 
@@ -464,6 +509,23 @@ fn parse_hex(s: &str) -> Option<Rgb> {
 
 #[cfg(test)]
 mod tests {
+    /// The whole point of the setting: a surface fill must leave the cell at the
+    /// terminal's DEFAULT background, because that is the only thing Ghostty's
+    /// (and kitty's) window opacity applies to. Painting the palette colour there
+    /// is what kept lyrfin opaque however low `background-opacity` was set.
+    #[test]
+    fn transparent_surfaces_use_the_terminal_background() {
+        use ratatui::style::Color;
+        let mut t = Theme::aurora();
+        assert_eq!(t.bg_color(), Color::from(t.bg), "opaque by default");
+        assert_eq!(t.panel_color(), Color::from(t.panel));
+        t.transparent = true;
+        assert_eq!(t.bg_color(), Color::Reset);
+        assert_eq!(t.panel_color(), Color::Reset);
+        // highlights are meant to be painted — they stay put
+        assert_eq!(Color::from(t.selection), Color::from(t.selection));
+    }
+
     use super::*;
 
     #[test]

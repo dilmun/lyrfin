@@ -162,7 +162,7 @@ fn main() -> anyhow::Result<()> {
     app.spotify_apply_view_cache();
     if let Some(t) = &cli.theme {
         app.config.theme = t.clone();
-        app.theme = crate::ui::theme::Theme::resolve(t, &app.config.themes_dir());
+        app.theme = app.resolve_theme(t); // keeps the transparency setting applied
     }
 
     if cli.snapshot {

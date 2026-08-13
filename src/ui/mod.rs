@@ -29,7 +29,7 @@ pub fn render(f: &mut Frame, app: &AppState) {
     app.overlay_rect.set(active_overlay_rect(app, area));
     // base background
     f.render_widget(
-        Block::default().style(Style::default().bg(app.theme.bg.into())),
+        Block::default().style(Style::default().bg(app.theme.bg_color())),
         area,
     );
 

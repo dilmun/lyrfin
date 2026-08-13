@@ -155,7 +155,7 @@ pub fn tab_bar(f: &mut Frame, area: Rect, app: &AppState, names: &[&str], active
         }
         if i == active {
             let (lc, rc) = sel_caps(app);
-            let cap = Style::default().fg(col(th.selection)).bg(col(th.panel));
+            let cap = Style::default().fg(col(th.selection)).bg(th.panel_color());
             let body = Style::default()
                 .fg(col(th.accent[0]))
                 .bg(col(th.selection))

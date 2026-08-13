@@ -73,7 +73,7 @@ pub(crate) fn pill_line(
         Some(c) => {
             let th = &app.theme;
             let (l, r) = sel_caps(app);
-            let cap = Style::default().fg(col(c)).bg(col(th.panel));
+            let cap = Style::default().fg(col(c)).bg(th.panel_color());
             let fill = Style::default().bg(col(c));
             let body_w = w - 2;
             let used: usize = spans.iter().map(|s| s.content.width()).sum();
@@ -106,7 +106,7 @@ pub(crate) fn cap_row(f: &mut Frame, app: &AppState, row: Rect, c: Color) {
     }
     let th = &app.theme;
     let (l, r) = sel_caps(app);
-    let st = Style::default().fg(c).bg(col(th.panel));
+    let st = Style::default().fg(c).bg(th.panel_color());
     f.render_widget(
         Paragraph::new(Line::from(Span::styled(l, st))),
         Rect::new(row.x, row.y, 1, 1),

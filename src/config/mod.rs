@@ -307,6 +307,12 @@ pub struct Config {
     /// unlike `icon_set = "nerd"` this is on by default — and it degrades to
     /// ◖◗ (ordinary Unicode) rather than boxes when turned off.
     pub powerline: bool,
+    /// Let the terminal's own background show through instead of painting the
+    /// theme's. Needed for window transparency under Ghostty/kitty, which apply
+    /// their opacity only to the *default* background — a painted one stays
+    /// opaque. (iTerm2 blends the whole window, so it looks transparent either
+    /// way.) Costs the panel-vs-canvas contrast; borders carry the layout.
+    pub transparent: bool,
     /// Per-glyph custom icon overrides (the `[icons]` table).
     pub icons: crate::icons::IconOverrides,
     /// Show a visualizer in the playback bar (taller box; auto-hidden if short).
@@ -422,6 +428,7 @@ impl Default for Config {
             spotify_show_account: true,
             icon_set: "outline".into(),
             powerline: true,
+            transparent: false,
             icons: crate::icons::IconOverrides::default(),
             player_viz: true,
             player_viz_mode: 0,
@@ -557,6 +564,7 @@ struct ConfigFile {
     spotify_show_account: Option<bool>,
     icon_set: Option<String>,
     powerline: Option<bool>,
+    transparent: Option<bool>,
     icons: Option<crate::icons::IconOverrides>,
     player_viz: Option<bool>,
     player_viz_mode: Option<u8>,

@@ -30,7 +30,9 @@ fn set_terminal_bg(bg: crate::ui::theme::Rgb) {
     let _ = out.flush();
 }
 
-/// Restore the terminal's default background (OSC 111) on exit.
+/// Restore the terminal's default background (OSC 111): on exit, and whenever
+/// transparency is switched on — the user's own background (and the opacity they
+/// paired with it) has to come back the moment lyrfin stops overriding it.
 fn reset_terminal_bg() {
     use std::io::Write;
     let mut out = std::io::stdout();
@@ -207,7 +209,7 @@ pub fn run(mut app: AppState) -> Result<()> {
     if app.config.mouse {
         let _ = execute!(std::io::stdout(), EnableMouseCapture);
     }
-    set_terminal_bg(app.theme.bg); // match terminal padding to the theme
+
     let result = event_loop(
         &mut terminal,
         &mut app,
@@ -224,7 +226,7 @@ pub fn run(mut app: AppState) -> Result<()> {
         spart_rx,
         art_rx,
     );
-    reset_terminal_bg();
+    reset_terminal_bg(); // hand the terminal's own background back
     if app.config.mouse {
         let _ = execute!(std::io::stdout(), DisableMouseCapture);
     }
@@ -269,7 +271,12 @@ fn event_loop(
     // true while a pane-resize drag has swapped the mouse pointer shape (OSC 22),
     // so the release restores it exactly once (balanced push/pop).
     let mut resizing = false;
-    let mut term_bg = app.theme.bg;
+    // The theme colour currently pushed to the terminal as its default background
+    // (OSC 11), or `None` while the terminal's own is left in place. Owned here so
+    // the first iteration establishes it before the first frame, and a runtime
+    // transparency toggle hands it back without a restart.
+    let mut pushed_bg: Option<crate::ui::theme::Rgb> = None;
+
     // capture was enabled at startup to match `config.mouse`; track it so a runtime
     // toggle of the setting can be applied live (below).
     let mut mouse_on = app.config.mouse;
@@ -285,10 +292,19 @@ fn event_loop(
     // one tears down the OS entry), like the mouse-capture toggle below.
     let mut media_on = app.config.os_media_controls;
     while app.running {
-        // keep the terminal's default background in sync with the theme
-        if app.theme.bg != term_bg {
-            set_terminal_bg(app.theme.bg);
-            term_bg = app.theme.bg;
+        // Keep the terminal's default background in sync with the theme — and
+        // hand it back the moment transparency is switched on, so the user's own
+        // background + opacity return without a restart.
+        match (app.config.transparent, app.theme.bg) {
+            (true, _) if pushed_bg.is_some() => {
+                reset_terminal_bg();
+                pushed_bg = None;
+            }
+            (false, bg) if pushed_bg != Some(bg) => {
+                set_terminal_bg(bg);
+                pushed_bg = Some(bg);
+            }
+            _ => {}
         }
         // Settings ▸ Mouse toggled at runtime → enable/disable capture immediately so
         // it takes effect without a restart (off releases the mouse for the

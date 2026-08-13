@@ -76,6 +76,10 @@ pub(crate) fn setting_label_value(app: &AppState, item: &Setting) -> (String, Se
             "Powerline selection caps".into(),
             Toggle(app.config.powerline),
         ),
+        Setting::Transparent => (
+            "Transparent background".into(),
+            Toggle(app.config.transparent),
+        ),
         Setting::PlayerViz => ("Playback visualizer".into(), Toggle(app.config.player_viz)),
         Setting::PanesLayout => (
             "Side panes".into(),
