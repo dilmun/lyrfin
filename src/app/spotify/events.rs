@@ -207,14 +207,20 @@ impl AppState {
                     self.engine.send(AudioCommand::ClearExternalSource);
                     if self.spotify.loading {
                         self.spotify.loading = false;
-                        self.spotify.note = "Couldn't reach Spotify".into();
+                        self.spotify.note = "Couldn't reach Spotify — retrying…".into();
                     }
+                    // A connect failure kills browse and playback together, and is
+                    // usually transient (Spotify rate-limits logins after a burst).
+                    // Retry both on their own rather than stranding the user on a
+                    // dead session until they restart lyrfin.
+                    self.spotify_schedule_reload();
                     // back off before the next connect so a failing session can't
                     // reconnect in a tight loop (and trip Spotify's rate-limit).
                     // Log it (not just a toast) — this `msg` is the actual reason
                     // (token refresh / login failure / timeout / rate-limit), so it
                     // belongs in the error log the user inspects when nothing plays.
                     self.spotify_trip_cooldown();
+                    self.spotify_arm_auto_resume(); // …and pick playback back up
                     self.notify_error(format!("Spotify playback: {msg}"));
                 }
                 // These events only track librespot's position + whether playback
@@ -284,6 +290,12 @@ impl AppState {
                     // home/browse feed from pathfinder GraphQL (keyed like Tracks)
                     if self.spotify.key == key {
                         self.spotify.loading = false;
+                        if error.is_none() {
+                            // a load landed → the retry budget belongs to the NEXT
+                            // outage, not to the lifetime of the session
+                            self.spotify.reload_attempts = 0;
+                            self.spotify.reload_at = None;
+                        }
                         match error {
                             Some(err) => {
                                 log::warn!(target: "lyrfin::spotify", "browse failed: {err}");
@@ -294,6 +306,12 @@ impl AppState {
                                 // the same fault that stops playback.
                                 if is_audio_auth_error(&err) {
                                     self.spotify_heal_audio_auth();
+                                } else if !err.contains("PersistedQuery") {
+                                    // Anything but a retired query hash may well work
+                                    // on the next try (rate-limit, network blip), and
+                                    // re-fetching cannot fix a hash this build no
+                                    // longer has.
+                                    self.spotify_schedule_reload();
                                 }
                             }
                             None if self.spotify.browse_loading_more => {

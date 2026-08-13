@@ -579,11 +579,21 @@ pub fn spawn(
                         let _ = evt_tx.send(SessionEvent::TokenRefreshed(fresh.clone()));
                         fresh.access_token
                     }
-                    Err(e) => {
-                        // the refresh token is dead (revoked / too old) — only a
-                        // fresh browser login recovers, so say so plainly
+                    Err(e) if auth::is_transient(&e) => {
+                        // couldn't REACH Spotify to refresh — the token may be fine.
+                        // Retryable, so don't send the user to a re-login.
                         let _ = evt_tx.send(SessionEvent::ConnectError(format!(
-                            "session expired — re-authenticate (; → Re-authenticate). [{e}]"
+                            "couldn't refresh the playback token: {e}"
+                        )));
+                        return;
+                    }
+                    Err(e) => {
+                        // The refresh token is dead (revoked / rotated away). Only a
+                        // fresh authorization recovers — report it as an auth
+                        // rejection so the app re-mints this leg by itself instead
+                        // of telling the user to go find the re-authenticate menu.
+                        let _ = evt_tx.send(SessionEvent::AudioAuthRejected(format!(
+                            "playback token refresh rejected: {e}"
                         )));
                         return;
                     }

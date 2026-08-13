@@ -308,6 +308,45 @@ impl AppState {
         );
     }
 
+    /// Schedule an automatic retry of the browse load after a failure that may
+    /// clear on its own (the session couldn't connect, Spotify rate-limited us, a
+    /// network blip). Backs off 15s → 30s → 60s and stops after
+    /// [`Self::MAX_RELOAD_ATTEMPTS`], so a genuinely broken state settles on a
+    /// stable message instead of re-fetching forever.
+    ///
+    /// Without this a transient failure left "Couldn't reach Spotify" on screen
+    /// until the user restarted lyrfin, even though the next attempt would have
+    /// worked.
+    pub(crate) fn spotify_schedule_reload(&mut self) {
+        if self.spotify.reload_attempts >= Self::MAX_RELOAD_ATTEMPTS {
+            return;
+        }
+        self.spotify.reload_attempts += 1;
+        let secs = 15u64 << (self.spotify.reload_attempts - 1).min(2);
+        self.spotify.reload_at = Some(crate::datetime::now_unix() + secs);
+    }
+
+    /// Retry a failed browse load once its back-off elapses (armed by
+    /// [`Self::spotify_schedule_reload`]). Skipped while a login is running or a
+    /// load is already in flight — those will populate the pane themselves.
+    pub(super) fn spotify_tick_reload(&mut self) {
+        let Some(at) = self.spotify.reload_at else {
+            return;
+        };
+        if crate::datetime::now_unix() < at {
+            return;
+        }
+        self.spotify.reload_at = None;
+        let connected = matches!(
+            self.spotify.conn,
+            crate::spotify::ConnState::Connected { .. }
+        );
+        if !connected || self.spotify.auth_rx.is_some() || self.spotify.loading {
+            return;
+        }
+        self.spotify_load_section();
+    }
+
     /// Re-authorize the playback/browse (keymaster) leg after Spotify rejected or
     /// never received it — the self-heal for the failure that otherwise shows up
     /// as every track skipping and an empty browse pane.
@@ -371,8 +410,15 @@ impl AppState {
 
     /// Drain Spotify auth/resume events (called each loop iteration, like
     /// `pump_audio`). Cheap no-op when nothing is in flight.
+    /// How many times a failed browse load retries itself before giving up (see
+    /// [`Self::spotify_schedule_reload`]). Three covers the transient cases —
+    /// Spotify's login rate-limit clears in well under a minute — without leaving
+    /// a broken state re-fetching indefinitely.
+    const MAX_RELOAD_ATTEMPTS: u32 = 3;
+
     pub fn pump_spotify(&mut self) {
         self.pump_spotify_session(); // librespot playback events
+        self.spotify_tick_reload(); // retry a browse load that failed transiently
         self.spotify_tick_skip(); // load the track a burst of skips finally landed on
         self.spotify_tick_seek(); // re-open a streamed episode once scrubbing settles
         self.spotify_tick_keyretry(); // re-issue a track whose audio key was throttled
@@ -794,6 +840,15 @@ pub struct Spotify {
     /// Guards the self-heal: one automatic re-authorization per connection, so a
     /// persistently-rejected account can't spin the browser open in a loop.
     pub audio_heal_tried: bool,
+    /// When set (unix seconds), the browse pane retries its load then. A fetch
+    /// that failed for a reason which commonly clears on its own — a session that
+    /// couldn't connect, a rate-limit — repairs itself instead of leaving an error
+    /// on screen until the user restarts. See [`AppState::spotify_schedule_reload`].
+    pub reload_at: Option<u64>,
+    /// Consecutive automatic browse retries, driving their back-off and capping
+    /// them: a persistent failure settles on a stable message rather than
+    /// re-fetching forever. Reset by any successful load.
+    pub reload_attempts: u32,
     /// In-flight auth/resume event stream, if a login or resume is running.
     pub auth_rx: Option<crossbeam_channel::Receiver<crate::spotify::AuthEvent>>,
     /// When set (unix seconds), a transient reconnect is scheduled: the last resume

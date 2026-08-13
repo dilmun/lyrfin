@@ -940,3 +940,75 @@ fn browse_failures_are_reported_as_their_actual_cause() {
     let limited = note_for("HTTP 429 Too Many Requests");
     assert!(limited.contains("rate-limiting"), "got: {limited}");
 }
+
+/// A transient session failure (Spotify rate-limits logins after a burst, so the
+/// handshake times out) must not strand the user on a dead session: before this,
+/// "Couldn't reach Spotify" stayed on screen until lyrfin was restarted, even
+/// though the very next attempt would have worked.
+#[test]
+fn a_transient_connect_failure_retries_itself_and_gives_up_bounded() {
+    use crate::spotify::ConnState;
+    use crate::spotify::session::SessionEvent;
+    let mut a = demo();
+    a.layout = Layout::Spotify;
+    a.spotify.conn = ConnState::Connected {
+        name: "Me".into(),
+        premium: true,
+    };
+    a.spotify.loading = true; // a browse load was in flight when the session died
+
+    let fail = |a: &mut crate::app::AppState| {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        tx.send(SessionEvent::ConnectError(
+            "Spotify playback login timed out (30s) — rate-limited or offline".into(),
+        ))
+        .unwrap();
+        a.spov.session_rx = Some(rx);
+        a.pump_spotify_session();
+    };
+
+    fail(&mut a);
+    assert!(
+        a.spotify.note.contains("retrying"),
+        "the pane says it is recovering, not just that it failed: {:?}",
+        a.spotify.note
+    );
+    let first = a.spotify.reload_at.expect("a retry is scheduled");
+    assert!(
+        first > crate::datetime::now_unix(),
+        "the retry waits — an immediate re-connect would just hit the same limit"
+    );
+
+    // each further failure backs off further, and the budget is finite so a
+    // genuinely broken state settles instead of re-fetching forever
+    for _ in 0..6 {
+        a.spotify.reload_at = None;
+        fail(&mut a);
+    }
+    assert!(
+        a.spotify.reload_at.is_none(),
+        "retries stop after the cap rather than looping"
+    );
+
+    // …and a successful load hands the budget back, so the NEXT outage retries too
+    let (tx, rx) = crossbeam_channel::unbounded();
+    tx.send(SessionEvent::Browse {
+        key: String::new(),
+        items: vec![crate::spotify::api::Item {
+            uri: "spotify:playlist:1".into(),
+            name: "Chill".into(),
+            kind: crate::spotify::api::Kind::Playlist,
+            ..Default::default()
+        }],
+        error: None,
+    })
+    .unwrap();
+    a.spov.session_rx = Some(rx);
+    a.pump_spotify_session();
+    assert_eq!(a.spotify.reload_attempts, 0, "budget reset by a good load");
+    fail(&mut a);
+    assert!(
+        a.spotify.reload_at.is_some(),
+        "a later outage retries again — the budget is per-outage, not per-session"
+    );
+}

@@ -813,9 +813,7 @@ impl AppState {
         // session the resume kicks off, so the user never has to restart lyrfin to get
         // audio back. Naturally bounded: each failed resume re-trips an escalating
         // back-off (20s → 5 min cap), and any success clears it.
-        self.spov.sp_resume_at = (self.spov.sp_cooldown_until > 0
-            && !self.spotify_key_block_confirmed())
-        .then_some(self.spov.sp_cooldown_until);
+        self.spotify_arm_auto_resume();
         self.notify_error(msg);
         let diag = self.spotify_diag();
         self.log_error(diag); // record the WHY-context next to the failure
@@ -949,6 +947,19 @@ impl AppState {
             return true;
         }
         false
+    }
+
+    /// Arm the auto-resume that fires once the current back-off elapses, UNLESS
+    /// it's the confirmed account-level block (which won't recover and shouldn't
+    /// loop): a transient failure — bad CDN node, key throttle, brief drop, a
+    /// connect that timed out under Spotify's login rate-limit — clears on the
+    /// fresh session the resume kicks off, so the user never has to restart lyrfin
+    /// to get audio back. Naturally bounded: each failed resume re-trips an
+    /// escalating back-off (20s → 5 min cap), and any success clears it.
+    pub(super) fn spotify_arm_auto_resume(&mut self) {
+        self.spov.sp_resume_at = (self.spov.sp_cooldown_until > 0
+            && !self.spotify_key_block_confirmed())
+        .then_some(self.spov.sp_cooldown_until);
     }
 
     /// Clear the failure back-off (a track played, or a fresh login).
