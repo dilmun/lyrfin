@@ -94,7 +94,7 @@ pub(crate) fn spotify_tracks(
     let sel = sel.min(total.saturating_sub(1));
     let body_h = area.height.saturating_sub(1) as usize; // header row
     // sticky (not recentring) so clicking a visible row doesn't make the list jump
-    let off = sticky_off(&app.spotify.list_off, sel, total, body_h);
+    let off = sticky_off(&app.spotify.view.list_off, sel, total, body_h);
     let index_w = total.to_string().len().max(1);
 
     let (cols, kinds) = spotify_col_specs(&app.config.columns, index_w);
@@ -221,7 +221,7 @@ pub(crate) fn spotify_track_rows(
     let sel = sel.min(total.saturating_sub(1));
     let body_h = area.height as usize;
     // sticky (not recentring) so clicking a visible row doesn't make the list jump
-    let off = sticky_off(&app.spotify.list_off, sel, total, body_h);
+    let off = sticky_off(&app.spotify.view.list_off, sel, total, body_h);
     let meta_style = Style::default().fg(col(th.meta_text()));
     let vis = app.marks.anchor.map(|a| (a.min(sel), a.max(sel)));
     let marked_uris: std::collections::HashSet<&str> = app

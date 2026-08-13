@@ -836,6 +836,53 @@ pub enum AudioAuth {
     Rejected(&'static str),
 }
 
+/// Where the last render put the Spotify view: the grid's column count and the
+/// sticky scroll offsets of each surface.
+///
+/// Interior-mutable because render writes it and input reads it back — clicking a
+/// visible row must select it in place rather than recentring, and 2-D grid
+/// movement needs the row stride the renderer actually used. Grouped so that
+/// "geometry the renderer reports" is one thing rather than six loose cells.
+#[derive(Default)]
+pub struct SpViewport {
+    /// Last-rendered grid column count (the row stride for 2-D nav); set in render,
+    /// read in `spotify_grid_move`. Interior-mutable so render can write it.
+    pub cols: std::cell::Cell<usize>,
+    /// Persisted top-row scroll offset of the cover-art grid — sticky viewport (see
+    /// the local library's `LocalBrowse::row_off`). Set during render.
+    pub row_off: std::cell::Cell<usize>,
+    /// Persisted scroll offset of the Spotify item list (track table/rows + the
+    /// mixed-kind browse list) — sticky viewport so clicking a visible row selects
+    /// it in place instead of recentring under the cursor. Set during render.
+    pub list_off: std::cell::Cell<usize>,
+    /// Persisted scroll offset of the Spotify QUEUE pane — sticky, same reason. Set
+    /// during render.
+    pub queue_off: std::cell::Cell<usize>,
+    /// Persisted horizontal scroll offset of the SELECTED release carousel (artist
+    /// page + Home/Browse feed), plus its carousel identity (`car_key`) so the offset
+    /// resets when the selection moves to another carousel — sticky horizontal scroll,
+    /// mirroring `LocalBrowse::car_off`. Set during render.
+    pub car_off: std::cell::Cell<usize>,
+    pub car_key: std::cell::Cell<usize>,
+}
+
+/// Load-more paging for a drilled-in flat browse grid (Podcast Charts /
+/// Categories): which page is being paged, how many items per shelf are being
+/// asked for, whether a grow is in flight, and whether the last grow returned
+/// nothing new (fully loaded → stop asking).
+#[derive(Default)]
+pub struct SpPaging {
+    /// Load-more paging for a drilled-in flat browse grid (Podcast Charts /
+    /// Categories): the browse page uri being paged (`None` = the current view isn't
+    /// a pageable grid), the current items-per-shelf `browse_limit` (grown by
+    /// [`BROWSE_PAGE_STEP`] on scroll), whether a grow is in flight, and whether the
+    /// last grow returned nothing new (fully loaded → stop asking).
+    pub browse_page: Option<String>,
+    pub browse_limit: usize,
+    pub browse_loading_more: bool,
+    pub browse_exhausted: bool,
+}
+
 /// Spotify view + connection state. Auth runs on a worker thread; `auth_rx`
 /// carries its progress, drained by [`AppState::pump_spotify`]. Library/search
 /// fields arrive in later phases.
@@ -895,25 +942,6 @@ pub struct Spotify {
     /// toggle. Set per-section on load (default on for Albums/Artists); persisted
     /// in `ViewState.spotify_grid`. `spotify_grid_active` gates where it applies.
     pub grid: bool,
-    /// Last-rendered grid column count (the row stride for 2-D nav); set in render,
-    /// read in `spotify_grid_move`. Interior-mutable so render can write it.
-    pub cols: std::cell::Cell<usize>,
-    /// Persisted top-row scroll offset of the cover-art grid — sticky viewport (see
-    /// the local library's `LocalBrowse::row_off`). Set during render.
-    pub row_off: std::cell::Cell<usize>,
-    /// Persisted scroll offset of the Spotify item list (track table/rows + the
-    /// mixed-kind browse list) — sticky viewport so clicking a visible row selects
-    /// it in place instead of recentring under the cursor. Set during render.
-    pub list_off: std::cell::Cell<usize>,
-    /// Persisted scroll offset of the Spotify QUEUE pane — sticky, same reason. Set
-    /// during render.
-    pub queue_off: std::cell::Cell<usize>,
-    /// Persisted horizontal scroll offset of the SELECTED release carousel (artist
-    /// page + Home/Browse feed), plus its carousel identity (`car_key`) so the offset
-    /// resets when the selection moves to another carousel — sticky horizontal scroll,
-    /// mirroring `LocalBrowse::car_off`. Set during render.
-    pub car_off: std::cell::Cell<usize>,
-    pub car_key: std::cell::Cell<usize>,
     /// A cursor restored from a session, applied (clamped) to the first list that
     /// arrives after reconnecting, then cleared. `None` in normal operation.
     pub restore_sel: Option<usize>,
@@ -934,15 +962,6 @@ pub struct Spotify {
     /// The container whose tracks are currently shown (the deepest drill-in), so
     /// a session can re-open it on reconnect. `None` at the section/search level.
     pub open_item: Option<crate::spotify::api::Item>,
-    /// Load-more paging for a drilled-in flat browse grid (Podcast Charts /
-    /// Categories): the browse page uri being paged (`None` = the current view isn't
-    /// a pageable grid), the current items-per-shelf `browse_limit` (grown by
-    /// [`BROWSE_PAGE_STEP`] on scroll), whether a grow is in flight, and whether the
-    /// last grow returned nothing new (fully loaded → stop asking).
-    pub browse_page: Option<String>,
-    pub browse_limit: usize,
-    pub browse_loading_more: bool,
-    pub browse_exhausted: bool,
     /// URIs of the shows the user follows (from `/me/shows`), so browse rows/cards can
     /// mark an already-followed show with a ♥. Seeded from the Podcasts (Your Shows)
     /// load and kept live by follow/unfollow toggles.
@@ -969,6 +988,10 @@ pub struct Spotify {
     /// completeness check + replace. See the module docs for why removal goes
     /// through a fresh-fetch-then-replace.
     pub pl_pending_remove: Option<(String, Vec<String>, String)>,
+    /// Geometry the last render reported — see [`SpViewport`].
+    pub view: SpViewport,
+    /// Load-more paging state for a browse grid — see [`SpPaging`].
+    pub paging: SpPaging,
 }
 
 /// Spotify's per-frame restore context for the shared drill-in stack: the search

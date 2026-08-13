@@ -1746,7 +1746,7 @@ fn spotify_grid_move_navigates_two_dimensionally() {
             ..Default::default()
         })
         .collect();
-    a.spotify.cols.set(3); // last rendered column count
+    a.spotify.view.cols.set(3); // last rendered column count
     a.spotify.sel = 0;
     a.update(Action::GridMove(1, 0)); // → one card right
     assert_eq!(a.spotify.sel, 1);

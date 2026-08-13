@@ -352,13 +352,13 @@ impl AppState {
                         self.spotify_schedule_reload();
                     }
                 }
-                None if self.spotify.browse_loading_more => {
+                None if self.spotify.paging.browse_loading_more => {
                     // a scroll-triggered "load more": the same page re-fetched
                     // with a bigger limit. Keep the cursor where it is and just
                     // extend the grid; stop paging once it stops growing.
-                    self.spotify.browse_loading_more = false;
-                    self.spotify.browse_exhausted = items.len() <= self.spotify.items.len()
-                        || items.len() < self.spotify.browse_limit;
+                    self.spotify.paging.browse_loading_more = false;
+                    self.spotify.paging.browse_exhausted = items.len() <= self.spotify.items.len()
+                        || items.len() < self.spotify.paging.browse_limit;
                     self.spotify.items = items;
                     let n = self.spotify.items.len();
                     self.spotify.sel = self.spotify.sel.min(n.saturating_sub(1));

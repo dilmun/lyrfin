@@ -549,9 +549,9 @@ fn browse_grid_load_more_appends_and_detects_exhaustion() {
     a.spotify.section = Section::Podcasts;
     a.spotify.crumb = Some("▦ Podcast Charts".into());
     a.spotify.items = (0..50).map(show).collect();
-    a.spotify.browse_page = Some("spotify:page:charts".into());
-    a.spotify.browse_limit = 100; // a grow to 100 is in flight
-    a.spotify.browse_loading_more = true;
+    a.spotify.paging.browse_page = Some("spotify:page:charts".into());
+    a.spotify.paging.browse_limit = 100; // a grow to 100 is in flight
+    a.spotify.paging.browse_loading_more = true;
 
     // the grow returns 80 items (fewer than the 100 asked) → appended, then marked
     // exhausted so scrolling stops re-asking. The empty key matches a fresh state.
@@ -570,9 +570,12 @@ fn browse_grid_load_more_appends_and_detects_exhaustion() {
         80,
         "the grid grew with the new batch"
     );
-    assert!(!a.spotify.browse_loading_more, "the in-flight grow cleared");
     assert!(
-        a.spotify.browse_exhausted,
+        !a.spotify.paging.browse_loading_more,
+        "the in-flight grow cleared"
+    );
+    assert!(
+        a.spotify.paging.browse_exhausted,
         "a short batch (< the limit asked) means fully loaded"
     );
 }
@@ -670,7 +673,7 @@ fn hub_categories_render_as_a_flat_grid_not_a_carousel() {
     };
     let mut a = demo();
     a.layout = Layout::Spotify;
-    a.spotify.cols.set(3); // 3 columns
+    a.spotify.view.cols.set(3); // 3 columns
     a.spotify.items = vec![
         show("s1"),
         show("s2"),
@@ -712,7 +715,7 @@ fn hub_categories_grid_has_a_browse_all_button_row() {
     };
     let mut a = demo();
     a.layout = Layout::Spotify;
-    a.spotify.cols.set(3);
+    a.spotify.view.cols.set(3);
     a.spotify.items = vec![cat("c1"), cat("c2"), cat("c3"), cat("c4"), button];
     let rows = a.spotify_browse_rows();
 
@@ -1813,7 +1816,7 @@ fn spotify_artist_page_grid_navigates_across_release_groups() {
         album("S1", Group::Singles), // 3
         album("S2", Group::Singles), // 4
     ];
-    a.spotify.cols.set(2);
+    a.spotify.view.cols.set(2);
     // POPULAR is [0..1); the release region starts at the first album (idx 1)
     assert_eq!(a.spotify_releases_from(), 1);
 
@@ -1868,7 +1871,7 @@ fn release_carousel_prefetches_offscreen_covers() {
 
     let _ = render_layout(&mut a, Layout::Spotify, 120, 30);
 
-    let cols = a.spotify.cols.get();
+    let cols = a.spotify.view.cols.get();
     let cache = a.grid_art.borrow();
     let cached = (0..30)
         .filter(|i| cache.contains_key(&ArtKey::remote(&format!("http://img/{i}"))))
