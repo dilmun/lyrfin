@@ -114,17 +114,44 @@ impl AppState {
         }
     }
 
-    /// The sole state transition. Returns side-effect commands in later
-    /// milestones (e.g. `Vec<Command>` for the audio/library workers); for now
-    /// it mutates state directly.
+    /// Apply an [`Action`] to the state.
+    ///
+    /// The dispatch is split by domain: each handler claims the actions it owns
+    /// and hands the rest on, so this stays a router rather than the 500-line
+    /// match it grew into. An action no handler claims isn't applicable in the
+    /// current state and is ignored, exactly as the old catch-all arm did.
     pub fn update(&mut self, action: Action) {
-        use Action::*;
         // Any action other than an idle tick / no-op may change the UI, so the
         // event loop should redraw. (Tick sets dirty itself only when it changes
         // something visible; Redraw forces a redraw.)
-        if !matches!(action, Tick | Noop) {
+        if !matches!(action, Action::Tick | Action::Noop) {
             self.dirty = true;
         }
+        let mut action = action;
+        for handle in Self::UPDATE_HANDLERS {
+            match handle(self, action) {
+                None => return, // claimed
+                Some(rest) => action = rest,
+            }
+        }
+    }
+
+    /// The domain handlers [`Self::update`] tries, in order.
+    #[allow(clippy::type_complexity)]
+    const UPDATE_HANDLERS: [fn(&mut Self, Action) -> Option<Action>; 7] = [
+        Self::update_core,
+        Self::update_playback,
+        Self::update_view,
+        Self::update_library,
+        Self::update_radio,
+        Self::update_spotify,
+        Self::update_tags,
+    ];
+
+    /// App lifecycle, cursor movement, focus, and view/layout switching —
+    /// the actions that apply everywhere rather than to one feature.
+    fn update_core(&mut self, action: Action) -> Option<Action> {
+        use Action::*;
         match action {
             Quit => self.running = false,
             Tick => self.on_tick(),
@@ -147,33 +174,6 @@ impl AppState {
                 self.settings.overlay = false;
                 self.set_layout(l);
             }
-            OpenSettings => self.open_settings(),
-            OpenTags => self.open_tags(),
-            OpenCoverSearch => self.open_cover_search(),
-            CoverMove(m) => self.cover_move(m),
-            CoverInput(s) => self.cover_input(s),
-            CoverActivate => self.cover_activate(),
-            OpenTagSearch => self.open_tag_search(),
-            TagMove(m) => self.tag_move(m),
-            TagInput(s) => self.tag_input(s),
-            TagActivate => self.tag_activate(),
-            TagApplyAlbum => {
-                let kind = if self.tags.search.as_ref().is_some_and(|ts| ts.album_mode) {
-                    PendingApply::AlbumFull
-                } else {
-                    PendingApply::AlbumBasic
-                };
-                self.tag_request(kind);
-            }
-            TagConfirm => self.tag_confirm(),
-            CoverConfirm => self.cover_confirm(),
-            CoverToggleScope => self.cover_toggle_scope(),
-            QueryInsert(c) => self.query_insert(c),
-            QueryBackspace => self.query_del(false),
-            QueryDelete => self.query_del(true),
-            QueryCaret(c) => self.query_caret(c),
-            TagToggleAlbum => self.toggle_tag_album(),
-            TagSource(d) => self.tag_source(d),
             FocusPane(p) => self.set_focus(p),
             FocusDir(d) => self.focus_dir(d),
             CyclePane => self.cycle_pane(),
@@ -181,6 +181,35 @@ impl AppState {
             NavDown => self.nav(Motion::Down),
             NavUp => self.nav(Motion::Up),
 
+            Notify(text) => self.notify(text),
+
+            Back => {
+                self.go_back();
+            }
+            Forward => {
+                self.go_forward();
+            }
+            FocusToward(dx, dy) => self.focus_toward(dx, dy),
+            QuitOrBack => {
+                // `q`: pop the current context — an open overlay, a drilled-into
+                // album/playlist, or a selection. If there's nothing to pop (top
+                // level), quit the app.
+                if !self.go_back() {
+                    self.running = false;
+                }
+            }
+            CopyError => self.copy_last_error(),
+            ToggleErrorLog => self.toggle_info(InfoTab::Health),
+            other => return Some(other),
+        }
+        None
+    }
+
+    /// Transport: play/pause, track changes, seeking, volume, speed, the
+    /// queue, and per-track rating/favourite.
+    fn update_playback(&mut self, action: Action) -> Option<Action> {
+        use Action::*;
+        match action {
             TogglePlay => self.toggle_play(),
             Stop => {
                 self.engine.send(AudioCommand::Stop);
@@ -223,6 +252,63 @@ impl AppState {
                 self.engine.send(AudioCommand::SetSpeed(self.player.speed));
             }
 
+            SetSleepTimer(min) => self.set_sleep_timer(min),
+            CycleSleepTimer => {
+                let cur = self.sleep_remaining_secs().map(|s| s.div_ceil(60));
+                let next = match cur {
+                    None => 15,
+                    Some(m) if m <= 15 => 30,
+                    Some(m) if m <= 30 => 45,
+                    Some(m) if m <= 45 => 60,
+                    _ => 0,
+                };
+                self.set_sleep_timer(next);
+            }
+            AbLoopCycle => self.ab_loop_cycle(),
+            CycleReplayGain => self.cycle_replaygain(),
+            ToggleFavoriteSel => self.toggle_favorite_selection(),
+            // Rating is local-library only. In a player view showing another
+            // source there is nothing to rate — silently rating the local track
+            // behind it would be worse than doing nothing.
+            Rate(..) if self.layout.is_player_view() && !self.playing_source_is_local() => {}
+            Rate(id, stars) => {
+                let stars = stars.min(5);
+                if let Some(t) = self.library.tracks.get_mut(&id) {
+                    t.rating = stars;
+                }
+                self.search.lib_gen += 1;
+                self.notify(format!("Rated {stars} stars"));
+            }
+            ClearQueue => {
+                let keep = self.player.current;
+                self.player.queue.items = keep.into_iter().collect();
+                self.player.queue.position = 0;
+                self.update_gapless_next();
+                self.notify("Queue cleared".into());
+            }
+            QueueMove(m) => {
+                self.queue_move(m);
+                self.update_gapless_next();
+            }
+            QueueRemove => {
+                self.queue_remove();
+                self.update_gapless_next();
+            }
+            QueueClearUpcoming => {
+                self.queue_clear_upcoming();
+                self.update_gapless_next();
+            }
+            other => return Some(other),
+        }
+        None
+    }
+
+    /// Presentation: panels, layout, settings, overlays, the equalizer, the
+    /// command palette, themes and the visualizer.
+    fn update_view(&mut self, action: Action) -> Option<Action> {
+        use Action::*;
+        match action {
+            OpenSettings => self.open_settings(),
             ToggleLyrics => {
                 // in the dedicated Lyrics view lyrics are always shown, so L
                 // cycles the display format (its "lyrics options"); elsewhere it
@@ -373,28 +459,96 @@ impl AppState {
                 }
             }
             CycleTheme => self.cycle_theme(),
-            SetSleepTimer(min) => self.set_sleep_timer(min),
-            CycleSleepTimer => {
-                let cur = self.sleep_remaining_secs().map(|s| s.div_ceil(60));
-                let next = match cur {
-                    None => 15,
-                    Some(m) if m <= 15 => 30,
-                    Some(m) if m <= 30 => 45,
-                    Some(m) if m <= 45 => 60,
-                    _ => 0,
-                };
-                self.set_sleep_timer(next);
-            }
-            AbLoopCycle => self.ab_loop_cycle(),
-            CycleReplayGain => self.cycle_replaygain(),
-            Notify(text) => self.notify(text),
+            other => return Some(other),
+        }
+        None
+    }
 
+    /// The local library: search, bookmarks, playlists and multi-select.
+    fn update_library(&mut self, action: Action) -> Option<Action> {
+        use Action::*;
+        match action {
             BeginSearch => {
                 self.search.active = true;
                 self.focus = Focus::Search;
                 self.search.query.clear();
             }
             SearchInput(q) => self.search.query = q,
+            BookmarkSearch => {
+                if self.search.query.trim().is_empty() {
+                    self.notify("Search something first to bookmark it".into());
+                } else {
+                    self.input.naming = Some(NameTarget::Bookmark);
+                    self.input.buffer = self.search.query.clone();
+                }
+            }
+            RunSearch(q) => {
+                self.search.query = q;
+                self.search.active = false;
+                self.browser.list.clear();
+                self.browser.title.clear();
+                self.selection = 0;
+                self.focus = Focus::Main;
+            }
+            NameInput(s) => self.input.buffer = s,
+            BeginNewPlaylist => {
+                self.input.naming = Some(NameTarget::New);
+                self.input.buffer.clear();
+            }
+            NewSmartPlaylist => {
+                if self.search.query.trim().is_empty() {
+                    self.notify("Search/filter first, then save it as a smart playlist".into());
+                } else {
+                    self.input.naming = Some(NameTarget::SmartPlaylist);
+                    self.input.buffer.clear();
+                }
+            }
+            BeginRenamePlaylist => {
+                if let Some(id) = self.selected_local_playlist() {
+                    let name = self
+                        .library
+                        .playlists
+                        .get(&id)
+                        .map(|p| p.name.clone())
+                        .unwrap_or_default();
+                    self.input.naming = Some(NameTarget::Rename(id));
+                    self.input.buffer = name;
+                }
+            }
+            DeletePlaylist => {
+                // open the confirm dialog rather than deleting on a single keypress
+                if let Some(id) = self.selected_local_playlist() {
+                    self.input.confirm_delete = Some(id);
+                }
+            }
+            RemoveFromPlaylist => self.remove_selected_from_playlist(),
+            AddCurrentToPlaylist => {
+                if let (Some(track), Some(p)) =
+                    (self.player.current, self.selected_local_playlist())
+                {
+                    self.library.add_to_playlist(p, track);
+                    self.save_playlists();
+                    self.notify("Added to playlist".into());
+                }
+            }
+            AddToPlaylistPrompt => self.add_to_playlist_prompt(),
+            ToggleMark => self.toggle_mark(),
+            VisualSelect => self.toggle_visual(),
+            RescanLibrary => {
+                self.request_rescan();
+                self.notify("Rescanning library…".into());
+            }
+            RandomAlbum => self.random_album(),
+
+            other => return Some(other),
+        }
+        None
+    }
+
+    /// Internet radio: tuning, the country/genre pickers and station playlists.
+    fn update_radio(&mut self, action: Action) -> Option<Action> {
+        use Action::*;
+        match action {
             OpenRadio => self.open_radio(),
             RadioInput(q) => self.radio_search(q),
             RadioActivate => self.radio_activate(),
@@ -441,6 +595,15 @@ impl AppState {
             RadioNameInput(s) => self.radio_name_input(s),
             RadioModalConfirm => self.radio_modal_confirm(),
             RadioModalCancel => self.radio_modal_cancel(),
+            other => return Some(other),
+        }
+        None
+    }
+
+    /// Spotify: connection, browse, transport and playlist management.
+    fn update_spotify(&mut self, action: Action) -> Option<Action> {
+        use Action::*;
+        match action {
             OpenSpotify => self.open_spotify(),
             SpotifyLogin => self.spotify_login(),
             SpotifyLogout => self.spotify_logout(),
@@ -471,83 +634,41 @@ impl AppState {
             SpotifyDeletePlaylist => self.spotify_delete_playlist_prompt(),
             SpotifyRemoveFromPlaylist => self.spotify_remove_from_playlist(),
             SpotifyNameInput(s) => self.spotify_playlist_name_input(s),
-            BookmarkSearch => {
-                if self.search.query.trim().is_empty() {
-                    self.notify("Search something first to bookmark it".into());
+            other => return Some(other),
+        }
+        None
+    }
+
+    /// Tag editing and the online tag/cover search that feeds it.
+    fn update_tags(&mut self, action: Action) -> Option<Action> {
+        use Action::*;
+        match action {
+            OpenTags => self.open_tags(),
+            OpenCoverSearch => self.open_cover_search(),
+            CoverMove(m) => self.cover_move(m),
+            CoverInput(s) => self.cover_input(s),
+            CoverActivate => self.cover_activate(),
+            OpenTagSearch => self.open_tag_search(),
+            TagMove(m) => self.tag_move(m),
+            TagInput(s) => self.tag_input(s),
+            TagActivate => self.tag_activate(),
+            TagApplyAlbum => {
+                let kind = if self.tags.search.as_ref().is_some_and(|ts| ts.album_mode) {
+                    PendingApply::AlbumFull
                 } else {
-                    self.input.naming = Some(NameTarget::Bookmark);
-                    self.input.buffer = self.search.query.clone();
-                }
+                    PendingApply::AlbumBasic
+                };
+                self.tag_request(kind);
             }
-            RunSearch(q) => {
-                self.search.query = q;
-                self.search.active = false;
-                self.browser.list.clear();
-                self.browser.title.clear();
-                self.selection = 0;
-                self.focus = Focus::Main;
-            }
-            Back => {
-                self.go_back();
-            }
-            Forward => {
-                self.go_forward();
-            }
-            FocusToward(dx, dy) => self.focus_toward(dx, dy),
-            QuitOrBack => {
-                // `q`: pop the current context — an open overlay, a drilled-into
-                // album/playlist, or a selection. If there's nothing to pop (top
-                // level), quit the app.
-                if !self.go_back() {
-                    self.running = false;
-                }
-            }
-            CopyError => self.copy_last_error(),
-            ToggleErrorLog => self.toggle_info(InfoTab::Health),
-            NameInput(s) => self.input.buffer = s,
-            BeginNewPlaylist => {
-                self.input.naming = Some(NameTarget::New);
-                self.input.buffer.clear();
-            }
-            NewSmartPlaylist => {
-                if self.search.query.trim().is_empty() {
-                    self.notify("Search/filter first, then save it as a smart playlist".into());
-                } else {
-                    self.input.naming = Some(NameTarget::SmartPlaylist);
-                    self.input.buffer.clear();
-                }
-            }
-            BeginRenamePlaylist => {
-                if let Some(id) = self.selected_local_playlist() {
-                    let name = self
-                        .library
-                        .playlists
-                        .get(&id)
-                        .map(|p| p.name.clone())
-                        .unwrap_or_default();
-                    self.input.naming = Some(NameTarget::Rename(id));
-                    self.input.buffer = name;
-                }
-            }
-            DeletePlaylist => {
-                // open the confirm dialog rather than deleting on a single keypress
-                if let Some(id) = self.selected_local_playlist() {
-                    self.input.confirm_delete = Some(id);
-                }
-            }
-            RemoveFromPlaylist => self.remove_selected_from_playlist(),
-            AddCurrentToPlaylist => {
-                if let (Some(track), Some(p)) =
-                    (self.player.current, self.selected_local_playlist())
-                {
-                    self.library.add_to_playlist(p, track);
-                    self.save_playlists();
-                    self.notify("Added to playlist".into());
-                }
-            }
-            AddToPlaylistPrompt => self.add_to_playlist_prompt(),
-            ToggleMark => self.toggle_mark(),
-            VisualSelect => self.toggle_visual(),
+            TagConfirm => self.tag_confirm(),
+            CoverConfirm => self.cover_confirm(),
+            CoverToggleScope => self.cover_toggle_scope(),
+            QueryInsert(c) => self.query_insert(c),
+            QueryBackspace => self.query_del(false),
+            QueryDelete => self.query_del(true),
+            QueryCaret(c) => self.query_caret(c),
+            TagToggleAlbum => self.toggle_tag_album(),
+            TagSource(d) => self.tag_source(d),
             BeginTagEdit => self.begin_tag_edit(),
             TagEditBeginEdit => {
                 if let Some(te) = &mut self.tags.edit {
@@ -644,47 +765,9 @@ impl AppState {
             }
             TagEditSaveAlbum => self.tag_edit_apply(true),
             TagEditCancel => self.close_tags(),
-            ToggleFavoriteSel => self.toggle_favorite_selection(),
-            // Rating is local-library only. In a player view showing another
-            // source there is nothing to rate — silently rating the local track
-            // behind it would be worse than doing nothing.
-            Rate(..) if self.layout.is_player_view() && !self.playing_source_is_local() => {}
-            Rate(id, stars) => {
-                let stars = stars.min(5);
-                if let Some(t) = self.library.tracks.get_mut(&id) {
-                    t.rating = stars;
-                }
-                self.search.lib_gen += 1;
-                self.notify(format!("Rated {stars} stars"));
-            }
-            ClearQueue => {
-                let keep = self.player.current;
-                self.player.queue.items = keep.into_iter().collect();
-                self.player.queue.position = 0;
-                self.update_gapless_next();
-                self.notify("Queue cleared".into());
-            }
-            QueueMove(m) => {
-                self.queue_move(m);
-                self.update_gapless_next();
-            }
-            QueueRemove => {
-                self.queue_remove();
-                self.update_gapless_next();
-            }
-            QueueClearUpcoming => {
-                self.queue_clear_upcoming();
-                self.update_gapless_next();
-            }
-            RescanLibrary => {
-                self.request_rescan();
-                self.notify("Rescanning library…".into());
-            }
-            RandomAlbum => self.random_album(),
-
-            // remaining arms are wired as their milestones land
-            _ => {}
+            other => return Some(other),
         }
+        None
     }
 
     /// Toggle shuffle on the active source (Spotify or the local queue), keep the
