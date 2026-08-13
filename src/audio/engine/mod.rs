@@ -726,6 +726,12 @@ impl<P: Producer<Item = f32>> Pump<P> {
         } else {
             None
         };
+        // An interrupted source returned "no more data" because a command is about
+        // to replace it — not because the track ended. Treating that as an end
+        // would leave the decoder flagged finished, and a throttled/deferred
+        // command (a coalesced DVR seek) would then let it surface as a real
+        // Finished on a later iteration.
+        let interrupted = ctl.interrupt.load(Ordering::Relaxed);
         let mut ended = false;
         match attempt {
             Some(true) => {
@@ -737,7 +743,7 @@ impl<P: Producer<Item = f32>> Pump<P> {
                 push_mono(&mut self.mono, &self.stretch_out, self.dev_ch);
                 self.prod.push_slice(&self.stretch_out);
             }
-            Some(false) => ended = true,
+            Some(false) => ended = !interrupted,
             None => {}
         }
 

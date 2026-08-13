@@ -1306,6 +1306,11 @@ impl AppState {
         // audio is stale and librespot's sink must stop waiting for room that will
         // never free up — while it waits, librespot can't process the Pause we send
         // alongside this and keeps streaming a track nothing will play.
+        //
+        // Safe because every caller also clears `sp_started`, so the next play goes
+        // through `spotify_begin` → `Load`, which takes the bridge back. A release
+        // path that left the overlay "started" would resume with a plain `Play` and
+        // find the bridge still released — i.e. silence.
         if let Some(bridge) = &self.spov.sp_bridge {
             bridge.release();
         }

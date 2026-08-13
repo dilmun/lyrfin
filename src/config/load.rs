@@ -644,7 +644,7 @@ mod tests {
         let _ = std::fs::create_dir_all(&c.dir);
         c.save();
         assert!(
-            !c.dir.join("config.tmp").exists(),
+            !c.dir.join("config.toml.tmp").exists(),
             "atomic save leaves no temp file behind"
         );
         let text = std::fs::read_to_string(c.dir.join("config.toml")).expect("config written");
