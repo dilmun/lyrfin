@@ -8,7 +8,8 @@ use super::*;
 impl AppState {
     pub fn new(config: Config) -> Self {
         config.seed_bundled_themes(); // drop the shipped custom themes into themes/
-        let theme = Theme::resolve(&config.theme, &config.themes_dir());
+        let mut theme = Theme::resolve(&config.theme, &config.themes_dir());
+        theme.transparent = config.transparent; // see AppState::resolve_theme
         let icons = crate::icons::Icons::resolve(&config.icon_set, &config.icons);
         let bookmarks = crate::library::store::BookmarkStore::load(&config.dir).bookmarks;
         let play_history = crate::library::store::HistoryStore::load(&config.dir);

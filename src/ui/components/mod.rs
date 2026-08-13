@@ -355,7 +355,7 @@ pub fn panel_titled_line(
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(col(border)))
-        .style(Style::default().bg(col(th.panel)))
+        .style(Style::default().bg(th.panel_color()))
         .title(title.clone());
     if let Some(right) =
         title_right.filter(|r| title_right_fits(area.width, title.width(), r.width()))
@@ -402,7 +402,7 @@ fn rounded<'a>(th: &Theme, title: &'a str, focused: bool) -> Block<'a> {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(col(border)))
-        .style(Style::default().bg(col(th.panel)));
+        .style(Style::default().bg(th.panel_color()));
     if !title.is_empty() {
         b = b.title(Span::styled(
             format!(" {title} "),

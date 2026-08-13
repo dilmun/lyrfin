@@ -8,6 +8,8 @@ volume       = 72            # 0..=100
 gapless      = true
 crossfade_ms = 0             # 0 = off
 album_art    = true          # inline sixel/kitty/iterm art when supported
+transparent  = false         # show the terminal's own background (needed for a
+                             # transparent window in Ghostty/kitty — see docs)
 mouse        = true
 touchpad_speed   = "normal"  # touchpad grid/carousel scroll: slow | normal | fast
 grid_scroll_lock = true      # lock sideways grid scroll to the current row/carousel

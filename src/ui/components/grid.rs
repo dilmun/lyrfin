@@ -544,7 +544,7 @@ pub fn release_grid(
             let strip_h = ((pin_y + HEADER_H as i32) - strip_top as i32).clamp(0, HEADER_H as i32);
             if strip_h > 0 {
                 f.render_widget(
-                    Block::default().style(Style::default().bg(col(app.theme.panel))),
+                    Block::default().style(Style::default().bg(app.theme.panel_color())),
                     Rect::new(area.x, strip_top, area.width, strip_h as u16),
                 );
             }
@@ -643,7 +643,7 @@ fn render_peek_cover(
             && let Ok(mut p) = proto.try_borrow_mut()
         {
             f.render_widget(
-                Block::default().style(Style::default().bg(col(th.panel))),
+                Block::default().style(Style::default().bg(th.panel_color())),
                 slice,
             );
             super::render_proto_peek(f, slice, &mut p);
@@ -849,7 +849,7 @@ pub(crate) fn fill_thumb(
         && let Ok(mut p) = proto.try_borrow_mut()
     {
         f.render_widget(
-            Block::default().style(Style::default().bg(col(th.panel))),
+            Block::default().style(Style::default().bg(th.panel_color())),
             art,
         );
         super::render_proto_filled(f, art, &mut p);
@@ -876,7 +876,7 @@ pub(crate) fn fill_thumb(
         && let Ok(mut p) = proto.try_borrow_mut()
     {
         f.render_widget(
-            Block::default().style(Style::default().bg(col(th.panel))),
+            Block::default().style(Style::default().bg(th.panel_color())),
             art,
         );
         super::render_proto_filled(f, art, &mut p);

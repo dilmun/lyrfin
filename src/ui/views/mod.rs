@@ -377,7 +377,7 @@ pub fn concert(f: &mut Frame, area: Rect, app: &AppState) {
     let th = &app.theme;
     // paint the whole frame with the theme background
     f.render_widget(
-        ratatui::widgets::Block::default().style(Style::default().bg(th.bg.into())),
+        ratatui::widgets::Block::default().style(Style::default().bg(th.bg_color())),
         area,
     );
     // centre a readable column

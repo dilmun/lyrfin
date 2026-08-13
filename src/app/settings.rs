@@ -103,6 +103,7 @@ impl AppState {
         }
         v.push(AlbumArt);
         v.push(DynamicAccent);
+        v.push(Transparent);
 
         // Spotify — connection + streaming, global so the account can be managed
         // from any view. The log-out/reset row appears only with a live session or
@@ -467,6 +468,10 @@ impl AppState {
             Some(Setting::ReducedMotion) => self.toggle_setting(|c| &mut c.reduced_motion),
             Some(Setting::PeakCaps) => self.toggle_setting(|c| &mut c.peak_caps),
             Some(Setting::Powerline) => self.toggle_setting(|c| &mut c.powerline),
+            Some(Setting::Transparent) => {
+                self.toggle_setting(|c| &mut c.transparent);
+                self.reapply_transparency();
+            }
             Some(Setting::ArabicShaping) => self.toggle_setting(|c| &mut c.arabic_shaping),
             Some(Setting::RadioDvr) => self.toggle_setting(|c| &mut c.radio_dvr),
             Some(Setting::Gapless) => {
@@ -614,6 +619,10 @@ impl AppState {
             Some(Setting::ReducedMotion) => self.set_setting(|c| &mut c.reduced_motion, dir > 0),
             Some(Setting::PeakCaps) => self.set_setting(|c| &mut c.peak_caps, dir > 0),
             Some(Setting::Powerline) => self.set_setting(|c| &mut c.powerline, dir > 0),
+            Some(Setting::Transparent) => {
+                self.set_setting(|c| &mut c.transparent, dir > 0);
+                self.reapply_transparency();
+            }
             Some(Setting::ArabicShaping) => self.set_setting(|c| &mut c.arabic_shaping, dir > 0),
             Some(Setting::RadioDvr) => self.set_setting(|c| &mut c.radio_dvr, dir > 0),
             Some(Setting::Gapless) => {
@@ -827,13 +836,28 @@ impl AppState {
     /// loses the terminal colours and returns the default, so EVERY (re)build of the
     /// current theme — set, cycle, and `reload_cover` — must go through here.
     pub(crate) fn resolve_theme(&self, name: &str) -> Theme {
-        if name == "auto" {
+        let mut t = if name == "auto" {
             self.auto_theme
                 .clone()
                 .unwrap_or_else(|| Theme::resolve("auto", &self.config.themes_dir()))
         } else {
             Theme::resolve(name, &self.config.themes_dir())
-        }
+        };
+        // Transparency is a setting, not a palette value, so it is stamped on here
+        // — the one funnel every live theme passes through. Baking it into the
+        // theme files instead would lose it on the next theme switch.
+        t.transparent = self.config.transparent;
+        t
+    }
+
+    /// Re-resolve the live theme so a transparency toggle takes effect immediately.
+    ///
+    /// Goes through [`Self::apply_theme`] rather than poking `theme.transparent`,
+    /// because the switch also changes what album art is composited against — the
+    /// protocols that flatten art onto the panel colour have to re-mint it.
+    pub(crate) fn reapply_transparency(&mut self) {
+        let name = self.theme.name.clone();
+        self.apply_theme(&name);
     }
 
     /// Activate theme `name` LIVE — resolve it, swap `self.theme`, and re-derive the

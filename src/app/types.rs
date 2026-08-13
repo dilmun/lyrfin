@@ -313,6 +313,9 @@ pub enum Setting {
     DarkTheme,
     AlbumArt,
     DynamicAccent,
+    /// Show the terminal's own background instead of painting the theme's, so a
+    /// transparent window stays transparent (see [`crate::config::Config`]).
+    Transparent,
     IconSet,
     /// Powerline glyphs for the rounded selection pill (own font requirement,
     /// independent of `IconSet`).
@@ -444,9 +447,8 @@ impl Setting {
             PlayerViz | PlayerVizMode | PeakCaps => "Visualizer",
             LyricsAlign | LyricsGap | LyricsGradient | LyricsColor | LyricsKaraoke | LyricsDual
             | LyricsTranslate | LyricsTeleprompter => "Lyrics",
-            Theme | ThemeFollowSystem | LightTheme | DarkTheme | AlbumArt | DynamicAccent => {
-                "Theme"
-            }
+            Theme | ThemeFollowSystem | LightTheme | DarkTheme | AlbumArt | DynamicAccent
+            | Transparent => "Theme",
             SpotifyLogout | SpotifyClientId | SpotifyReauth | SpotifyBitrate
             | SpotifyShowAccount => "Spotify",
             MusicDir(_) | AddDir | Rescan => "Library",

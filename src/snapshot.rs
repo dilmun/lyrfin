@@ -23,6 +23,22 @@ pub fn render_layout(app: &mut AppState, layout: Layout, w: u16, h: u16) -> Stri
     out
 }
 
+/// Render one layout and hand back the raw cell buffer, so a test can assert on
+/// colours (not just glyphs) — what transparency is entirely about. Test-only:
+/// the runtime `--snapshot` dump prints glyphs, never colours.
+#[cfg(test)]
+pub fn render_buffer(
+    app: &mut AppState,
+    layout: Layout,
+    w: u16,
+    h: u16,
+) -> ratatui::buffer::Buffer {
+    app.layout = layout;
+    let mut term = Terminal::new(TestBackend::new(w, h)).expect("test backend");
+    term.draw(|f| ui::render(f, app)).expect("draw");
+    term.backend().buffer().clone()
+}
+
 /// Print every layout (used by `lyrfin --snapshot [WxH]`).
 pub fn dump_all(app: &mut AppState, w: u16, h: u16) {
     let layouts = [
@@ -69,6 +85,7 @@ mod tests {
     mod playback_tests;
     mod settings_tests;
     mod tags_search_tests;
+    mod transparency_tests;
     mod unified_views_tests;
 
     fn demo() -> AppState {
