@@ -69,13 +69,7 @@ impl SpotifyViewCache {
         let Ok(json) = serde_json::to_string(self) else {
             return;
         };
-        let _ = std::fs::create_dir_all(dir);
-        let tmp = dir.join(format!("{FILE}.tmp"));
-        if std::fs::write(&tmp, json).is_ok() {
-            let _ = std::fs::rename(&tmp, dir.join(FILE));
-        } else {
-            let _ = std::fs::remove_file(&tmp);
-        }
+        let _ = crate::atomicfile::write_str(&dir.join(FILE), &json);
     }
 
     /// Remove the cache (on logout / account switch, or when there's nothing to cache).

@@ -72,13 +72,8 @@ pub fn persist_client_id(dir: &Path, id: &str) {
     if id.is_empty() {
         let _ = std::fs::remove_file(&path);
     } else {
-        let _ = std::fs::create_dir_all(dir);
-        let tmp = path.with_extension("tmp");
-        if std::fs::write(&tmp, id).is_ok() {
-            let _ = std::fs::rename(&tmp, &path);
-        } else {
-            let _ = std::fs::remove_file(&tmp);
-        }
+        // owner-only, like the tokens: it identifies the user's own Spotify app
+        let _ = crate::atomicfile::write_private(&path, id.as_bytes());
     }
     set_client_id(id.to_string());
 }
@@ -209,19 +204,13 @@ impl Tokens {
             .and_then(|t| serde_json::from_str::<Tokens>(&t).ok())
             .filter(|t| !t.access_token.is_empty() && !t.refresh_token.is_empty())
     }
+    /// Atomic (so a torn write can't leave invalid JSON that `load` rejects — the
+    /// token silently lost on the next start) and owner-only: this file holds a
+    /// long-lived refresh token, and the default mode would leave it readable by
+    /// every user and process on the machine.
     pub fn save(&self, dir: &Path, kind: TokenKind) {
         if let Ok(j) = serde_json::to_string_pretty(self) {
-            let _ = std::fs::create_dir_all(dir);
-            // atomic (sibling temp + rename): two refresh paths can save near-
-            // simultaneously, and a torn write would leave invalid JSON that
-            // `load` rejects → the token silently lost on the next start.
-            let path = Self::path(dir, kind);
-            let tmp = path.with_extension("tmp");
-            if std::fs::write(&tmp, j).is_ok() {
-                let _ = std::fs::rename(&tmp, &path);
-            } else {
-                let _ = std::fs::remove_file(&tmp);
-            }
+            let _ = crate::atomicfile::write_private(&Self::path(dir, kind), j.as_bytes());
         }
     }
     /// Forget every cached token. Logging out has to drop BOTH sets — leaving the

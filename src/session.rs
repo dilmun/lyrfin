@@ -160,15 +160,9 @@ impl Session {
         let Ok(json) = serde_json::to_string_pretty(self) else {
             return;
         };
-        let _ = std::fs::create_dir_all(dir);
-        // atomic write (temp + rename) so a crash/kill mid-write can't truncate
+        // atomic (temp + rename) so a crash/kill mid-write can't truncate
         // session.json into something the next launch fails to parse
-        let tmp = dir.join("session.json.tmp");
-        if std::fs::write(&tmp, json).is_ok() {
-            let _ = std::fs::rename(&tmp, dir.join("session.json"));
-        } else {
-            let _ = std::fs::remove_file(&tmp);
-        }
+        let _ = crate::atomicfile::write_str(&dir.join("session.json"), &json);
     }
 }
 

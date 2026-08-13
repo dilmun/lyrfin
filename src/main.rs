@@ -9,6 +9,7 @@ mod appearance;
 mod arabic;
 mod artistinfo;
 mod artwork;
+mod atomicfile;
 mod audio;
 mod config;
 mod core;

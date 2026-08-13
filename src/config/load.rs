@@ -584,17 +584,12 @@ impl Config {
     }
 }
 
-/// Write `contents` to `path` atomically: a sibling temp file + rename. A crash or
-/// kill mid-write can then never leave a truncated file — which would fail to parse
-/// on the next load and trigger a fall-back-to-defaults that silently clobbers the
-/// user's settings (the cause of the wiped Client ID / reset visualizer).
+/// Write `contents` to `path` atomically. A crash or kill mid-write can then never
+/// leave a truncated file — which would fail to parse on the next load and trigger
+/// a fall-back-to-defaults that silently clobbers the user's settings (the cause of
+/// the wiped Client ID / reset visualizer).
 fn atomic_write(path: &Path, contents: &str) {
-    let tmp = path.with_extension("tmp"); // sibling in the same dir → rename is atomic
-    if std::fs::write(&tmp, contents).is_ok() {
-        let _ = std::fs::rename(&tmp, path);
-    } else {
-        let _ = std::fs::remove_file(&tmp);
-    }
+    let _ = crate::atomicfile::write_str(path, contents);
 }
 
 fn write_if_absent(path: &Path, contents: &str) {
@@ -826,7 +821,7 @@ mod tests {
         super::atomic_write(&path, "fresh");
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "fresh");
         assert!(
-            !dir.join("config.tmp").exists(),
+            !dir.join("config.toml.tmp").exists(),
             "the temp file was renamed away, none left behind"
         );
         let _ = std::fs::remove_dir_all(&dir);

@@ -108,8 +108,7 @@ impl UserData {
 
     pub fn save(&self, dir: &Path) {
         if let Ok(json) = serde_json::to_string_pretty(self) {
-            let _ = std::fs::create_dir_all(dir);
-            let _ = std::fs::write(Self::path(dir), json);
+            let _ = crate::atomicfile::write_str(&Self::path(dir), &json);
         }
     }
 
@@ -146,8 +145,7 @@ impl BookmarkStore {
             bookmarks: bookmarks.to_vec(),
         };
         if let Ok(json) = serde_json::to_string_pretty(&store) {
-            let _ = std::fs::create_dir_all(dir);
-            let _ = std::fs::write(dir.join("bookmarks.json"), json);
+            let _ = crate::atomicfile::write_str(&dir.join("bookmarks.json"), &json);
         }
     }
 }
@@ -174,8 +172,7 @@ impl RadioFavorites {
             stations: stations.to_vec(),
         };
         if let Ok(json) = serde_json::to_string_pretty(&store) {
-            let _ = std::fs::create_dir_all(dir);
-            let _ = std::fs::write(dir.join("radio_favorites.json"), json);
+            let _ = crate::atomicfile::write_str(&dir.join("radio_favorites.json"), &json);
         }
     }
 }
@@ -206,8 +203,7 @@ impl RadioHistory {
             entries: entries.to_vec(),
         };
         if let Ok(json) = serde_json::to_string_pretty(&store) {
-            let _ = std::fs::create_dir_all(dir);
-            let _ = std::fs::write(dir.join("radio_history.json"), json);
+            let _ = crate::atomicfile::write_str(&dir.join("radio_history.json"), &json);
         }
     }
 }
@@ -236,8 +232,7 @@ impl RadioPlaylists {
             playlists: playlists.to_vec(),
         };
         if let Ok(json) = serde_json::to_string_pretty(&store) {
-            let _ = std::fs::create_dir_all(dir);
-            let _ = std::fs::write(dir.join("radio_playlists.json"), json);
+            let _ = crate::atomicfile::write_str(&dir.join("radio_playlists.json"), &json);
         }
     }
 }
@@ -272,8 +267,7 @@ impl HistoryStore {
             plays: plays[tail..].to_vec(),
         };
         if let Ok(json) = serde_json::to_string(&store) {
-            let _ = std::fs::create_dir_all(dir);
-            let _ = std::fs::write(dir.join("history.json"), json);
+            let _ = crate::atomicfile::write_str(&dir.join("history.json"), &json);
         }
     }
 }
@@ -359,8 +353,7 @@ impl PlaylistStore {
 
     pub fn save(&self, dir: &Path) {
         if let Ok(json) = serde_json::to_string_pretty(self) {
-            let _ = std::fs::create_dir_all(dir);
-            let _ = std::fs::write(dir.join("playlists.json"), json);
+            let _ = crate::atomicfile::write_str(&dir.join("playlists.json"), &json);
         }
     }
 }
@@ -397,12 +390,14 @@ impl LibraryCache {
         }
     }
 
+    /// Encoded straight into the temp file (no intermediate blob in memory) and
+    /// renamed into place, so an interrupted save leaves the previous cache
+    /// readable instead of a truncated one the next launch has to rebuild from.
     pub fn save(&self, dir: &Path) {
-        let _ = std::fs::create_dir_all(dir);
-        if let Ok(f) = std::fs::File::create(dir.join("library.bin")) {
-            let mut w = std::io::BufWriter::new(f);
-            let _ =
-                bincode::serde::encode_into_std_write(self, &mut w, bincode::config::standard());
-        }
+        let _ = crate::atomicfile::write_with(&dir.join("library.bin"), false, |w| {
+            bincode::serde::encode_into_std_write(self, w, bincode::config::standard())
+                .map(|_| ())
+                .map_err(std::io::Error::other)
+        });
     }
 }
