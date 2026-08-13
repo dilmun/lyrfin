@@ -103,8 +103,7 @@ impl Keymap {
         for (k, v) in entries {
             out.push_str(&format!("{k:?} = {v:?}\n"));
         }
-        let _ = std::fs::create_dir_all(dir);
-        let _ = std::fs::write(dir.join("keybindings.toml"), out);
+        let _ = crate::atomicfile::write_str(&dir.join("keybindings.toml"), &out);
     }
 }
 

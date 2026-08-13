@@ -209,8 +209,12 @@ pub(super) fn reopen_timeshift(
     ts: Arc<Timeshift>,
     dev_rate: u32,
     dev_ch: usize,
+    interrupt: Arc<AtomicBool>,
 ) -> anyhow::Result<Decode> {
-    let mss = MediaSourceStream::new(Box::new(TimeshiftSource::new(ts)), Default::default());
+    let mss = MediaSourceStream::new(
+        Box::new(TimeshiftSource::new(ts, interrupt)),
+        Default::default(),
+    );
     let (decode, _dur) = build_decode(mss, &Hint::new(), dev_rate, dev_ch)?;
     Ok(decode)
 }
@@ -235,12 +239,19 @@ pub(super) fn open_track(
 /// `Some`, when it's wrapped in a timeshift buffer (off-thread producer + seekable
 /// [`TimeshiftSource`]) so it can be paused, rewound within the window, and caught
 /// up to live. Returns the timeshift handle for the controller when one was built.
+/// Buffer held for a live stream when the user hasn't asked for a DVR window.
+/// Small (~200 KB at the nominal bitrate) and not exposed as a seekable window —
+/// its only job is to keep the socket read on the producer thread, so a stalled
+/// host can never block the controller (and with it every audio command).
+const LIVE_BUFFER: Duration = Duration::from_secs(8);
+
 pub(super) fn open_stream(
     url: String,
     dev_rate: u32,
     dev_ch: usize,
     evt_tx: Sender<AudioEvent>,
     dvr_window: Option<Duration>,
+    interrupt: Arc<AtomicBool>,
 ) -> anyhow::Result<(Decode, Option<Duration>, Option<Arc<Timeshift>>)> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_connect(Some(Duration::from_secs(8)))
@@ -289,9 +300,12 @@ pub(super) fn open_stream(
         };
         MediaSourceStream::new(Box::new(src), Default::default())
     } else {
-        // live stream: strip ICY metadata via HttpStream. With DVR, an off-thread
-        // producer feeds a timeshift ring and the decoder reads the seekable
-        // TimeshiftSource; without it, decode the forward-only reader directly.
+        // Live stream: strip ICY metadata via HttpStream, and read it on an
+        // off-thread producer that feeds a ring — ALWAYS, not only for DVR. The
+        // controller thread also drains the command queue, so a socket read there
+        // means a stalled host freezes pause/stop/next for as long as it takes the
+        // read to time out. With DVR the ring is the user's seekable window; without
+        // it, it's a small forward-only buffer that exists purely for that isolation.
         let http = HttpStream {
             reader: Box::new(resp.into_body().into_reader()),
             metaint,
@@ -299,14 +313,15 @@ pub(super) fn open_stream(
             evt_tx,
             last_title: String::new(),
         };
-        if let Some(window) = dvr_window {
-            let ts = Arc::new(Timeshift::new(window));
-            timeshift::spawn_producer(ts.clone(), Box::new(http));
+        let ts = Arc::new(Timeshift::new(dvr_window.unwrap_or(LIVE_BUFFER)));
+        timeshift::spawn_producer(ts.clone(), Box::new(http));
+        let source = if dvr_window.is_some() {
             dvr = Some(ts.clone());
-            MediaSourceStream::new(Box::new(TimeshiftSource::new(ts)), Default::default())
+            TimeshiftSource::new(ts, interrupt)
         } else {
-            MediaSourceStream::new(Box::new(http), Default::default())
-        }
+            TimeshiftSource::live(ts, interrupt)
+        };
+        MediaSourceStream::new(Box::new(source), Default::default())
     };
     // probe by content (no extension)
     let (mut decode, sym_dur) = build_decode(mss, &Hint::new(), dev_rate, dev_ch)?;
@@ -381,12 +396,22 @@ pub(super) fn build_stream<C>(
     config: &cpal::StreamConfig,
     fmt: SampleFormat,
     shared: &Arc<Shared>,
+    evt_tx: &Sender<AudioEvent>,
     cons: C,
 ) -> anyhow::Result<cpal::Stream>
 where
     C: Consumer<Item = f32> + Send + 'static,
 {
-    let err_fn = |e| eprintln!("lyrfin audio stream error: {e}");
+    // A device error (headphones unplugged, Bluetooth dropped, device removed)
+    // must never be printed: stderr is the terminal the TUI is drawing on, so an
+    // eprintln here lands on top of the interface. Report it as an event and raise
+    // the flag the controller rebuilds the stream from.
+    let err_shared = shared.clone();
+    let err_evt = evt_tx.clone();
+    let err_fn = move |e| {
+        err_shared.stream_error.store(true, Ordering::Release);
+        let _ = err_evt.send(AudioEvent::Error(format!("audio output: {e}")));
+    };
     macro_rules! build {
         ($t:ty, $conv:expr) => {{
             let shared = shared.clone();
@@ -486,6 +511,7 @@ mod tests {
             samples_played: AtomicU64::new(0),
             flush: AtomicBool::new(false),
             out_latency_us: AtomicU64::new(0),
+            stream_error: AtomicBool::new(false),
         })
     }
 
@@ -498,7 +524,7 @@ mod tests {
         let (evt_tx, _evt_rx) = unbounded();
         let (stream_tx, _stream_rx) = unbounded();
         let shared = test_shared();
-        let mut ctl = Ctl::new(44_100, 2, stream_tx);
+        let mut ctl = Ctl::new(44_100, 2, stream_tx, Arc::new(AtomicBool::new(false)));
         ctl.external = Some(Arc::new(DummyExt));
         ctl.ext_resampler = Some(Resampler::new(44_100, 48_000, 2, 2));
 

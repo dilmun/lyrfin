@@ -240,7 +240,7 @@ impl AppState {
         let items = &self.spotify.items;
         // set by `release_grid` right before it calls this (rows_at), so it's the
         // live column count for chunking the category grid.
-        let cols = self.spotify.cols.get().max(1);
+        let cols = self.spotify.view.cols.get().max(1);
         let mut rows = Vec::new();
         let mut i = 0;
         while i < items.len() {
@@ -414,14 +414,14 @@ impl AppState {
             crate::app::local_browse::grid_step_row_locked(
                 self.spotify.sel,
                 self.spotify.items.len(),
-                self.spotify.cols.get(),
+                self.spotify.view.cols.get(),
                 dx,
             )
         } else {
             crate::app::local_browse::grid_step(
                 self.spotify.sel,
                 self.spotify.items.len(),
-                self.spotify.cols.get(),
+                self.spotify.view.cols.get(),
                 dx,
                 dy,
             )
@@ -438,31 +438,31 @@ impl AppState {
     /// button), so it's excluded. No-op while a grow is in flight or it's fully loaded.
     pub(crate) fn spotify_maybe_load_more(&mut self) {
         if !self.spotify_podcast_grid_active()
-            || self.spotify.browse_loading_more
-            || self.spotify.browse_exhausted
+            || self.spotify.paging.browse_loading_more
+            || self.spotify.paging.browse_exhausted
         {
             return;
         }
-        let Some(uri) = self.spotify.browse_page.clone() else {
+        let Some(uri) = self.spotify.paging.browse_page.clone() else {
             return;
         };
         // only when the cursor is within the last couple of rows
-        let cols = self.spotify.cols.get().max(1);
+        let cols = self.spotify.view.cols.get().max(1);
         if self.spotify.sel + cols * 2 < self.spotify.items.len() {
             return;
         }
         let Some(cmd) = self.spov.session_cmd.clone() else {
             return;
         };
-        self.spotify.browse_limit += BROWSE_PAGE_STEP;
-        self.spotify.browse_loading_more = true;
+        self.spotify.paging.browse_limit += BROWSE_PAGE_STEP;
+        self.spotify.paging.browse_loading_more = true;
         self.workers.spotify_seq += 1;
         let key = format!("s{}", self.workers.spotify_seq);
         self.spotify.key = key.clone();
         let _ = cmd.send(crate::spotify::session::SessionCommand::FetchBrowsePage {
             uri,
             key,
-            limit: self.spotify.browse_limit,
+            limit: self.spotify.paging.browse_limit,
         });
     }
 
@@ -563,9 +563,9 @@ impl AppState {
         self.clamp_focus();
         // the restored list is shown verbatim (no refetch), so its load-more paging
         // can't be resumed — disable it until the page is re-drilled
-        self.spotify.browse_page = None;
-        self.spotify.browse_loading_more = false;
-        self.spotify.browse_exhausted = false;
+        self.spotify.paging.browse_page = None;
+        self.spotify.paging.browse_loading_more = false;
+        self.spotify.paging.browse_exhausted = false;
         true
     }
 
@@ -613,7 +613,7 @@ impl AppState {
                     .cloned()
                     .collect();
                 let idx = queue.iter().position(|t| t.uri == item.uri).unwrap_or(0);
-                self.spov.sp_fail_streak = 0; // a fresh user-initiated attempt
+                self.spov.pacing.fail_streak = 0; // a fresh user-initiated attempt
                 self.spotify_play(queue, idx);
             }
             // albums/playlists/artists/shows/categories → drill in (tracks, or a
@@ -715,9 +715,12 @@ impl AppState {
     /// ([`Self::spotify_refresh_open`]).
     fn spotify_fetch_container(&mut self, item: crate::spotify::api::Item) {
         use crate::spotify::api::Kind;
-        if self.spotify.tokens.is_none() {
+        // Bound once, here: the Web-API arm needs it, and re-reaching for it with
+        // an unwrap leaves a panic twenty lines away from the guard that makes it
+        // safe — one refactor from being a real crash.
+        let Some(token) = self.spotify.tokens.as_ref().map(|t| t.access_token.clone()) else {
             return;
-        }
+        };
         self.workers.spotify_seq += 1;
         let key = format!("s{}", self.workers.spotify_seq);
         self.spotify.key = key.clone();
@@ -725,14 +728,13 @@ impl AppState {
         self.spotify.note = "Loading…".into();
         // a fresh container isn't a pageable grid until proven one (the Category arm
         // sets it); resets any prior page's load-more paging.
-        self.spotify.browse_page = None;
-        self.spotify.browse_limit = BROWSE_PAGE_STEP;
-        self.spotify.browse_loading_more = false;
-        self.spotify.browse_exhausted = false;
+        self.spotify.paging.browse_page = None;
+        self.spotify.paging.browse_limit = BROWSE_PAGE_STEP;
+        self.spotify.paging.browse_loading_more = false;
+        self.spotify.paging.browse_exhausted = false;
         match item.kind {
             // albums + podcast shows resolve via the Web API (no session needed)
             Kind::Album | Kind::Show => {
-                let token = self.spotify.tokens.as_ref().unwrap().access_token.clone();
                 if let Some(tx) = &self.workers.spotify {
                     let _ = tx.send(crate::spotify::api::SpRequest::Open {
                         uri: item.uri,
@@ -773,13 +775,13 @@ impl AppState {
                 if self.spotify_ensure_session() {
                     // a drilled category page is a load-more-able grid: remember its
                     // uri so `spotify_maybe_load_more` can grow it on scroll
-                    self.spotify.browse_page = Some(item.uri.clone());
+                    self.spotify.paging.browse_page = Some(item.uri.clone());
                     if let Some(cmd) = &self.spov.session_cmd {
                         let _ =
                             cmd.send(crate::spotify::session::SessionCommand::FetchBrowsePage {
                                 uri: item.uri,
                                 key,
-                                limit: self.spotify.browse_limit,
+                                limit: self.spotify.paging.browse_limit,
                             });
                     }
                 } else {
@@ -807,9 +809,9 @@ impl AppState {
         self.spotify.crumb = None;
         self.spotify.open_item = None;
         self.spotify.nav.clear();
-        self.spotify.browse_page = None;
-        self.spotify.browse_loading_more = false;
-        self.spotify.browse_exhausted = false;
+        self.spotify.paging.browse_page = None;
+        self.spotify.paging.browse_loading_more = false;
+        self.spotify.paging.browse_exhausted = false;
     }
 
     /// The cursor to place on a freshly loaded list: a one-shot session-restored

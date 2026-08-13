@@ -1,6 +1,7 @@
 //! Filesystem scanner: walk roots, read tags with lofty, emit tracks. Runs on a
-//! worker thread and streams progress so a large library populates the UI as it
-//! goes (never blocking startup).
+//! worker thread, streaming *progress* as it goes and the tracks themselves in
+//! one batch at the end — so startup is never blocked and the UI can show how far
+//! along a large scan is.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -18,24 +19,34 @@ pub const SUPPORTED_EXTS: &[&str] = &[
 ];
 
 pub fn is_supported(path: &Path) -> bool {
+    // compared case-insensitively in place: this runs on every file of a
+    // full-disk walk, and lowercasing each extension allocated a String per file
     path.extension()
         .and_then(|e| e.to_str())
-        .map(|e| SUPPORTED_EXTS.contains(&e.to_ascii_lowercase().as_str()))
-        .unwrap_or(false)
+        .is_some_and(|e| SUPPORTED_EXTS.iter().any(|s| s.eq_ignore_ascii_case(e)))
 }
 
-/// Spawn a background scan of `roots`, streaming events on `tx`. `cache` holds
-/// the previously-scanned tracks (path → Track); files whose mtime is unchanged
-/// are reused from it instead of re-parsing their tags, so a sync of an unchanged
-/// library does almost no work. Files missing from the new walk are dropped.
-pub fn spawn(roots: Vec<PathBuf>, cache: HashMap<PathBuf, Track>, tx: Sender<LibraryEvent>) {
+/// Spawn a background scan of `roots`, streaming events on `tx`.
+///
+/// The previously-scanned catalogue is read from (and written back to) the cache
+/// in `dir`, on this thread: files whose mtime is unchanged are reused instead of
+/// re-parsing their tags, so a sync of an unchanged library does almost no work,
+/// and files missing from the new walk are dropped. Doing both here keeps the UI
+/// loop clear of the deep copy the snapshot used to cost it, and of encoding +
+/// writing the whole catalogue when the scan lands.
+pub fn spawn(roots: Vec<PathBuf>, dir: PathBuf, tx: Sender<LibraryEvent>) {
     std::thread::Builder::new()
         .name("lyrfin-scan".into())
-        .spawn(move || scan_into(roots, cache, tx))
+        .spawn(move || scan_into(roots, dir, tx))
         .expect("spawn scanner");
 }
 
-fn scan_into(roots: Vec<PathBuf>, cache: HashMap<PathBuf, Track>, tx: Sender<LibraryEvent>) {
+fn scan_into(roots: Vec<PathBuf>, dir: PathBuf, tx: Sender<LibraryEvent>) {
+    let cache: HashMap<PathBuf, Track> = crate::library::store::LibraryCache::load(&dir)
+        .tracks
+        .into_iter()
+        .map(|t| (t.path.clone(), t))
+        .collect();
     let _ = tx.send(LibraryEvent::ScanStarted { roots: roots.len() });
 
     // collect candidate files first (cheap) for a progress denominator
@@ -63,11 +74,14 @@ fn scan_into(roots: Vec<PathBuf>, cache: HashMap<PathBuf, Track>, tx: Sender<Lib
     let chunk = total.div_ceil(threads).max(1);
     let done = std::sync::atomic::AtomicUsize::new(0);
     let read_one = |path: &PathBuf| -> Option<Track> {
+        // one stat per file: the mtime decides whether the cached entry is still
+        // good AND becomes the new track's `added_at`, so it's passed on rather
+        // than read again inside the parser
         let mtime = file_mtime(path);
-        // reuse the cached track when the file hasn't changed since last scan
         match cache.get(path) {
+            // unchanged since the last scan → reuse it, no tag parse
             Some(c) if c.added_at == mtime as u32 => Some(c.clone()),
-            _ => read_tags(path),
+            _ => read_tags(path, mtime),
         }
     };
     let chunks: Vec<Vec<Option<Track>>> = std::thread::scope(|s| {
@@ -93,10 +107,19 @@ fn scan_into(roots: Vec<PathBuf>, cache: HashMap<PathBuf, Track>, tx: Sender<Lib
                 })
             })
             .collect();
-        // a panicked worker contributes nothing rather than aborting the scan
+        // A panicked worker contributes nothing rather than aborting the scan —
+        // but say so: silently dropping its whole chunk would look like those
+        // files had simply vanished from the library.
         handles
             .into_iter()
-            .map(|h| h.join().unwrap_or_default())
+            .map(|h| {
+                h.join().unwrap_or_else(|_| {
+                    let _ = tx.send(LibraryEvent::Error(
+                        "part of the library failed to scan — some tracks may be missing".into(),
+                    ));
+                    Vec::new()
+                })
+            })
             .collect()
     });
 
@@ -110,8 +133,15 @@ fn scan_into(roots: Vec<PathBuf>, cache: HashMap<PathBuf, Track>, tx: Sender<Lib
     }
 
     let n = tracks.len();
+    // Refresh the on-disk cache so the next launch is instant. After the UI has
+    // its tracks (it must not wait on the encode), and on this thread — it is the
+    // whole catalogue, far too much work for the event loop.
+    let snapshot = crate::library::store::LibraryCache {
+        tracks: tracks.clone(),
+    };
     let _ = tx.send(LibraryEvent::Loaded(tracks));
     let _ = tx.send(LibraryEvent::ScanFinished { tracks: n });
+    snapshot.save(&dir);
 }
 
 fn codec_from_ext(path: &Path) -> Codec {
@@ -132,8 +162,10 @@ fn codec_from_ext(path: &Path) -> Codec {
     }
 }
 
-/// Parse one file's tags into a `Track` (id assigned by the caller).
-fn read_tags(path: &Path) -> Option<Track> {
+/// Parse one file's tags into a `Track` (id assigned by the caller). `mtime` is
+/// the file's modification time, already read by the caller — it's what change
+/// detection compares on the next scan.
+fn read_tags(path: &Path, mtime: u64) -> Option<Track> {
     let tagged = lofty::read_from_path(path).ok()?;
     let props = tagged.properties();
     let tag = tagged.primary_tag().or_else(|| tagged.first_tag());
@@ -195,7 +227,7 @@ fn read_tags(path: &Path) -> Option<Track> {
         rating: 0,
         favorite: false,
         play_count: 0,
-        added_at: file_mtime(path) as u32,
+        added_at: mtime as u32,
         last_played: 0,
     })
 }

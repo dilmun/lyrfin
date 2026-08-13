@@ -15,7 +15,13 @@ impl AppState {
         let radio_favorites = crate::library::store::RadioFavorites::load(&config.dir);
         let radio_history = crate::library::store::RadioHistory::load(&config.dir);
         let radio_playlists = crate::library::store::RadioPlaylists::load(&config.dir);
-        let spotify_tokens = crate::spotify::Tokens::load(&config.dir);
+        let spotify_tokens =
+            crate::spotify::Tokens::load(&config.dir, crate::spotify::auth::TokenKind::Web);
+        // The playback/browse token is resolved from the Web one: they are the same
+        // set unless a private client id splits them (see `auth::session_tokens`).
+        let spotify_audio_tokens = spotify_tokens
+            .as_ref()
+            .and_then(|web| crate::spotify::auth::session_tokens(&config.dir, web));
         let eq_presets = config.load_eq_presets(); // custom EQ presets (before `config` moves)
         let sort = parse_sort(&config.sort_order);
         // surface a config.toml parse error as a long-lived, copyable status-bar
@@ -67,10 +73,14 @@ impl AppState {
                 now_station_title: None,
                 radio_paused: false,
                 dvr: None,
+                retry_at: None,
+                retry_n: 0,
+                stream_started: None,
             },
             spotify: {
                 let mut s = Spotify::default();
                 s.tokens = spotify_tokens;
+                s.audio_tokens = spotify_audio_tokens;
                 s
             },
             spov: spotify::SpOverlay {
@@ -81,19 +91,8 @@ impl AppState {
                 sp_queue: Vec::new(),
                 sp_idx: 0,
                 sp_started: false,
-                sp_fail_streak: 0,
-                sp_recovery: spotify::SpRecovery::Normal,
-                sp_cooldown_until: 0,
-                sp_played_ok: false,
-                sp_key_denials: 0,
-                sp_resume_at: None,
-                sp_keyretry_at: None,
-                sp_keyretry_n: 0,
-                sp_stall_at: None,
-                sp_stall_n: 0,
-                sp_stall_pos: 0.0,
-                sp_skip_target: None,
-                sp_skip_at: None,
+                // every counter starts cleared — see SpPacing
+                pacing: spotify::SpPacing::default(),
                 sp_seek_at: None,
                 sp_seek_target: None,
                 sp_seek_streak: 0,

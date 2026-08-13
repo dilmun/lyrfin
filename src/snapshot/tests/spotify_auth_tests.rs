@@ -181,7 +181,7 @@ fn spotify_logout_clears_all_account_state() {
     a.spotify.items = vec![mk("spotify:track:a")];
     a.spotify.query = "rihanna".into();
     a.spotify.in_search = true;
-    a.spov.sp_cooldown_until = crate::datetime::now_unix() + 999;
+    a.spov.pacing.cooldown_until = crate::datetime::now_unix() + 999;
     a.spotify_logout();
     // a logout is a clean slate — nothing from this account survives
     assert!(matches!(a.spotify.conn, ConnState::Disconnected));
@@ -221,12 +221,13 @@ fn spotify_drops_restored_state_from_a_different_account() {
             expires_at: u64::MAX,
             scopes: String::new(),
         },
+        audio_tokens: None,
         account_id: "bob".into(),
         name: "Bob".into(),
         premium: true,
     })
     .unwrap();
-    a.spotify.auth_rx = Some(rx);
+    a.spotify.auth_rx = Some(crate::spotify::AuthSession::for_test(rx));
     a.pump_spotify();
     assert!(
         a.spov.now_spotify.is_none(),
@@ -505,7 +506,7 @@ fn spotify_ensure_session_defers_while_auth_is_in_flight() {
     // a login/resume is mid-flight — spawning a session now would fire a SECOND,
     // racing refresh of the same single-use token (corruption risk)
     let (_tx, rx) = crossbeam_channel::unbounded::<crate::spotify::AuthEvent>();
-    a.spotify.auth_rx = Some(rx);
+    a.spotify.auth_rx = Some(crate::spotify::AuthSession::for_test(rx));
     assert!(
         !a.spotify_ensure_session(),
         "no session is spawned while a refresh/login is in flight"
@@ -537,12 +538,13 @@ fn spotify_reconnect_drops_a_stale_pre_refresh_session() {
             expires_at: crate::datetime::now_unix() + 3600,
             scopes: String::new(),
         },
+        audio_tokens: None,
         account_id: "acct".into(),
         name: "Me".into(),
         premium: true,
     })
     .unwrap();
-    a.spotify.auth_rx = Some(rx);
+    a.spotify.auth_rx = Some(crate::spotify::AuthSession::for_test(rx));
     a.pump_spotify();
     assert!(
         a.spov.session_cmd.is_none(),
@@ -575,12 +577,13 @@ fn spotify_reconnect_keeps_an_actively_streaming_session() {
             expires_at: crate::datetime::now_unix() + 3600,
             scopes: String::new(),
         },
+        audio_tokens: None,
         account_id: "acct".into(),
         name: "Me".into(),
         premium: true,
     })
     .unwrap();
-    a.spotify.auth_rx = Some(rx);
+    a.spotify.auth_rx = Some(crate::spotify::AuthSession::for_test(rx));
     a.pump_spotify();
     assert!(
         a.spov.session_cmd.is_some(),
@@ -617,7 +620,7 @@ fn playing_with_dead_session() -> AppState {
     }];
     a.spov.sp_idx = 0;
     a.spov.spotify_paused = false;
-    a.spov.sp_recovery = crate::app::spotify::SpRecovery::Normal;
+    a.spov.pacing.recovery = crate::app::spotify::SpRecovery::Normal;
     // a still-connected command channel (lyrfin can't see librespot's dead socket)
     let (scmd, _srx) = crossbeam_channel::unbounded::<crate::spotify::session::SessionCommand>();
     a.spov.session_cmd = Some(scmd);
@@ -631,7 +634,7 @@ fn spotify_dropped_connection_reconnects_instead_of_backing_off() {
     let mut a = playing_with_dead_session();
     // block the real respawn so no socket is opened; the recovery decision still runs
     let (_atx, arx) = crossbeam_channel::unbounded::<crate::spotify::AuthEvent>();
-    a.spotify.auth_rx = Some(arx);
+    a.spotify.auth_rx = Some(crate::spotify::AuthSession::for_test(arx));
     // the next track's load fails (dead-session audio-key timeout → Unavailable)
     let (tx, rx) = crossbeam_channel::unbounded();
     tx.send(SessionEvent::Unavailable).unwrap();
@@ -639,7 +642,7 @@ fn spotify_dropped_connection_reconnects_instead_of_backing_off() {
     a.pump_spotify_session();
     // it reconnects and replays the track — NOT a back-off + re-authenticate dead end
     assert_eq!(
-        a.spov.sp_recovery,
+        a.spov.pacing.recovery,
         SpRecovery::Reconnecting,
         "a dropped connection kicks off a reconnect-and-retry"
     );
@@ -648,7 +651,7 @@ fn spotify_dropped_connection_reconnects_instead_of_backing_off() {
         "the dead session handle is dropped so the next play respawns a live one"
     );
     assert_eq!(
-        a.spov.sp_cooldown_until, 0,
+        a.spov.pacing.cooldown_until, 0,
         "no punitive back-off is armed — this is a recoverable drop, not repeated failure"
     );
     assert!(
@@ -662,7 +665,7 @@ fn spotify_reconnect_ignores_echo_failures_until_the_fresh_session_is_up() {
     use crate::app::spotify::SpRecovery;
     use crate::spotify::session::SessionEvent;
     let mut a = playing_with_dead_session();
-    a.spov.sp_recovery = SpRecovery::Reconnecting; // a reconnect is already in flight
+    a.spov.pacing.recovery = SpRecovery::Reconnecting; // a reconnect is already in flight
 
     // The dead session emits a burst of echoes for the same load (one timed-out key
     // surfaces as both AudioKeyDenied AND Unavailable). They must be ignored — not
@@ -673,13 +676,13 @@ fn spotify_reconnect_ignores_echo_failures_until_the_fresh_session_is_up() {
     a.spov.session_rx = Some(rx);
     a.pump_spotify_session();
     assert_eq!(
-        a.spov.sp_recovery,
+        a.spov.pacing.recovery,
         SpRecovery::Reconnecting,
         "echo failures during reconnect are ignored (stay Reconnecting)"
     );
     assert_eq!(a.spov.sp_idx, 0, "the track is not skipped by an echo");
     assert_eq!(
-        a.spov.sp_cooldown_until, 0,
+        a.spov.pacing.cooldown_until, 0,
         "an echo does not arm a back-off"
     );
 
@@ -689,7 +692,7 @@ fn spotify_reconnect_ignores_echo_failures_until_the_fresh_session_is_up() {
     a.spov.session_rx = Some(rx);
     a.pump_spotify_session();
     assert_eq!(
-        a.spov.sp_recovery,
+        a.spov.pacing.recovery,
         SpRecovery::Reconnected,
         "once the fresh session connects, later failures are treated as genuine"
     );
@@ -712,7 +715,7 @@ fn spotify_transient_connection_loss_keeps_token_and_schedules_a_retry() {
         msg: "can't reach Spotify (Connection Failed) — check your connection/VPN".into(),
     })
     .unwrap();
-    a.spotify.auth_rx = Some(rx);
+    a.spotify.auth_rx = Some(crate::spotify::AuthSession::for_test(rx));
     a.pump_spotify();
     assert!(
         a.spotify.tokens.is_some(),
@@ -749,7 +752,7 @@ fn spotify_terminal_auth_error_is_not_auto_retried() {
         msg: "Session expired (Spotify rejected the login). Press ⏎ to log in again.".into(),
     })
     .unwrap();
-    a.spotify.auth_rx = Some(rx);
+    a.spotify.auth_rx = Some(crate::spotify::AuthSession::for_test(rx));
     a.pump_spotify();
     assert!(
         matches!(a.spotify.conn, ConnState::Error { .. }),
@@ -777,7 +780,7 @@ fn spotify_reconnect_fires_only_when_due_idle_and_holding_a_token() {
     assert!(a.spotify_reconnect_due(), "a due, armed reconnect fires");
     // a resume already in flight → don't double-spawn
     let (_tx, rx) = crossbeam_channel::unbounded::<crate::spotify::AuthEvent>();
-    a.spotify.auth_rx = Some(rx);
+    a.spotify.auth_rx = Some(crate::spotify::AuthSession::for_test(rx));
     assert!(
         !a.spotify_reconnect_due(),
         "not while a resume is in flight"
@@ -798,6 +801,11 @@ fn spotify_reconnect_fires_only_when_due_idle_and_holding_a_token() {
 #[test]
 fn spotify_client_id_persists_in_its_own_file() {
     use crate::spotify::auth::{load_persisted_client_id, persist_client_id};
+    // persist_client_id applies the id live (process-global), so this test shares
+    // the client-id lock with the auth unit tests — cargo runs them in parallel.
+    let _guard = crate::spotify::auth::CLIENT_ID_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let dir = std::env::temp_dir().join("lyrfin_client_id_persist_test");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -823,4 +831,184 @@ fn spotify_client_id_persists_in_its_own_file() {
     assert_eq!(load_persisted_client_id(&dir), None, "empty clears it");
 
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The failure that cost an afternoon: Spotify refuses to exchange the librespot
+/// session's stored credentials, and EVERY symptom (tracks skipping, an empty
+/// browse pane) points somewhere else. The session must report it as an auth
+/// rejection, the app must say so, and it must re-authorize instead of dead-ending.
+#[test]
+fn rejected_playback_credentials_self_heal_and_are_named_in_health() {
+    use crate::app::spotify::AudioAuth;
+    use crate::spotify::ConnState;
+    use crate::spotify::session::SessionEvent;
+    let mut a = demo();
+    a.layout = Layout::Spotify;
+    a.spotify.conn = ConnState::Connected {
+        name: "Me".into(),
+        premium: true,
+    };
+    let (tx, rx) = crossbeam_channel::unbounded();
+    tx.send(SessionEvent::AudioAuthRejected(
+        "Invalid state { Login request was denied: INVALID_CREDENTIALS }".into(),
+    ))
+    .unwrap();
+    a.spov.session_rx = Some(rx);
+    a.pump_spotify_session();
+
+    assert_eq!(
+        a.spotify.audio_auth,
+        AudioAuth::Rejected("credentials not accepted for this app"),
+        "the Health pane names the real cause, not a vague 'unavailable'"
+    );
+    assert!(
+        a.spotify.audio_heal_tried,
+        "the app re-authorizes the playback leg by itself"
+    );
+    assert!(
+        a.spotify.audio_tokens.is_none(),
+        "the refused token is dropped, so a failed heal leaves nothing bad cached"
+    );
+    assert!(
+        a.error_log
+            .iter()
+            .any(|e| e.msg.contains("playback credentials")),
+        "and it is recorded where the user looks: {:?}",
+        a.error_log.iter().map(|e| &e.msg).collect::<Vec<_>>()
+    );
+
+    // A SECOND rejection must not reopen the browser: if a freshly-minted token is
+    // refused too, the cause isn't a stale credential and re-prompting would loop.
+    a.spotify.auth_rx = None;
+    let (tx2, rx2) = crossbeam_channel::unbounded();
+    tx2.send(SessionEvent::AudioAuthRejected(
+        "INVALID_CREDENTIALS".into(),
+    ))
+    .unwrap();
+    a.spov.session_rx = Some(rx2);
+    a.pump_spotify_session();
+    assert!(
+        a.spotify.auth_rx.is_none(),
+        "one automatic re-authorization per connection — no browser loop"
+    );
+}
+
+/// A browse failure must be reported as what it is. Blaming "the Spotify API
+/// changed" for a credential problem sends the reader hunting a rotated query
+/// hash while the app could have fixed itself.
+#[test]
+fn browse_failures_are_reported_as_their_actual_cause() {
+    use crate::spotify::ConnState;
+    use crate::spotify::session::SessionEvent;
+    let note_for = |err: &str| {
+        let mut a = demo();
+        a.layout = Layout::Spotify;
+        a.spotify.conn = ConnState::Connected {
+            name: "Me".into(),
+            premium: true,
+        };
+        let (tx, rx) = crossbeam_channel::unbounded();
+        // the empty key matches the fresh `spotify.key` default (as the other
+        // browse-event tests do), so the result is accepted rather than ignored
+        tx.send(SessionEvent::Browse {
+            key: String::new(),
+            items: Vec::new(),
+            error: Some(err.into()),
+        })
+        .unwrap();
+        a.spov.session_rx = Some(rx);
+        a.pump_spotify_session();
+        a.spotify.note.clone()
+    };
+
+    let auth = note_for("auth token: FaultyRequest(INVALID_CREDENTIALS)");
+    assert!(
+        auth.contains("re-authoriz"),
+        "a refused credential says so: {auth}"
+    );
+    assert!(
+        !auth.contains("API changed"),
+        "and never blames Spotify's API for it: {auth}"
+    );
+    // the genuine API-change case keeps its own message — a retired query hash is
+    // NOT something the app can re-authorize its way out of
+    let stale = note_for("graphql: [{\"message\":\"PersistedQueryNotFound\"}]");
+    assert!(
+        stale.contains("changed its browse API"),
+        "a retired persisted query is the real 'API changed': {stale}"
+    );
+    let limited = note_for("HTTP 429 Too Many Requests");
+    assert!(limited.contains("rate-limiting"), "got: {limited}");
+}
+
+/// A transient session failure (Spotify rate-limits logins after a burst, so the
+/// handshake times out) must not strand the user on a dead session: before this,
+/// "Couldn't reach Spotify" stayed on screen until lyrfin was restarted, even
+/// though the very next attempt would have worked.
+#[test]
+fn a_transient_connect_failure_retries_itself_and_gives_up_bounded() {
+    use crate::spotify::ConnState;
+    use crate::spotify::session::SessionEvent;
+    let mut a = demo();
+    a.layout = Layout::Spotify;
+    a.spotify.conn = ConnState::Connected {
+        name: "Me".into(),
+        premium: true,
+    };
+    a.spotify.loading = true; // a browse load was in flight when the session died
+
+    let fail = |a: &mut crate::app::AppState| {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        tx.send(SessionEvent::ConnectError(
+            "Spotify playback login timed out (30s) — rate-limited or offline".into(),
+        ))
+        .unwrap();
+        a.spov.session_rx = Some(rx);
+        a.pump_spotify_session();
+    };
+
+    fail(&mut a);
+    assert!(
+        a.spotify.note.contains("retrying"),
+        "the pane says it is recovering, not just that it failed: {:?}",
+        a.spotify.note
+    );
+    let first = a.spotify.reload_at.expect("a retry is scheduled");
+    assert!(
+        first > crate::datetime::now_unix(),
+        "the retry waits — an immediate re-connect would just hit the same limit"
+    );
+
+    // each further failure backs off further, and the budget is finite so a
+    // genuinely broken state settles instead of re-fetching forever
+    for _ in 0..6 {
+        a.spotify.reload_at = None;
+        fail(&mut a);
+    }
+    assert!(
+        a.spotify.reload_at.is_none(),
+        "retries stop after the cap rather than looping"
+    );
+
+    // …and a successful load hands the budget back, so the NEXT outage retries too
+    let (tx, rx) = crossbeam_channel::unbounded();
+    tx.send(SessionEvent::Browse {
+        key: String::new(),
+        items: vec![crate::spotify::api::Item {
+            uri: "spotify:playlist:1".into(),
+            name: "Chill".into(),
+            kind: crate::spotify::api::Kind::Playlist,
+            ..Default::default()
+        }],
+        error: None,
+    })
+    .unwrap();
+    a.spov.session_rx = Some(rx);
+    a.pump_spotify_session();
+    assert_eq!(a.spotify.reload_attempts, 0, "budget reset by a good load");
+    fail(&mut a);
+    assert!(
+        a.spotify.reload_at.is_some(),
+        "a later outage retries again — the budget is per-outage, not per-session"
+    );
 }

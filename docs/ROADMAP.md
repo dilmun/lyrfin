@@ -53,6 +53,12 @@ The active list — the road to the next release. Ordered by priority.
   the three surfaces it doesn't reach yet: the Library (Miller) **Tracks**
   column, the **queue** pane, and Spotify **search** track results (the
   mixed-carousel render path).
+- [ ] **`block v0.1.6` (transitive, macOS).** cargo flags it as containing code a
+  future rustc will reject. It reaches lyrfin only through `souvlaki` → `cocoa`,
+  and 0.8.3 is souvlaki's latest release, so there is nothing to upgrade to yet:
+  the fix has to come from upstream (or from replacing the macOS Now-Playing
+  backend with a direct `objc2` binding). Harmless today; it becomes a build
+  failure the day that rustc lands, so it is tracked rather than ignored.
 - [ ] **OS "Now Playing" polish.** The integration shipped and is verified on
   macOS (Control Center) + Linux (MPRIS). Two follow-ups: (1) a background `.app`
   bundle (`Info.plist` `LSUIElement`) so the macOS tile shows a proper lyrfin icon

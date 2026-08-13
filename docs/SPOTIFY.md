@@ -24,6 +24,29 @@ lyrfin's own engine) and the Spotify Web API for browsing.
 The requested scopes cover streaming, reading/modifying your library and
 playlists, your profile, playback state, recently played and top tracks.
 
+### Why a private client ID means two authorizations
+
+lyrfin holds **two** token sets, because no single one can do both jobs:
+
+| Token | Client ID | Used for | Cached as |
+|---|---|---|---|
+| Web | yours, if configured | search, library, playlists | `spotify_token.json` |
+| Playback | always Spotify's shared (keymaster) ID | librespot playback, Browse/Home | `spotify_audio_token.json` |
+
+librespot authenticates to Spotify's `spclient` by exchanging its session's
+stored credentials for an API token (**login5**), presenting the client ID the
+session runs on. Spotify rejects that exchange when the credentials were minted
+by a *different* client ID, and the shared keymaster ID is the only one its
+client-token endpoint accepts at all. So playback and the Browse/Home feed —
+which rides the same token, via the pathfinder GraphQL gateway — only work on a
+keymaster-minted token, while the Web API needs your own ID to escape the shared
+quota.
+
+With no private client ID there is a single login: that token is already
+keymaster-minted and serves both roles. Set a private ID and lyrfin asks for a
+second authorization, and re-authorizes that leg on its own if Spotify ever
+refuses it (Info → **Health** shows the state as *Playback auth*).
+
 ## Using your own client ID (recommended)
 
 By default lyrfin uses a shared public client ID for Web-API calls. That works, but
@@ -72,5 +95,13 @@ preferred over the shared one once set.
   flips through the queue. A segment that keeps stalling at one spot is skipped
   after a few tries.
 - **Rate-limit / 403 errors while browsing** — set your own client ID (above).
+- **Every track skips ("unavailable / key denied") and Browse/Home is empty,
+  while search and your library still work** — Spotify refused the playback
+  credentials (`INVALID_CREDENTIALS` from login5), which happens when the session
+  is running on a token minted by a different client ID than it presents. Info →
+  **Health** reports this as `Playback auth: refused by Spotify`. lyrfin
+  re-authorizes that leg automatically (once per connection); if it keeps
+  failing, log out and back in. Note that search working is not evidence the
+  playback credentials are fine — the two use different tokens.
 - To see librespot's own logs: `RUST_LOG=librespot=info lyrfin 2>/tmp/lyrfin.log`
   (the TUI uses stdout, so logs go to stderr and can be redirected cleanly).

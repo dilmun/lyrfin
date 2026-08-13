@@ -155,7 +155,8 @@ impl AppState {
             self.library = crate::library::Library::from_tracks(tracks);
         }
         self.search.lib_gen += 1; // tags changed → refresh search index + cache
-        crate::library::store::LibraryCache::from_library(&self.library).save(&self.config.dir);
+        crate::library::store::LibraryCache::from_library(&self.library)
+            .save_detached(self.config.dir.clone());
         self.marks.ids.clear();
         self.notify(match last_err {
             Some(e) => format!("Numbered {ok}; error: {e}"),
@@ -225,7 +226,8 @@ impl AppState {
             }
         }
         te.paths = new_paths;
-        crate::library::store::LibraryCache::from_library(&self.library).save(&self.config.dir);
+        crate::library::store::LibraryCache::from_library(&self.library)
+            .save_detached(self.config.dir.clone());
         self.tags.edit = Some(te); // keep the editor open
         self.notify(match last_err {
             Some(e) => format!("Renamed {ok}; error: {e}"),
@@ -281,7 +283,8 @@ impl AppState {
             self.library = crate::library::Library::from_tracks(tracks);
         }
         self.search.lib_gen += 1; // tags changed → refresh search index + cache
-        crate::library::store::LibraryCache::from_library(&self.library).save(&self.config.dir);
+        crate::library::store::LibraryCache::from_library(&self.library)
+            .save_detached(self.config.dir.clone());
         self.marks.ids.clear();
         self.notify(match last_err {
             Some(e) => format!("Converted {ok}; error: {e}"),
@@ -339,7 +342,8 @@ impl AppState {
             self.library = crate::library::Library::from_tracks(tracks);
         }
         self.search.lib_gen += 1; // tags changed → refresh search index + cache
-        crate::library::store::LibraryCache::from_library(&self.library).save(&self.config.dir);
+        crate::library::store::LibraryCache::from_library(&self.library)
+            .save_detached(self.config.dir.clone());
         // the field is gone from the files — reflect that in the draft
         te.draft.set(field, String::new());
         te.keep[field] = false;
@@ -406,7 +410,8 @@ impl AppState {
             self.library = crate::library::Library::from_tracks(tracks);
         }
         self.search.lib_gen += 1; // tags changed → refresh search index + cache
-        crate::library::store::LibraryCache::from_library(&self.library).save(&self.config.dir);
+        crate::library::store::LibraryCache::from_library(&self.library)
+            .save_detached(self.config.dir.clone());
         // reflect the change in the visible draft (focused field, first target)
         if let Some(t) = te.targets.first().and_then(|id| self.library.track(*id)) {
             te.draft.set(
@@ -508,7 +513,8 @@ impl AppState {
             self.library = crate::library::Library::from_tracks(tracks);
         }
         self.search.lib_gen += 1; // tags changed → refresh search index + cache
-        crate::library::store::LibraryCache::from_library(&self.library).save(&self.config.dir);
+        crate::library::store::LibraryCache::from_library(&self.library)
+            .save_detached(self.config.dir.clone());
         // lyrics edited for the now-playing track → refresh the Lyrics view
         if dirty.get(12).copied().unwrap_or(false)
             && self.player.current.is_some_and(|c| targets.contains(&c))

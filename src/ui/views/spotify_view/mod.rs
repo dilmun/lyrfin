@@ -252,8 +252,8 @@ pub(in crate::ui::views) fn spotify_main_body(f: &mut Frame, m: Rect, app: &AppS
             components::GridData {
                 n: sp.items.len(),
                 sel: sp.sel,
-                cols: &sp.cols,
-                row_off: &sp.row_off,
+                cols: &sp.view.cols,
+                row_off: &sp.view.row_off,
                 card_at: &|i| {
                     let it = &sp.items[i];
                     components::GridCard {
@@ -309,7 +309,7 @@ pub(in crate::ui::views) fn spotify_main_body(f: &mut Frame, m: Rect, app: &AppS
     // visible row selects it in place instead of jumping to the middle.
     let body_h = m.height as usize;
     let sel = sp.sel.min(n - 1);
-    let off = components::sticky_off(&sp.list_off, sel, n, body_h);
+    let off = components::sticky_off(&sp.view.list_off, sel, n, body_h);
 
     let w = m.width.saturating_sub(2) as usize;
     let mut rows: Vec<Line> = Vec::new();
@@ -435,9 +435,9 @@ fn spotify_sectioned_page(
         focus,
         components::ReleaseGridData {
             sel,
-            cols: &app.spotify.cols,
-            car_off: &app.spotify.car_off,
-            car_key: &app.spotify.car_key,
+            cols: &app.spotify.view.cols,
+            car_off: &app.spotify.view.car_off,
+            car_key: &app.spotify.view.car_key,
             rows_at: &|| app.spotify_browse_rows(),
             card_at: &|idx| {
                 let it = &items[idx];
@@ -525,9 +525,9 @@ fn spotify_track_carousels(
             focus && sel >= from,
             components::ReleaseGridData {
                 sel,
-                cols: &app.spotify.cols,
-                car_off: &app.spotify.car_off,
-                car_key: &app.spotify.car_key,
+                cols: &app.spotify.view.cols,
+                car_off: &app.spotify.view.car_off,
+                car_key: &app.spotify.view.car_key,
                 rows_at: &|| app.spotify_carousel_rows(),
                 card_at: &|idx| {
                     let it = &items[idx];

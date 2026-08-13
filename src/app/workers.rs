@@ -366,9 +366,10 @@ impl AppState {
                         self.spov.spotify_paused = true;
                         self.spov.sp_started = false;
                     } else if self.rnow.now_station.is_some() {
-                        // a radio stream ended/dropped — mark the overlay stopped;
-                        // the local player (queue) is untouched.
-                        self.rnow.radio_paused = true;
+                        // A live stream has no natural end, so this is a drop:
+                        // reconnect (bounded) rather than leaving it silently
+                        // stopped. The local player (queue) is untouched.
+                        self.radio_stream_dropped("Stream dropped");
                     } else {
                         self.advance_after_finish();
                     }
@@ -376,6 +377,16 @@ impl AppState {
                 AudioEvent::Advanced => self.soft_advance(),
                 AudioEvent::Spectrum(s) => self.player.spectrum = s,
                 AudioEvent::IcyTitle(t) => self.on_icy_title(&t),
+                // The OUTPUT device, not the source: report it without touching
+                // playback state — the track/station is unaffected, and blaming it
+                // would be a lie the user then acts on.
+                AudioEvent::Output { message, ok } => {
+                    if ok {
+                        self.notify(message);
+                    } else {
+                        self.notify_error(message);
+                    }
+                }
                 AudioEvent::Error(e) => {
                     if self.spov.sp_stream {
                         // the episode's stream couldn't open/decode — stop the spinner
@@ -383,9 +394,10 @@ impl AppState {
                         self.spov.sp_started = false;
                         self.notify("Couldn't play this episode (stream unavailable)".into());
                     } else if self.rnow.now_station.is_some() {
-                        // the stream couldn't open/decode — show it stopped, not LIVE
-                        self.rnow.radio_paused = true;
-                        self.notify("Couldn't play this station (unsupported or offline)".into());
+                        // the stream couldn't open/decode — retry it a few times
+                        // before settling on "stopped" (a station is often just
+                        // briefly unreachable)
+                        self.radio_stream_dropped("Couldn't reach this station");
                     } else {
                         self.notify(format!("Audio: {e}"));
                     }

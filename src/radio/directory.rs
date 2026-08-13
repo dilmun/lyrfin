@@ -40,8 +40,7 @@ fn save_cache(dir: &Path, stations: &[Station], fetched: u64) {
         stations: stations.to_vec(),
     };
     if let Ok(json) = serde_json::to_vec(&snap) {
-        let _ = std::fs::create_dir_all(dir);
-        let _ = std::fs::write(directory_path(dir), json);
+        let _ = crate::atomicfile::write(&directory_path(dir), &json);
     }
 }
 

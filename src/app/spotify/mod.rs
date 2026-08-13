@@ -45,6 +45,87 @@ pub enum SpRecovery {
     Reconnected,
 }
 
+/// Everything the Spotify playback attempt currently in flight is timing or
+/// counting: the failure back-off, the per-track retry budgets (audio-key
+/// throttle, mid-play stall), and the debounced skip.
+///
+/// Grouped out of [`SpOverlay`] because it is one subject with one lifetime —
+/// it is reset together whenever a fresh track is loaded or a user action
+/// supersedes the current attempt — and because its dozen counters otherwise
+/// dominated a struct that is meant to describe what is playing.
+#[derive(Default)]
+pub struct SpPacing {
+    /// Consecutive playback failures, driving the back-off below.
+    pub fail_streak: u32,
+    /// Dropped-connection recovery state (see [`SpRecovery`]). Drives the
+    /// reconnect-and-retry-once path in [`AppState::spotify_try_reconnect_retry`].
+    pub recovery: SpRecovery,
+    /// Unix-seconds deadline before which Spotify playback won't be re-attempted,
+    /// after repeated failures (audio-key denial / connect errors). Exponential
+    /// back-off (20s → 5 min cap) so a failing account can't hammer Spotify into a
+    /// rate-limit. 0 = none. See [`AppState::spotify_trip_cooldown`].
+    pub cooldown_until: u64,
+    /// A track has actually played (reached `Playing`) at least once this session.
+    /// Proof the account is **not** audio-key-blocked at the account level — so a
+    /// later key denial is a transient CDN/throttle blip to recover from, never the
+    /// permanent block. Reset only on teardown (logout / account switch). See
+    /// [`AppState::spotify_key_block_confirmed`].
+    pub played_ok: bool,
+    /// Tracks whose audio key stayed denied since the last successful play (reset to 0
+    /// on any `Playing`). Only once this crosses [`SP_KEY_BLOCK_CONFIRM`] *with nothing
+    /// ever having played* does lyrfin treat it as the account-level block; a lone blip
+    /// mid-playback never does.
+    pub key_denials: u16,
+    /// Unix-seconds deadline to **auto-resume** playback after a transient-failure
+    /// back-off (`None` = no resume pending). Set by [`AppState::spotify_playback_failed`]
+    /// so a bad-CDN / throttle / brief-drop stall recovers on its own (a fresh session)
+    /// instead of leaving the queue stopped until the user restarts lyrfin; cleared the
+    /// moment the user pauses/plays, a track plays, or the overlay tears down. Skipped
+    /// for a confirmed account-level block (which won't recover). Drained in
+    /// [`AppState::spotify_tick_cooldown_resume`].
+    pub resume_at: Option<u64>,
+    /// A quick same-session retry of the current track is scheduled for this instant
+    /// (`None` = none). Armed when Spotify **throttles** the per-track audio key —
+    /// the classic "skip fast → `error audio key`" burst, which is transient: the
+    /// same key succeeds a moment later. Retrying in place beats the heavyweight
+    /// reconnect + 20s back-off (a fresh session hits the same account-level
+    /// throttle). Drained in [`AppState::spotify_tick_keyretry`]; only after the
+    /// bounded retries are spent does lyrfin fall through to reconnect/back-off.
+    pub keyretry_at: Option<std::time::Instant>,
+    /// Quick key-retries already spent on the current track (reset when a new track
+    /// is loaded or one actually plays). Bounds the transient-throttle retries so a
+    /// *genuine* DRM denial still escalates promptly.
+    pub keyretry_n: u8,
+    /// An in-place re-buffer of the current track is scheduled for this instant
+    /// (`None` = none). Armed when librespot reports `EndOfTrack` **mid-track** — its
+    /// event is overloaded (a genuine end AND a "couldn't fetch/decode the next
+    /// packet" abort under network congestion), so a premature one re-buffers the
+    /// same track where it stalled rather than skipping. Without this a transient
+    /// stall silently drops the track — and under sustained congestion races the
+    /// whole queue ("buffering and flipping tracks until it settles"). Drained in
+    /// [`AppState::spotify_tick_stall`].
+    pub stall_at: Option<std::time::Instant>,
+    /// Consecutive in-place re-buffers spent at (roughly) the same spot. Reset on a
+    /// fresh load and whenever playback makes real forward progress past the last
+    /// stall (see [`AppState::spotify_arm_stall_retry`]) — so a track riding out
+    /// several *separate* transient hiccups keeps retrying, while a *repeated* stall
+    /// at one point (a corrupt segment) depletes the budget and skips instead of
+    /// looping forever.
+    pub stall_n: u8,
+    /// Track position (seconds) of the last stall, so the budget refills only when
+    /// playback advances meaningfully past it. See [`Self::stall_n`].
+    pub stall_pos: f64,
+    /// Queue index a manual skip (n/p / transport click) landed on while its load is
+    /// **debounced** (`None` = no skip pending). Hammering next only loads the track
+    /// finally landed on, so a burst of skips fires one audio-key request instead of
+    /// one per intermediate track — the burst is what trips Spotify's key throttle
+    /// (see [`Self::keyretry_at`]). Drained in [`AppState::spotify_tick_skip`].
+    pub skip_target: Option<usize>,
+    /// Debounce deadline for a pending manual skip: each press pushes it out, so the
+    /// load fires only once the user stops skipping.
+    pub skip_at: Option<std::time::Instant>,
+}
+
 /// Spotify playback-overlay state, grouped out of [`AppState`] (the local player
 /// is preserved/frozen while this drives the engine). Accessed as `app.spov.*`.
 pub struct SpOverlay {
@@ -55,74 +136,6 @@ pub struct SpOverlay {
     pub sp_queue: Vec<crate::spotify::api::Item>,
     pub sp_idx: usize,
     pub sp_started: bool,
-    pub sp_fail_streak: u32,
-    /// Dropped-connection recovery state (see [`SpRecovery`]). Drives the
-    /// reconnect-and-retry-once path in [`AppState::spotify_try_reconnect_retry`].
-    pub sp_recovery: SpRecovery,
-    /// Unix-seconds deadline before which Spotify playback won't be re-attempted,
-    /// after repeated failures (audio-key denial / connect errors). Exponential
-    /// back-off (20s → 5 min cap) so a failing account can't hammer Spotify into a
-    /// rate-limit. 0 = none. See [`AppState::spotify_trip_cooldown`].
-    pub sp_cooldown_until: u64,
-    /// A track has actually played (reached `Playing`) at least once this session.
-    /// Proof the account is **not** audio-key-blocked at the account level — so a
-    /// later key denial is a transient CDN/throttle blip to recover from, never the
-    /// permanent block. Reset only on teardown (logout / account switch). See
-    /// [`AppState::spotify_key_block_confirmed`].
-    pub sp_played_ok: bool,
-    /// Tracks whose audio key stayed denied since the last successful play (reset to 0
-    /// on any `Playing`). Only once this crosses [`SP_KEY_BLOCK_CONFIRM`] *with nothing
-    /// ever having played* does lyrfin treat it as the account-level block; a lone blip
-    /// mid-playback never does.
-    pub sp_key_denials: u16,
-    /// Unix-seconds deadline to **auto-resume** playback after a transient-failure
-    /// back-off (`None` = no resume pending). Set by [`AppState::spotify_playback_failed`]
-    /// so a bad-CDN / throttle / brief-drop stall recovers on its own (a fresh session)
-    /// instead of leaving the queue stopped until the user restarts lyrfin; cleared the
-    /// moment the user pauses/plays, a track plays, or the overlay tears down. Skipped
-    /// for a confirmed account-level block (which won't recover). Drained in
-    /// [`AppState::spotify_tick_cooldown_resume`].
-    pub sp_resume_at: Option<u64>,
-    /// A quick same-session retry of the current track is scheduled for this instant
-    /// (`None` = none). Armed when Spotify **throttles** the per-track audio key —
-    /// the classic "skip fast → `error audio key`" burst, which is transient: the
-    /// same key succeeds a moment later. Retrying in place beats the heavyweight
-    /// reconnect + 20s back-off (a fresh session hits the same account-level
-    /// throttle). Drained in [`AppState::spotify_tick_keyretry`]; only after the
-    /// bounded retries are spent does lyrfin fall through to reconnect/back-off.
-    pub sp_keyretry_at: Option<std::time::Instant>,
-    /// Quick key-retries already spent on the current track (reset when a new track
-    /// is loaded or one actually plays). Bounds the transient-throttle retries so a
-    /// *genuine* DRM denial still escalates promptly.
-    pub sp_keyretry_n: u8,
-    /// An in-place re-buffer of the current track is scheduled for this instant
-    /// (`None` = none). Armed when librespot reports `EndOfTrack` **mid-track** — its
-    /// event is overloaded (a genuine end AND a "couldn't fetch/decode the next
-    /// packet" abort under network congestion), so a premature one re-buffers the
-    /// same track where it stalled rather than skipping. Without this a transient
-    /// stall silently drops the track — and under sustained congestion races the
-    /// whole queue ("buffering and flipping tracks until it settles"). Drained in
-    /// [`AppState::spotify_tick_stall`].
-    pub sp_stall_at: Option<std::time::Instant>,
-    /// Consecutive in-place re-buffers spent at (roughly) the same spot. Reset on a
-    /// fresh load and whenever playback makes real forward progress past the last
-    /// stall (see [`AppState::spotify_arm_stall_retry`]) — so a track riding out
-    /// several *separate* transient hiccups keeps retrying, while a *repeated* stall
-    /// at one point (a corrupt segment) depletes the budget and skips instead of
-    /// looping forever.
-    pub sp_stall_n: u8,
-    /// Track position (seconds) of the last stall, so the budget refills only when
-    /// playback advances meaningfully past it. See [`sp_stall_n`].
-    pub sp_stall_pos: f64,
-    /// Queue index a manual skip (n/p / transport click) landed on while its load is
-    /// **debounced** (`None` = no skip pending). Hammering next only loads the track
-    /// finally landed on, so a burst of skips fires one audio-key request instead of
-    /// one per intermediate track — the burst is what trips Spotify's key throttle
-    /// (see [`sp_keyretry_at`]). Drained in [`AppState::spotify_tick_skip`].
-    pub sp_skip_target: Option<usize>,
-    /// Debounce deadline for a pending manual skip: each press pushes it out, so the
-    /// load fires only once the user stops skipping.
-    pub sp_skip_at: Option<std::time::Instant>,
     /// Debounce deadline for a pending seek on a STREAMED episode: holding `,`/`.` scrubs
     /// the bar (`sp_pos`) every key-repeat, but each engine seek is a ranged HTTP
     /// re-open, so the actual re-open fires only once scrubbing settles — otherwise a
@@ -167,6 +180,9 @@ pub struct SpOverlay {
     /// Kept so the engine can be re-pointed at librespot (`SetExternalSource`)
     /// after a streamed episode released it (`ClearExternalSource`).
     pub sp_bridge: Option<std::sync::Arc<crate::spotify::session::Bridge>>,
+    /// Failure back-off, retry budgets and skip debounce for the attempt in
+    /// flight — see [`SpPacing`].
+    pub pacing: SpPacing,
 }
 
 /// Rich details for the now-playing track's artist, shown in the artist pane.
@@ -289,8 +305,11 @@ impl AppState {
         self.spov.session_cmd = None; // drop the session → its thread exits, audio stops
         self.spov.session_rx = None;
         self.spotify_reset_browse_and_queue(); // don't leak this account's data into the next
-        crate::spotify::Tokens::clear(&self.config.dir);
+        crate::spotify::Tokens::clear(&self.config.dir); // both legs
         self.spotify.tokens = None;
+        self.spotify.audio_tokens = None;
+        self.spotify.audio_auth = AudioAuth::Unknown;
+        self.spotify.audio_heal_tried = false;
         self.spotify.account_id = None;
         self.spotify.restored_account = None;
         self.spotify.auth_rx = None;
@@ -303,6 +322,69 @@ impl AppState {
             }
             .into(),
         );
+    }
+
+    /// Schedule an automatic retry of the browse load after a failure that may
+    /// clear on its own (the session couldn't connect, Spotify rate-limited us, a
+    /// network blip). Backs off 15s → 30s → 60s and stops after
+    /// [`Self::MAX_RELOAD_ATTEMPTS`], so a genuinely broken state settles on a
+    /// stable message instead of re-fetching forever.
+    ///
+    /// Without this a transient failure left "Couldn't reach Spotify" on screen
+    /// until the user restarted lyrfin, even though the next attempt would have
+    /// worked.
+    pub(crate) fn spotify_schedule_reload(&mut self) {
+        if self.spotify.reload_attempts >= Self::MAX_RELOAD_ATTEMPTS {
+            return;
+        }
+        self.spotify.reload_attempts += 1;
+        let secs = 15u64 << (self.spotify.reload_attempts - 1).min(2);
+        self.spotify.reload_at = Some(crate::datetime::now_unix() + secs);
+    }
+
+    /// Retry a failed browse load once its back-off elapses (armed by
+    /// [`Self::spotify_schedule_reload`]). Skipped while a login is running or a
+    /// load is already in flight — those will populate the pane themselves.
+    pub(super) fn spotify_tick_reload(&mut self) {
+        let Some(at) = self.spotify.reload_at else {
+            return;
+        };
+        if crate::datetime::now_unix() < at {
+            return;
+        }
+        self.spotify.reload_at = None;
+        let connected = matches!(
+            self.spotify.conn,
+            crate::spotify::ConnState::Connected { .. }
+        );
+        if !connected || self.spotify.auth_rx.is_some() || self.spotify.loading {
+            return;
+        }
+        self.spotify_load_section();
+    }
+
+    /// Re-authorize the playback/browse (keymaster) leg after Spotify rejected or
+    /// never received it — the self-heal for the failure that otherwise shows up
+    /// as every track skipping and an empty browse pane.
+    ///
+    /// Runs at most once per connection (`audio_heal_tried`): if the fresh token is
+    /// rejected too, the cause is not a stale credential and reopening the browser
+    /// would only loop. Never fires while another login is in flight, and never
+    /// without a Web session to belong to.
+    pub(crate) fn spotify_heal_audio_auth(&mut self) {
+        let connected = matches!(
+            self.spotify.conn,
+            crate::spotify::ConnState::Connected { .. }
+        );
+        if self.spotify.audio_heal_tried || self.spotify.auth_rx.is_some() || !connected {
+            return;
+        }
+        self.spotify.audio_heal_tried = true;
+        // The cached one is what Spotify just refused — drop it so a failed heal
+        // can't leave a known-bad token behind for the next launch to retry.
+        self.spotify.audio_tokens = None;
+        self.notify("Spotify playback needs re-authorizing — opening your browser…".into());
+        self.spotify.auth_rx = Some(crate::spotify::spawn_audio_login(self.config.dir.clone()));
     }
 
     /// Wipe all per-account Spotify state — queue, browse list, drill-in, search,
@@ -344,8 +426,15 @@ impl AppState {
 
     /// Drain Spotify auth/resume events (called each loop iteration, like
     /// `pump_audio`). Cheap no-op when nothing is in flight.
+    /// How many times a failed browse load retries itself before giving up (see
+    /// [`Self::spotify_schedule_reload`]). Three covers the transient cases —
+    /// Spotify's login rate-limit clears in well under a minute — without leaving
+    /// a broken state re-fetching indefinitely.
+    const MAX_RELOAD_ATTEMPTS: u32 = 3;
+
     pub fn pump_spotify(&mut self) {
         self.pump_spotify_session(); // librespot playback events
+        self.spotify_tick_reload(); // retry a browse load that failed transiently
         self.spotify_tick_skip(); // load the track a burst of skips finally landed on
         self.spotify_tick_seek(); // re-open a streamed episode once scrubbing settles
         self.spotify_tick_keyretry(); // re-issue a track whose audio key was throttled
@@ -366,16 +455,55 @@ impl AppState {
         self.dirty = true;
         for ev in events {
             match ev {
-                crate::spotify::AuthEvent::Waiting { url } => {
-                    self.spotify.conn = crate::spotify::ConnState::Connecting { url: Some(url) };
+                crate::spotify::AuthEvent::Waiting { url, playback } => {
+                    let connected = matches!(
+                        self.spotify.conn,
+                        crate::spotify::ConnState::Connected { .. }
+                    );
+                    // A self-heal runs on a live session: keep the user's view (and
+                    // any playing track) instead of collapsing back to the login
+                    // panel for a leg that only re-authorizes playback.
+                    if playback && connected {
+                        self.notify(format!("Authorize playback in your browser: {url}"));
+                    } else {
+                        if playback {
+                            self.notify(
+                                "One more sign-in: authorize playback + browse (Spotify's shared app)"
+                                    .into(),
+                            );
+                        }
+                        self.spotify.conn =
+                            crate::spotify::ConnState::Connecting { url: Some(url) };
+                    }
+                }
+                // The playback/browse leg finished on its own (self-heal): adopt the
+                // token and drop the rejected session so the next play spawns one
+                // that can actually authenticate.
+                crate::spotify::AuthEvent::AudioReady { tokens } => {
+                    self.spotify.audio_tokens = Some(tokens);
+                    self.spotify.audio_auth = AudioAuth::Unknown;
+                    self.spotify.auth_rx = None;
+                    self.spov.session_cmd = None;
+                    self.spov.session_rx = None;
+                    self.spotify_clear_cooldown();
+                    self.notify("Spotify playback authorized — try again".into());
+                    self.spotify_load_section(); // a browse pane blocked on this reloads
                 }
                 crate::spotify::AuthEvent::Connected {
                     tokens,
+                    audio_tokens,
                     account_id,
                     name,
                     premium,
                 } => {
                     self.spotify.tokens = Some(tokens);
+                    self.spotify.audio_auth = if audio_tokens.is_some() {
+                        AudioAuth::Unknown // unproven until a session connects
+                    } else {
+                        AudioAuth::Missing
+                    };
+                    self.spotify.audio_tokens = audio_tokens;
+                    self.spotify.audio_heal_tried = false; // fresh login → allow one heal
                     self.spotify.auth_rx = None;
                     self.spotify.reconnect_at = None; // reached Spotify → stop retrying
                     self.spotify.reconnect_attempts = 0;
@@ -664,7 +792,13 @@ impl AppState {
         // (its command channel disconnects), then respawn fresh below.
         self.spov.session_cmd = None;
         self.spov.session_rx = None;
-        let Some(tokens) = self.spotify.tokens.clone() else {
+        // librespot runs on the AUDIO token, never the Web one: Spotify only
+        // exchanges stored credentials minted by the client id the session
+        // presents. Without it, authorize that leg rather than spawning a session
+        // that is guaranteed to be rejected.
+        let Some(tokens) = self.spotify.audio_tokens.clone() else {
+            self.spotify.audio_auth = AudioAuth::Missing;
+            self.spotify_heal_audio_auth();
             return false;
         };
         let (cmd, rx, bridge) = crate::spotify::session::spawn(
@@ -684,6 +818,71 @@ impl AppState {
     }
 }
 
+/// State of the credentials backing playback + browse, independent of the Web
+/// login: the two use different client ids and fail independently, and only this
+/// one can be rejected by librespot's login5 exchange.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum AudioAuth {
+    /// Not exercised yet this run (no session spawned).
+    #[default]
+    Unknown,
+    /// A session connected and Spotify exchanged its credentials — playback and
+    /// browse work.
+    Ok,
+    /// No keymaster token cached. Happens with a private client id configured and
+    /// only the Web leg completed (e.g. upgrading from a single-token install).
+    Missing,
+    /// Spotify refused the credential exchange; the reason is kept for the pane.
+    Rejected(&'static str),
+}
+
+/// Where the last render put the Spotify view: the grid's column count and the
+/// sticky scroll offsets of each surface.
+///
+/// Interior-mutable because render writes it and input reads it back — clicking a
+/// visible row must select it in place rather than recentring, and 2-D grid
+/// movement needs the row stride the renderer actually used. Grouped so that
+/// "geometry the renderer reports" is one thing rather than six loose cells.
+#[derive(Default)]
+pub struct SpViewport {
+    /// Last-rendered grid column count (the row stride for 2-D nav); set in render,
+    /// read in `spotify_grid_move`. Interior-mutable so render can write it.
+    pub cols: std::cell::Cell<usize>,
+    /// Persisted top-row scroll offset of the cover-art grid — sticky viewport (see
+    /// the local library's `LocalBrowse::row_off`). Set during render.
+    pub row_off: std::cell::Cell<usize>,
+    /// Persisted scroll offset of the Spotify item list (track table/rows + the
+    /// mixed-kind browse list) — sticky viewport so clicking a visible row selects
+    /// it in place instead of recentring under the cursor. Set during render.
+    pub list_off: std::cell::Cell<usize>,
+    /// Persisted scroll offset of the Spotify QUEUE pane — sticky, same reason. Set
+    /// during render.
+    pub queue_off: std::cell::Cell<usize>,
+    /// Persisted horizontal scroll offset of the SELECTED release carousel (artist
+    /// page + Home/Browse feed), plus its carousel identity (`car_key`) so the offset
+    /// resets when the selection moves to another carousel — sticky horizontal scroll,
+    /// mirroring `LocalBrowse::car_off`. Set during render.
+    pub car_off: std::cell::Cell<usize>,
+    pub car_key: std::cell::Cell<usize>,
+}
+
+/// Load-more paging for a drilled-in flat browse grid (Podcast Charts /
+/// Categories): which page is being paged, how many items per shelf are being
+/// asked for, whether a grow is in flight, and whether the last grow returned
+/// nothing new (fully loaded → stop asking).
+#[derive(Default)]
+pub struct SpPaging {
+    /// Load-more paging for a drilled-in flat browse grid (Podcast Charts /
+    /// Categories): the browse page uri being paged (`None` = the current view isn't
+    /// a pageable grid), the current items-per-shelf `browse_limit` (grown by
+    /// [`BROWSE_PAGE_STEP`] on scroll), whether a grow is in flight, and whether the
+    /// last grow returned nothing new (fully loaded → stop asking).
+    pub browse_page: Option<String>,
+    pub browse_limit: usize,
+    pub browse_loading_more: bool,
+    pub browse_exhausted: bool,
+}
+
 /// Spotify view + connection state. Auth runs on a worker thread; `auth_rx`
 /// carries its progress, drained by [`AppState::pump_spotify`]. Library/search
 /// fields arrive in later phases.
@@ -691,10 +890,32 @@ impl AppState {
 pub struct Spotify {
     /// Connection/login state shown in the view.
     pub conn: crate::spotify::ConnState,
-    /// The current token set once connected (used by the Web API + librespot).
+    /// The current Web API token set once connected (search, library, playlists).
     pub tokens: Option<crate::spotify::Tokens>,
-    /// In-flight auth/resume event stream, if a login or resume is running.
-    pub auth_rx: Option<crossbeam_channel::Receiver<crate::spotify::AuthEvent>>,
+    /// The keymaster token set the librespot session runs on — playback and the
+    /// pathfinder browse feed. Identical to `tokens` unless a private client id is
+    /// configured, in which case it is minted by its own login leg. `None` means
+    /// playback + browse are unauthorized (see [`Self::audio_auth`]).
+    pub audio_tokens: Option<crate::spotify::Tokens>,
+    /// Health of the playback/browse credentials, shown in the Info→Health pane so
+    /// this failure names itself instead of surfacing as "unavailable".
+    pub audio_auth: AudioAuth,
+    /// Guards the self-heal: one automatic re-authorization per connection, so a
+    /// persistently-rejected account can't spin the browser open in a loop.
+    pub audio_heal_tried: bool,
+    /// When set (unix seconds), the browse pane retries its load then. A fetch
+    /// that failed for a reason which commonly clears on its own — a session that
+    /// couldn't connect, a rate-limit — repairs itself instead of leaving an error
+    /// on screen until the user restarts. See [`AppState::spotify_schedule_reload`].
+    pub reload_at: Option<u64>,
+    /// Consecutive automatic browse retries, driving their back-off and capping
+    /// them: a persistent failure settles on a stable message rather than
+    /// re-fetching forever. Reset by any successful load.
+    pub reload_attempts: u32,
+    /// In-flight auth/resume worker, if a login or resume is running. Clearing it
+    /// cancels the worker (see [`crate::spotify::AuthSession`]), so abandoning a
+    /// browser sign-in releases the loopback port instead of leaking it.
+    pub auth_rx: Option<crate::spotify::AuthSession>,
     /// When set (unix seconds), a transient reconnect is scheduled: the last resume
     /// failed to reach Spotify (network/rate-limit), so [`AppState::pump_spotify`]
     /// respawns it once this deadline passes. Cleared on connect or a fresh login.
@@ -721,25 +942,6 @@ pub struct Spotify {
     /// toggle. Set per-section on load (default on for Albums/Artists); persisted
     /// in `ViewState.spotify_grid`. `spotify_grid_active` gates where it applies.
     pub grid: bool,
-    /// Last-rendered grid column count (the row stride for 2-D nav); set in render,
-    /// read in `spotify_grid_move`. Interior-mutable so render can write it.
-    pub cols: std::cell::Cell<usize>,
-    /// Persisted top-row scroll offset of the cover-art grid — sticky viewport (see
-    /// the local library's `LocalBrowse::row_off`). Set during render.
-    pub row_off: std::cell::Cell<usize>,
-    /// Persisted scroll offset of the Spotify item list (track table/rows + the
-    /// mixed-kind browse list) — sticky viewport so clicking a visible row selects
-    /// it in place instead of recentring under the cursor. Set during render.
-    pub list_off: std::cell::Cell<usize>,
-    /// Persisted scroll offset of the Spotify QUEUE pane — sticky, same reason. Set
-    /// during render.
-    pub queue_off: std::cell::Cell<usize>,
-    /// Persisted horizontal scroll offset of the SELECTED release carousel (artist
-    /// page + Home/Browse feed), plus its carousel identity (`car_key`) so the offset
-    /// resets when the selection moves to another carousel — sticky horizontal scroll,
-    /// mirroring `LocalBrowse::car_off`. Set during render.
-    pub car_off: std::cell::Cell<usize>,
-    pub car_key: std::cell::Cell<usize>,
     /// A cursor restored from a session, applied (clamped) to the first list that
     /// arrives after reconnecting, then cleared. `None` in normal operation.
     pub restore_sel: Option<usize>,
@@ -760,15 +962,6 @@ pub struct Spotify {
     /// The container whose tracks are currently shown (the deepest drill-in), so
     /// a session can re-open it on reconnect. `None` at the section/search level.
     pub open_item: Option<crate::spotify::api::Item>,
-    /// Load-more paging for a drilled-in flat browse grid (Podcast Charts /
-    /// Categories): the browse page uri being paged (`None` = the current view isn't
-    /// a pageable grid), the current items-per-shelf `browse_limit` (grown by
-    /// [`BROWSE_PAGE_STEP`] on scroll), whether a grow is in flight, and whether the
-    /// last grow returned nothing new (fully loaded → stop asking).
-    pub browse_page: Option<String>,
-    pub browse_limit: usize,
-    pub browse_loading_more: bool,
-    pub browse_exhausted: bool,
     /// URIs of the shows the user follows (from `/me/shows`), so browse rows/cards can
     /// mark an already-followed show with a ♥. Seeded from the Podcasts (Your Shows)
     /// load and kept live by follow/unfollow toggles.
@@ -795,6 +988,10 @@ pub struct Spotify {
     /// completeness check + replace. See the module docs for why removal goes
     /// through a fresh-fetch-then-replace.
     pub pl_pending_remove: Option<(String, Vec<String>, String)>,
+    /// Geometry the last render reported — see [`SpViewport`].
+    pub view: SpViewport,
+    /// Load-more paging state for a browse grid — see [`SpPaging`].
+    pub paging: SpPaging,
 }
 
 /// Spotify's per-frame restore context for the shared drill-in stack: the search

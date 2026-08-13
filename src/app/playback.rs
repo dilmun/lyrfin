@@ -100,6 +100,10 @@ impl AppState {
         if self.rnow.now_station.is_some() {
             self.rnow.radio_paused = true;
             self.rnow.dvr = None; // the engine drops the timeshift buffer on Load
+            // local audio wins — drop any pending re-tune
+            self.rnow.retry_at = None;
+            self.rnow.retry_n = 0;
+            self.rnow.stream_started = None;
         }
         let path = track.path.clone();
         let duration = track.duration();
@@ -225,7 +229,7 @@ impl AppState {
     pub(crate) fn toggle_spotify_play(&mut self) {
         // the user is taking manual control → cancel any pending auto-resume so a
         // deliberate pause isn't undone (and a manual resume owns the recovery)
-        self.spov.sp_resume_at = None;
+        self.spov.pacing.resume_at = None;
         // an externally-streamed episode plays through lyrfin's own engine, not
         // librespot — pause/resume is a plain engine toggle (the ring is kept,
         // so it resumes in place).
@@ -288,6 +292,7 @@ impl AppState {
             }
         } else {
             self.rnow.radio_paused = true;
+            self.radio_reset_reconnect(); // the user paused — don't re-tune behind them
             self.engine.send(AudioCommand::Pause);
         }
     }

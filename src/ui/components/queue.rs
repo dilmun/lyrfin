@@ -251,7 +251,7 @@ pub fn spotify_queue(f: &mut Frame, area: Rect, app: &AppState, focused: bool) {
             current: (!items.is_empty()).then(|| app.spov.sp_idx.min(items.len() - 1)),
             selected: app.spotify.queue_sel,
             scroll: MouseTarget::Scroll(ScrollBox::SpotifyQueue),
-            off: &app.spotify.queue_off,
+            off: &app.spotify.view.queue_off,
         },
         &rows,
     );

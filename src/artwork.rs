@@ -255,8 +255,7 @@ fn artist_image(
         && let Some(bytes) = download(agent, &url)
         && let Ok(img) = image::load_from_memory(&bytes)
     {
-        let _ = std::fs::create_dir_all(cache_dir);
-        let _ = std::fs::write(&cached, &bytes);
+        let _ = crate::atomicfile::write(&cached, &bytes);
         return Some(img);
     }
     // 3) embedded cover of the newest album/single
@@ -321,8 +320,7 @@ fn cached_download(
     let bytes = download(agent, url)?;
     let img = image::load_from_memory(&bytes).ok()?;
     // Best-effort: a cache write failing must never fail the render.
-    let _ = std::fs::create_dir_all(&dir);
-    let _ = std::fs::write(&path, &bytes);
+    let _ = crate::atomicfile::write(&path, &bytes);
     Some(img)
 }
 

@@ -175,10 +175,7 @@ pub fn save_cached(dir: &Path, key: &str, lang: &str, lines: &[String]) {
         return;
     }
     let path = cache_path(dir, key, lang);
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let _ = std::fs::write(path, lines.join("\n"));
+    let _ = crate::atomicfile::write_str(&path, &lines.join("\n"));
 }
 
 #[cfg(test)]

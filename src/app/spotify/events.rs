@@ -5,6 +5,32 @@
 
 use super::*;
 
+/// Whether a browse failure is Spotify refusing the session's credentials rather
+/// than a problem with the feed itself. The pathfinder client reports the failing
+/// stage in its message ("auth token: …"), and login5's refusal carries
+/// `INVALID_CREDENTIALS`.
+fn is_audio_auth_error(err: &str) -> bool {
+    err.contains("INVALID_CREDENTIALS") || err.starts_with("auth token") || err.contains("401")
+}
+
+/// A browse failure stated as its actual cause. Getting this wrong is expensive:
+/// "Spotify API changed" sends the reader hunting for a rotated query hash when
+/// the real fault is a credential Spotify won't exchange, which the app can fix
+/// by itself.
+fn browse_error_note(err: &str) -> String {
+    if is_audio_auth_error(err) {
+        "Browse needs re-authorizing — Spotify refused these credentials".into()
+    } else if err.contains("429") {
+        "Spotify is rate-limiting browse right now — try again shortly".into()
+    } else if err.contains("PersistedQuery") || err.starts_with("graphql") {
+        // The genuine "Spotify changed its browse API" case: the persisted-query
+        // hash this build ships was retired server-side.
+        "Browse is unavailable — Spotify changed its browse API (update lyrfin)".into()
+    } else {
+        format!("Browse unavailable ({err})")
+    }
+}
+
 impl AppState {
     /// Fold librespot's own WARN/ERROR log lines (captured by the log probe) into
     /// lyrfin's error log, so the real reason a track failed — region lock, premium
@@ -33,67 +59,36 @@ impl AppState {
         for ev in events {
             match ev {
                 Connected => {
+                    // The session verified its credential exchange before sending
+                    // this, so playback + browse are known good.
+                    self.spotify.audio_auth = crate::app::spotify::AudioAuth::Ok;
                     // If this is the fresh session spawned by a reconnect-and-retry,
                     // it's now up: a failure from here on is real (the track is
                     // genuinely unavailable), not an echo from the dead session.
-                    if self.spov.sp_recovery == SpRecovery::Reconnecting {
-                        self.spov.sp_recovery = SpRecovery::Reconnected;
+                    if self.spov.pacing.recovery == SpRecovery::Reconnecting {
+                        self.spov.pacing.recovery = SpRecovery::Reconnected;
                     }
                 }
+                // Spotify refused to exchange the session's stored credentials, so
+                // nothing that needs an spclient token can work. Re-authorize that
+                // leg automatically instead of failing every track from here on.
+                AudioAuthRejected(msg) => self.on_session_auth_rejected(msg),
                 TokenRefreshed(tokens) => {
-                    // adopt the fresh token so the Web API uses it too
-                    self.spotify.tokens = Some(tokens);
+                    // the session refreshed the token it runs on — keep our copy
+                    // current. Without a private client id the two sets ARE one, so
+                    // the Web copy must follow or it keeps a refresh token Spotify
+                    // has rotated away (mirrors `auth::save_session_tokens`).
+                    if !crate::spotify::auth::has_custom_client_id() {
+                        self.spotify.tokens = Some(tokens.clone());
+                    }
+                    self.spotify.audio_tokens = Some(tokens);
                 }
                 ArtistMeta {
                     key,
                     popularity,
                     bio,
-                } => {
-                    // librespot's popularity + Spotify's own bio for the artist pane
-                    // (the dev-mode shared id strips the follower count, and the bio
-                    // is the official right-language text). Merge into the Web result.
-                    if key == ARTIST_PANE_KEY {
-                        let entry = self.spov.sp_artist.get_or_insert_with(SpArtist::default);
-                        if entry.name.is_empty() {
-                            entry.name = self
-                                .spov
-                                .now_spotify
-                                .as_ref()
-                                .map(|t| t.subtitle.clone())
-                                .unwrap_or_default();
-                        }
-                        entry.popularity = popularity;
-                        if !bio.is_empty() {
-                            entry.bio = bio;
-                        }
-                    }
-                }
-                Tracks { key, items } => {
-                    // the artist pane's top-tracks (sentinel key) → its own slot
-                    if key == ARTIST_PANE_KEY {
-                        self.spov.sp_artist_top = items;
-                        continue;
-                    }
-                    // metadata-fetched playlist tracks
-                    if self.spotify.key == key {
-                        self.spotify.loading = false;
-                        self.spotify.note = if items.is_empty() {
-                            "Nothing to play here".into()
-                        } else {
-                            String::new()
-                        };
-                        self.spotify.items = items;
-                        // Keep the cursor where it is (clamped) rather than snapping to
-                        // the top. A fresh drill-in already parked it at 0
-                        // (`spotify_open`), so this is a no-op there; an in-place reload
-                        // after removing a track keeps the selection put — the track
-                        // below slides up under the cursor (last row → the new last).
-                        self.spotify.sel = self
-                            .spotify
-                            .sel
-                            .min(self.spotify.items.len().saturating_sub(1));
-                    }
-                }
+                } => self.on_session_artist_meta(key, popularity, bio),
+                Tracks { key, items } => self.on_session_tracks(key, items),
                 PlaylistUris { key, uris, ok } => {
                     // the raw track list for a remove-a-track (see spotify_apply_remove)
                     if key == super::playlist::REMOVE_FETCH_KEY {
@@ -118,78 +113,15 @@ impl AppState {
                     uri,
                     url,
                     position_ms,
-                } => {
-                    // ignore if the user moved to a different track meanwhile
-                    if self.spov.now_spotify.as_ref().map(|t| t.uri.as_str()) != Some(uri.as_str())
-                    {
-                        continue;
-                    }
-                    let _ = position_ms; // streams start at 0 (no seek into a stream)
-                    match url {
-                        // librespot exposed an external MP3 → stream it directly
-                        Some(url) => self.spotify_stream_episode(url),
-                        // Spotify-hosted/DRM'd: librespot can't decode it, so match
-                        // the episode to its public RSS feed and stream that MP3
-                        // instead. Stays "buffering…" until on_podcast_result (the
-                        // watchdog backstops if it never resolves).
-                        None => {
-                            if !self.spotify_request_podcast() {
-                                self.spotify_episode_unplayable();
-                            }
-                        }
-                    }
-                }
-                ConnectError(msg) => {
-                    // the session died → drop it so the next play respawns. KEEP the
-                    // now-playing overlay + artist pane on screen (a failure must not
-                    // blank the UI); just pause it, free the engine, and report below.
-                    // A reconnect-and-retry whose fresh session couldn't even connect
-                    // ends here — clear the recovery state so it isn't left mid-flight.
-                    self.spov.sp_recovery = SpRecovery::Normal;
-                    self.spov.session_cmd = None;
-                    self.spov.session_rx = None;
-                    self.spov.spotify_paused = true;
-                    self.spov.sp_started = false;
-                    self.engine.send(AudioCommand::ClearExternalSource);
-                    if self.spotify.loading {
-                        self.spotify.loading = false;
-                        self.spotify.note = "Couldn't reach Spotify".into();
-                    }
-                    // back off before the next connect so a failing session can't
-                    // reconnect in a tight loop (and trip Spotify's rate-limit).
-                    // Log it (not just a toast) — this `msg` is the actual reason
-                    // (token refresh / login failure / timeout / rate-limit), so it
-                    // belongs in the error log the user inspects when nothing plays.
-                    self.spotify_trip_cooldown();
-                    self.notify_error(format!("Spotify playback: {msg}"));
-                }
+                } => self.on_session_episode_resolved(uri, url, position_ms),
+                ConnectError(msg) => self.on_session_connect_error(msg),
                 // These events only track librespot's position + whether playback
                 // has begun. They deliberately DON'T touch `spotify_paused`: that's
                 // the user's intent, set synchronously in `toggle_play` (alongside
                 // the librespot + engine commands). These events lag and can arrive
                 // out of order, so letting them write the pause flag desynced the
                 // icon/visualizer from the real state on rapid space presses.
-                Playing { position_ms } => {
-                    log::info!(target: "lyrfin::spotify", "librespot Playing @ {position_ms}ms");
-                    self.spov.sp_started = true;
-                    // A track actually played → this account is provably NOT audio-key
-                    // blocked at the account level, so any earlier "blocked" verdict was
-                    // a transient blip: clear the block evidence (and the sticky probe
-                    // flag) so recovery, the header, and the failure hint all reset.
-                    self.spov.sp_played_ok = true;
-                    self.spov.sp_key_denials = 0;
-                    self.spov.sp_resume_at = None; // playing → cancel any pending auto-resume
-                    crate::spotify::logprobe::AUDIO_KEY_BLOCKED
-                        .store(false, std::sync::atomic::Ordering::Relaxed);
-                    self.spotify_clear_cooldown(); // a track actually played → reset back-off
-                    self.spov.sp_keyretry_at = None; // played → drop any pending key-retry
-                    self.spov.sp_keyretry_n = 0;
-                    self.spov.sp_recovery = SpRecovery::Normal; // recovered / healthy again
-                    self.spov.sp_pos = position_ms as f64 / 1000.0;
-                    // the current track is underway → prefetch the next so its
-                    // transition is gapless (max lead time, no fetch on EndOfTrack).
-                    self.spotify_preload_next();
-                }
+                Playing { position_ms } => self.on_session_playing(position_ms),
                 Paused { position_ms } => {
                     self.spov.sp_pos = position_ms as f64 / 1000.0;
                 }
@@ -226,61 +158,240 @@ impl AppState {
                     );
                     self.spotify_playback_blocked();
                 }
-                Browse { key, items, error } => {
-                    // home/browse feed from pathfinder GraphQL (keyed like Tracks)
-                    if self.spotify.key == key {
-                        self.spotify.loading = false;
-                        match error {
-                            Some(err) => {
-                                log::warn!(target: "lyrfin::spotify", "browse failed: {err}");
-                                self.spotify.items.clear();
-                                self.spotify.note =
-                                    "Browse unavailable (Spotify API changed)".into();
-                            }
-                            None if self.spotify.browse_loading_more => {
-                                // a scroll-triggered "load more": the same page re-fetched
-                                // with a bigger limit. Keep the cursor where it is and just
-                                // extend the grid; stop paging once it stops growing.
-                                self.spotify.browse_loading_more = false;
-                                self.spotify.browse_exhausted = items.len()
-                                    <= self.spotify.items.len()
-                                    || items.len() < self.spotify.browse_limit;
-                                self.spotify.items = items;
-                                let n = self.spotify.items.len();
-                                self.spotify.sel = self.spotify.sel.min(n.saturating_sub(1));
-                                self.spotify.note = String::new();
-                            }
-                            None => {
-                                // A region without podcasts returns an empty hub — or
-                                // just the lone "Browse all categories" link — which
-                                // reads as a broken stray card. Treat that as empty and
-                                // show a clear note instead.
-                                let only_link = !items.is_empty()
-                                    && items.iter().all(|i| {
-                                        i.name == crate::spotify::pathfinder::ALL_CATEGORIES_LABEL
-                                    });
-                                if items.is_empty() || only_link {
-                                    self.spotify.items.clear();
-                                    self.spotify.note = if self.spotify.section
-                                        == crate::spotify::api::Section::Podcasts
-                                    {
-                                        "No podcasts to browse here — they may not be available in your region."
-                                            .into()
-                                    } else {
-                                        "Nothing here".into()
-                                    };
-                                } else {
-                                    self.spotify.note = String::new();
-                                    self.spotify.items = items;
-                                    // re-open a session-restored drill-in (the Home/Browse
-                                    // feed lands here, not via the Web-API `Library`
-                                    // result, so it needs the same restore hook or a chart
-                                    // drilled from Browse is dropped on reopen) — else
-                                    // place the cursor at the top.
-                                    self.spotify_apply_initial_restore();
-                                }
-                            }
-                        }
+                Browse { key, items, error } => self.on_session_browse(key, items, error),
+            }
+        }
+    }
+
+    /// Spotify refused to exchange the session's stored credentials, so nothing that
+    /// needs an spclient token works. Re-authorize that leg rather than failing
+    /// every track from here on.
+    fn on_session_auth_rejected(&mut self, msg: String) {
+        log::warn!(target: "lyrfin::spotify", "audio auth rejected: {msg}");
+        self.spotify.audio_auth =
+            crate::app::spotify::AudioAuth::Rejected(if msg.contains("INVALID_CREDENTIALS") {
+                "credentials not accepted for this app"
+            } else {
+                "token exchange refused"
+            });
+        self.spov.session_cmd = None; // the session thread has exited
+        self.spov.session_rx = None;
+        self.log_error(format!(
+            "Spotify refused the playback credentials ({msg}). Re-authorizing."
+        ));
+        self.spotify_heal_audio_auth();
+    }
+
+    /// librespot's artist popularity + Spotify's own bio, merged into whatever the
+    /// Web API result already filled in for the artist pane.
+    fn on_session_artist_meta(&mut self, key: String, popularity: u32, bio: String) {
+        // librespot's popularity + Spotify's own bio for the artist pane
+        // (the dev-mode shared id strips the follower count, and the bio
+        // is the official right-language text). Merge into the Web result.
+        if key == ARTIST_PANE_KEY {
+            let entry = self.spov.sp_artist.get_or_insert_with(SpArtist::default);
+            if entry.name.is_empty() {
+                entry.name = self
+                    .spov
+                    .now_spotify
+                    .as_ref()
+                    .map(|t| t.subtitle.clone())
+                    .unwrap_or_default();
+            }
+            entry.popularity = popularity;
+            if !bio.is_empty() {
+                entry.bio = bio;
+            }
+        }
+    }
+
+    /// Metadata-resolved container tracks: the artist pane's top-tracks (sentinel
+    /// key) or a playlist's contents.
+    fn on_session_tracks(&mut self, key: String, items: Vec<crate::spotify::api::Item>) {
+        // the artist pane's top-tracks (sentinel key) → its own slot
+        if key == ARTIST_PANE_KEY {
+            self.spov.sp_artist_top = items;
+            return;
+        }
+        // metadata-fetched playlist tracks
+        if self.spotify.key == key {
+            self.spotify.loading = false;
+            self.spotify.note = if items.is_empty() {
+                "Nothing to play here".into()
+            } else {
+                String::new()
+            };
+            self.spotify.items = items;
+            // Keep the cursor where it is (clamped) rather than snapping to
+            // the top. A fresh drill-in already parked it at 0
+            // (`spotify_open`), so this is a no-op there; an in-place reload
+            // after removing a track keeps the selection put — the track
+            // below slides up under the cursor (last row → the new last).
+            self.spotify.sel = self
+                .spotify
+                .sel
+                .min(self.spotify.items.len().saturating_sub(1));
+        }
+    }
+
+    /// A podcast episode's playable source: an external MP3 lyrfin can stream, or a
+    /// fall back to matching the episode to its public RSS feed.
+    fn on_session_episode_resolved(&mut self, uri: String, url: Option<String>, position_ms: u32) {
+        // ignore if the user moved to a different track meanwhile
+        if self.spov.now_spotify.as_ref().map(|t| t.uri.as_str()) != Some(uri.as_str()) {
+            return; // the user moved to a different track meanwhile
+        }
+        let _ = position_ms; // streams start at 0 (no seek into a stream)
+        match url {
+            // librespot exposed an external MP3 → stream it directly
+            Some(url) => self.spotify_stream_episode(url),
+            // Spotify-hosted/DRM'd: librespot can't decode it, so match
+            // the episode to its public RSS feed and stream that MP3
+            // instead. Stays "buffering…" until on_podcast_result (the
+            // watchdog backstops if it never resolves).
+            None => {
+                if !self.spotify_request_podcast() {
+                    self.spotify_episode_unplayable();
+                }
+            }
+        }
+    }
+
+    /// The session died. Keep the now-playing overlay and artist pane on screen —
+    /// a failure must not blank the UI — but pause them, free the engine, and
+    /// schedule the retries that recover browse and playback on their own.
+    fn on_session_connect_error(&mut self, msg: String) {
+        // the session died → drop it so the next play respawns. KEEP the
+        // now-playing overlay + artist pane on screen (a failure must not
+        // blank the UI); just pause it, free the engine, and report below.
+        // A reconnect-and-retry whose fresh session couldn't even connect
+        // ends here — clear the recovery state so it isn't left mid-flight.
+        self.spov.pacing.recovery = SpRecovery::Normal;
+        self.spov.session_cmd = None;
+        self.spov.session_rx = None;
+        self.spov.spotify_paused = true;
+        self.spov.sp_started = false;
+        self.engine.send(AudioCommand::ClearExternalSource);
+        if self.spotify.loading {
+            self.spotify.loading = false;
+            self.spotify.note = "Couldn't reach Spotify — retrying…".into();
+        }
+        // A connect failure kills browse and playback together, and is
+        // usually transient (Spotify rate-limits logins after a burst).
+        // Retry both on their own rather than stranding the user on a
+        // dead session until they restart lyrfin.
+        self.spotify_schedule_reload();
+        // back off before the next connect so a failing session can't
+        // reconnect in a tight loop (and trip Spotify's rate-limit).
+        // Log it (not just a toast) — this `msg` is the actual reason
+        // (token refresh / login failure / timeout / rate-limit), so it
+        // belongs in the error log the user inspects when nothing plays.
+        self.spotify_trip_cooldown();
+        self.spotify_arm_auto_resume(); // …and pick playback back up
+        self.notify_error(format!("Spotify playback: {msg}"));
+    }
+
+    /// librespot started playing. Proof the account is not audio-key blocked, so
+    /// every failure budget resets here, and the next track is prefetched for a
+    /// gapless transition.
+    fn on_session_playing(&mut self, position_ms: u32) {
+        log::info!(target: "lyrfin::spotify", "librespot Playing @ {position_ms}ms");
+        self.spov.sp_started = true;
+        // A track actually played → this account is provably NOT audio-key
+        // blocked at the account level, so any earlier "blocked" verdict was
+        // a transient blip: clear the block evidence (and the sticky probe
+        // flag) so recovery, the header, and the failure hint all reset.
+        self.spov.pacing.played_ok = true;
+        self.spov.pacing.key_denials = 0;
+        self.spov.pacing.resume_at = None; // playing → cancel any pending auto-resume
+        crate::spotify::logprobe::AUDIO_KEY_BLOCKED
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        self.spotify_clear_cooldown(); // a track actually played → reset back-off
+        self.spov.pacing.keyretry_at = None; // played → drop any pending key-retry
+        self.spov.pacing.keyretry_n = 0;
+        self.spov.pacing.recovery = SpRecovery::Normal; // recovered / healthy again
+        self.spov.sp_pos = position_ms as f64 / 1000.0;
+        // the current track is underway → prefetch the next so its
+        // transition is gapless (max lead time, no fetch on EndOfTrack).
+        self.spotify_preload_next();
+    }
+
+    /// A browse / home feed answered by the pathfinder gateway. Applied only while
+    /// it is still the request the pane is waiting for; a failure becomes the
+    /// reason the user can act on, and an auth refusal self-heals.
+    fn on_session_browse(
+        &mut self,
+        key: String,
+        items: Vec<crate::spotify::api::Item>,
+        error: Option<String>,
+    ) {
+        // home/browse feed from pathfinder GraphQL (keyed like Tracks)
+        if self.spotify.key == key {
+            self.spotify.loading = false;
+            if error.is_none() {
+                // a load landed → the retry budget belongs to the NEXT
+                // outage, not to the lifetime of the session
+                self.spotify.reload_attempts = 0;
+                self.spotify.reload_at = None;
+            }
+            match error {
+                Some(err) => {
+                    log::warn!(target: "lyrfin::spotify", "browse failed: {err}");
+                    self.spotify.items.clear();
+                    self.spotify.note = browse_error_note(&err);
+                    // An auth refusal is fixable — it means the browse
+                    // feed is riding credentials Spotify won't exchange,
+                    // the same fault that stops playback.
+                    if is_audio_auth_error(&err) {
+                        self.spotify_heal_audio_auth();
+                    } else if !err.contains("PersistedQuery") {
+                        // Anything but a retired query hash may well work
+                        // on the next try (rate-limit, network blip), and
+                        // re-fetching cannot fix a hash this build no
+                        // longer has.
+                        self.spotify_schedule_reload();
+                    }
+                }
+                None if self.spotify.paging.browse_loading_more => {
+                    // a scroll-triggered "load more": the same page re-fetched
+                    // with a bigger limit. Keep the cursor where it is and just
+                    // extend the grid; stop paging once it stops growing.
+                    self.spotify.paging.browse_loading_more = false;
+                    self.spotify.paging.browse_exhausted = items.len() <= self.spotify.items.len()
+                        || items.len() < self.spotify.paging.browse_limit;
+                    self.spotify.items = items;
+                    let n = self.spotify.items.len();
+                    self.spotify.sel = self.spotify.sel.min(n.saturating_sub(1));
+                    self.spotify.note = String::new();
+                }
+                None => {
+                    // A region without podcasts returns an empty hub — or
+                    // just the lone "Browse all categories" link — which
+                    // reads as a broken stray card. Treat that as empty and
+                    // show a clear note instead.
+                    let only_link = !items.is_empty()
+                        && items
+                            .iter()
+                            .all(|i| i.name == crate::spotify::pathfinder::ALL_CATEGORIES_LABEL);
+                    if items.is_empty() || only_link {
+                        self.spotify.items.clear();
+                        self.spotify.note = if self.spotify.section
+                            == crate::spotify::api::Section::Podcasts
+                        {
+                            "No podcasts to browse here — they may not be available in your region."
+                                .into()
+                        } else {
+                            "Nothing here".into()
+                        };
+                    } else {
+                        self.spotify.note = String::new();
+                        self.spotify.items = items;
+                        // re-open a session-restored drill-in (the Home/Browse
+                        // feed lands here, not via the Web-API `Library`
+                        // result, so it needs the same restore hook or a chart
+                        // drilled from Browse is dropped on reopen) — else
+                        // place the cursor at the top.
+                        self.spotify_apply_initial_restore();
                     }
                 }
             }

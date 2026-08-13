@@ -28,10 +28,8 @@ impl AppState {
             LibraryEvent::Indexed { done, total } => self.scan.progress = Some((done, total)),
             LibraryEvent::Loaded(tracks) => {
                 if !tracks.is_empty() {
+                    // the scanner writes the on-disk cache itself, on its own thread
                     self.set_library(tracks);
-                    // refresh the on-disk cache so next launch is instant
-                    crate::library::store::LibraryCache::from_library(&self.library)
-                        .save(&self.config.dir);
                 }
             }
             LibraryEvent::ScanFinished { tracks } => {
@@ -45,16 +43,6 @@ impl AppState {
             LibraryEvent::Error(e) => self.notify(format!("Scan error: {e}")),
             LibraryEvent::TrackAdded(_) => {}
         }
-    }
-
-    /// Snapshot of the catalogue (path → track) handed to the scanner so it can
-    /// skip re-parsing unchanged files.
-    pub fn cache_map(&self) -> std::collections::HashMap<PathBuf, Track> {
-        self.library
-            .tracks
-            .values()
-            .map(|t| (t.path.clone(), t.clone()))
-            .collect()
     }
 
     /// Ask the tui loop to (re)scan the current music dirs.

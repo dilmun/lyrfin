@@ -150,8 +150,7 @@ impl Lyrics {
     /// Write raw fetched LRC/plain text to the cache.
     pub fn save_cache(dir: &Path, key: &str, text: &str) {
         let d = dir.join("lyrics");
-        let _ = std::fs::create_dir_all(&d);
-        let _ = std::fs::write(d.join(format!("{key}.lrc")), text);
+        let _ = crate::atomicfile::write_str(&d.join(format!("{key}.lrc")), text);
     }
 }
 

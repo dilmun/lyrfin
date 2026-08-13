@@ -103,9 +103,29 @@ pub(crate) struct HttpRangeSource {
     pub(crate) reader: Box<dyn Read + Send + Sync>,
 }
 
+/// Where a ranged request actually landed, given what we asked for and the status
+/// the server answered with.
+///
+/// A server is free to ignore `Range` and reply `200` with the whole body — some
+/// podcast CDNs and ad-inserting proxies do. The bytes then start at 0 while the
+/// request said otherwise, so believing the request would leave the source
+/// reporting a position it is not at: the episode plays from the beginning while
+/// the bar sits at the seek target, and every later seek compounds the error.
+fn landed_pos(requested: u64, status: u16) -> u64 {
+    // 206 Partial Content is the only promise that the range was honoured; a
+    // request from byte 0 needs no promise.
+    if requested == 0 || status == 206 {
+        requested
+    } else {
+        0
+    }
+}
+
 impl HttpRangeSource {
     /// (Re)open the body at byte `pos` via a ranged request, replacing the reader.
-    fn open_at(&mut self, pos: u64) -> io::Result<()> {
+    /// Returns the byte the new reader actually starts at — not necessarily `pos`,
+    /// see [`landed_pos`].
+    fn open_at(&mut self, pos: u64) -> io::Result<u64> {
         let pos = pos.min(self.len);
         let resp = self
             .agent
@@ -113,9 +133,10 @@ impl HttpRangeSource {
             .header("Range", &format!("bytes={pos}-"))
             .call()
             .map_err(|e| io::Error::other(e.to_string()))?;
+        let landed = landed_pos(pos, resp.status().as_u16());
         self.reader = Box::new(resp.into_body().into_reader());
-        self.pos = pos;
-        Ok(())
+        self.pos = landed;
+        Ok(landed)
     }
 }
 
@@ -152,7 +173,24 @@ impl MediaSource for HttpRangeSource {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_stream_title;
+    use super::{landed_pos, parse_stream_title};
+
+    /// Seeking a podcast episode is only honest if the server actually honoured
+    /// the range. A `200` means the body restarted at 0 whatever we asked for.
+    #[test]
+    fn a_range_the_server_ignored_reports_the_real_position() {
+        assert_eq!(landed_pos(5_000_000, 206), 5_000_000, "honoured");
+        assert_eq!(
+            landed_pos(5_000_000, 200),
+            0,
+            "ignored → the body starts at 0"
+        );
+        assert_eq!(
+            landed_pos(0, 200),
+            0,
+            "no range asked for, nothing to honour"
+        );
+    }
 
     #[test]
     fn icy_stream_title_parsed() {

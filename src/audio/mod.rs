@@ -80,6 +80,25 @@ pub enum AudioCommand {
     SetEq(eq::EqConfig),
 }
 
+impl AudioCommand {
+    /// Does this command end or replace whatever is playing? Those are the ones
+    /// the engine must be able to apply even while the controller is waiting on a
+    /// stalled stream, so [`engine::CpalEngine::send`] interrupts that wait first.
+    /// Transport/tuning commands (volume, EQ, speed…) don't qualify: they matter
+    /// only to audio that is still flowing.
+    pub(crate) fn supersedes_source(&self) -> bool {
+        matches!(
+            self,
+            Self::Load(_)
+                | Self::LoadStream { .. }
+                | Self::SetExternalSource(_)
+                | Self::ClearExternalSource
+                | Self::Stop
+                | Self::Seek(_)
+        )
+    }
+}
+
 /// Events sent engine → UI.
 #[derive(Debug, Clone)]
 pub enum AudioEvent {
@@ -103,6 +122,12 @@ pub enum AudioEvent {
     DvrWindow { start: f64, live: f64 },
     /// Non-fatal decode/output error to surface in the notification bar.
     Error(String),
+    /// The audio OUTPUT device failed, or came back after failing (headphones
+    /// unplugged, a Bluetooth drop, a device removed). Deliberately distinct from
+    /// [`AudioEvent::Error`], which is about the source being played: this says
+    /// nothing about the current track or station, so the app reports it without
+    /// pausing them or blaming the stream. `ok` marks a recovery.
+    Output { message: String, ok: bool },
 }
 
 /// Backend-agnostic engine contract. Lets us swap rodio/cpal/symphonia or

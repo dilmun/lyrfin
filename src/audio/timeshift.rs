@@ -37,6 +37,16 @@ const NOMINAL_BYTE_RATE: u64 = 24_000;
 /// so a torn-down stream never wedges the controller thread.
 const WAIT_SLICE: Duration = Duration::from_millis(150);
 
+/// Total time a consumer will wait for fresh bytes before calling the stream
+/// dead and returning end-of-stream.
+///
+/// The wait runs on the audio controller thread, which also drains the command
+/// queue — so an unbounded wait means pause/stop/next stop responding for as long
+/// as the stream is stalled. A live stream that has produced nothing for this long
+/// is not coming back on its own anyway: ending it hands control back to the app,
+/// which reports the drop and retunes.
+const STALL_LIMIT: Duration = Duration::from_secs(10);
+
 /// Fixed-capacity byte ring holding the most-recent `cap` bytes of a live stream.
 /// Pure data structure — no threading, no I/O — so the window/seek math is unit-
 /// testable in isolation. `head`/`tail`/`read` are absolute, monotonic byte offsets.
@@ -224,16 +234,47 @@ impl Timeshift {
 /// just serves from, and moves within, the retained window.
 pub struct TimeshiftSource {
     ts: std::sync::Arc<Timeshift>,
+    /// Raised by the engine (from the UI thread) when a command supersedes this
+    /// source, so a consumer parked at the live edge returns at once instead of
+    /// making the controller wait out [`STALL_LIMIT`] before it can act.
+    interrupt: std::sync::Arc<AtomicBool>,
+    /// Whether symphonia may seek this source. True only for a real DVR buffer;
+    /// a plain buffered live stream stays forward-only, exactly as it was when the
+    /// decoder read the socket directly.
+    seekable: bool,
 }
 
 impl TimeshiftSource {
-    pub fn new(ts: std::sync::Arc<Timeshift>) -> Self {
-        Self { ts }
+    /// A seekable view for DVR (rewind / catch up to live).
+    pub fn new(ts: std::sync::Arc<Timeshift>, interrupt: std::sync::Arc<AtomicBool>) -> Self {
+        Self {
+            ts,
+            interrupt,
+            seekable: true,
+        }
+    }
+
+    /// A forward-only view: the buffer is here only to keep the network read off
+    /// the audio controller thread, not to offer a seekable window.
+    pub fn live(ts: std::sync::Arc<Timeshift>, interrupt: std::sync::Arc<AtomicBool>) -> Self {
+        Self {
+            ts,
+            interrupt,
+            seekable: false,
+        }
+    }
+
+    /// Should the wait end even though no bytes arrived?
+    fn give_up(&self, eof: bool, deadline: std::time::Instant) -> bool {
+        eof || self.ts.is_shutdown()
+            || self.interrupt.load(Ordering::Relaxed)
+            || std::time::Instant::now() >= deadline
     }
 }
 
 impl Read for TimeshiftSource {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let deadline = std::time::Instant::now() + STALL_LIMIT;
         let mut ring = self.ts.lock();
         loop {
             let n = ring.read(buf);
@@ -241,9 +282,11 @@ impl Read for TimeshiftSource {
                 return Ok(n);
             }
             // At the live edge with nothing buffered ahead: EOF is a real end of
-            // stream; otherwise park until the producer writes (or we're torn down),
-            // re-checking on a slice so shutdown is always honoured.
-            if ring.eof || self.ts.is_shutdown() {
+            // stream; otherwise park until the producer writes — re-checking on a
+            // slice so teardown, an engine interrupt, and the stall deadline are
+            // always honoured. The wait is bounded because the controller thread
+            // can't drain commands while it sits here.
+            if self.give_up(ring.eof, deadline) {
                 return Ok(0);
             }
             ring = self
@@ -270,7 +313,7 @@ impl Seek for TimeshiftSource {
 
 impl MediaSource for TimeshiftSource {
     fn is_seekable(&self) -> bool {
-        true
+        self.seekable
     }
     fn byte_len(&self) -> Option<u64> {
         None // live: unbounded, no fixed length
@@ -281,22 +324,30 @@ impl MediaSource for TimeshiftSource {
 /// into `ts` until EOF/error or shutdown. Its own thread, so the buffer keeps
 /// filling to the live edge even while playback is paused or rewound.
 pub fn spawn_producer(ts: std::sync::Arc<Timeshift>, mut reader: Box<dyn Read + Send>) {
-    let _ = std::thread::Builder::new()
+    let spawned = std::thread::Builder::new()
         .name("lyrfin-timeshift".into())
-        .spawn(move || {
-            let mut chunk = vec![0u8; 16 * 1024];
-            while !ts.is_shutdown() {
-                match reader.read(&mut chunk) {
-                    Ok(0) => break, // network EOF
-                    Ok(n) => ts.write(&chunk[..n]),
-                    Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
-                    Err(_) => break, // network error → stop; consumer surfaces it
+        .spawn({
+            let ts = ts.clone();
+            move || {
+                let mut chunk = vec![0u8; 16 * 1024];
+                while !ts.is_shutdown() {
+                    match reader.read(&mut chunk) {
+                        Ok(0) => break, // network EOF
+                        Ok(n) => ts.write(&chunk[..n]),
+                        Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                        Err(_) => break, // network error → stop; consumer surfaces it
+                    }
                 }
+                ts.set_eof();
             }
-            ts.set_eof();
         });
-    // If the thread can't spawn, the stream simply never buffers; the consumer's
-    // first read returns EOF and the engine recovers — no panic on the audio path.
+    // No producer means no bytes will EVER arrive, so say so: without this the
+    // consumer would park waiting for a writer that doesn't exist (the stall
+    // deadline would eventually free it, but a decode error now is both honest
+    // and immediate).
+    if spawned.is_err() {
+        ts.set_eof();
+    }
 }
 
 #[cfg(test)]
@@ -405,12 +456,47 @@ mod tests {
         assert_eq!(ts.seek_secs(-5.0), 0.0);
     }
 
+    /// The wait runs on the audio controller thread, which also drains the command
+    /// queue: an engine interrupt (raised when the user stops / retunes) must end it
+    /// at once, or stop/next appear dead until the stream un-stalls.
+    #[test]
+    fn source_wait_ends_on_an_engine_interrupt() {
+        let ts = std::sync::Arc::new(Timeshift::new(Duration::from_secs(1)));
+        let interrupt = std::sync::Arc::new(AtomicBool::new(true));
+        let mut src = TimeshiftSource::live(ts, interrupt);
+        let mut buf = [0u8; 8];
+        let t = std::time::Instant::now();
+        // nothing buffered and no EOF: without the interrupt this would park
+        assert_eq!(src.read(&mut buf).expect("read"), 0);
+        assert!(t.elapsed() < WAIT_SLICE, "returned without parking");
+    }
+
+    /// A producer thread that can't spawn will never write and never EOF. The
+    /// consumer must not wait for bytes that provably cannot arrive.
+    #[test]
+    fn a_producer_that_never_starts_reports_end_of_stream() {
+        let ts = std::sync::Arc::new(Timeshift::new(Duration::from_secs(1)));
+        ts.set_eof(); // what spawn_producer does when the thread fails to start
+        let mut src = TimeshiftSource::live(ts, std::sync::Arc::new(AtomicBool::new(false)));
+        assert_eq!(src.read(&mut [0u8; 8]).expect("read"), 0);
+    }
+
+    /// A plain buffered live stream must look exactly like the socket it replaced:
+    /// forward-only. Only a real DVR window is seekable.
+    #[test]
+    fn only_the_dvr_view_is_seekable() {
+        let ts = std::sync::Arc::new(Timeshift::new(Duration::from_secs(1)));
+        let flag = std::sync::Arc::new(AtomicBool::new(false));
+        assert!(!TimeshiftSource::live(ts.clone(), flag.clone()).is_seekable());
+        assert!(TimeshiftSource::new(ts, flag).is_seekable());
+    }
+
     #[test]
     fn source_reads_buffered_bytes_and_reports_eof() {
         let ts = std::sync::Arc::new(Timeshift::new(Duration::from_secs(1)));
         ts.write(&[10, 20, 30]);
         ts.set_eof();
-        let mut src = TimeshiftSource::new(ts);
+        let mut src = TimeshiftSource::new(ts, std::sync::Arc::new(AtomicBool::new(false)));
         let mut buf = [0u8; 8];
         assert_eq!(src.read(&mut buf).unwrap(), 3);
         assert_eq!(&buf[..3], &[10, 20, 30]);
