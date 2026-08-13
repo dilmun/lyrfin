@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.0](https://github.com/dilmun/lyrfin/compare/v0.4.0...v0.5.0) (2026-08-13)
+
+
+### Features
+
+* **ui:** transparent background setting, so a translucent window shows through ([#31](https://github.com/dilmun/lyrfin/issues/31)) ([f8bc5dd](https://github.com/dilmun/lyrfin/commit/f8bc5dddaadd328fdf859d1ffac58d873f9f00c3))
+
+
+### Bug Fixes
+
+* harden audio, storage, and Spotify recovery paths ([#29](https://github.com/dilmun/lyrfin/issues/29)) ([0ab7858](https://github.com/dilmun/lyrfin/commit/0ab7858ac87e9dc694a13d7c8f1f6611a229c9bb))
+
 ## [0.4.0](https://github.com/dilmun/lyrfin/compare/v0.3.0...v0.4.0) (2026-07-23)
 
 
