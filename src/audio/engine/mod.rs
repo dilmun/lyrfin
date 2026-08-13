@@ -72,6 +72,10 @@ struct Shared {
 pub struct CpalEngine {
     cmd_tx: Sender<AudioCommand>,
     evt_rx: Receiver<AudioEvent>,
+    /// Raised here (on the UI thread) before a command that replaces or stops the
+    /// current source, so a controller parked on a stalled stream's buffer stops
+    /// waiting and reaches the command drain. See [`AudioCommand::supersedes_source`].
+    interrupt: Arc<AtomicBool>,
 }
 
 impl CpalEngine {
@@ -106,17 +110,24 @@ impl CpalEngine {
         let (ready_tx, ready_rx) = unbounded::<Result<(), String>>();
         let shared2 = shared.clone();
         let evt_tx2 = evt_tx.clone();
+        let interrupt = Arc::new(AtomicBool::new(false));
+        let interrupt2 = interrupt.clone();
         std::thread::Builder::new()
             .name("lyrfin-audio".into())
             .spawn(move || {
                 controller(
-                    device, config, fmt, dev_rate, dev_ch, cmd_rx, evt_tx2, shared2, ready_tx,
+                    device, config, fmt, dev_rate, dev_ch, cmd_rx, evt_tx2, shared2, interrupt2,
+                    ready_tx,
                 )
             })
             .map_err(|e| anyhow::anyhow!("spawn audio thread: {e}"))?;
 
         match ready_rx.recv() {
-            Ok(Ok(())) => Ok(Self { cmd_tx, evt_rx }),
+            Ok(Ok(())) => Ok(Self {
+                cmd_tx,
+                evt_rx,
+                interrupt,
+            }),
             Ok(Err(e)) => Err(anyhow::anyhow!(e)),
             Err(_) => Err(anyhow::anyhow!("audio thread died during init")),
         }
@@ -125,6 +136,13 @@ impl CpalEngine {
 
 impl AudioEngine for CpalEngine {
     fn send(&self, cmd: AudioCommand) {
+        // A command that ends or replaces the current source must take effect even
+        // while the controller is waiting on a stalled stream's buffer. Raising the
+        // interrupt BEFORE queueing it means the wait ends now, not after the stall
+        // deadline — so stop/next/load stay responsive on a dead station.
+        if cmd.supersedes_source() {
+            self.interrupt.store(true, Ordering::Release);
+        }
         let _ = self.cmd_tx.send(cmd);
     }
     fn try_recv(&self) -> Option<AudioEvent> {
@@ -212,6 +230,10 @@ struct Ctl {
     /// When the last DVR reopen ran, to throttle held-key scrubbing (bounds the
     /// reopen rate so it can't tax the CPU). No allocation; not on the audio path.
     last_seek: Option<std::time::Instant>,
+    /// Shared with [`CpalEngine`] and every buffered stream source: raised by the
+    /// UI thread so a source waiting on bytes that may never come stops waiting
+    /// and lets this thread reach the command drain.
+    interrupt: Arc<AtomicBool>,
     /// 10-band equalizer applied to every source's output just before it enters
     /// the ring (so local files, crossfades, and the Spotify bridge are all EQ'd
     /// by one stage). Owned solely by this controller thread — parameter updates
@@ -220,7 +242,12 @@ struct Ctl {
 }
 
 impl Ctl {
-    fn new(dev_rate: u32, dev_ch: usize, stream_tx: Sender<StreamOpen>) -> Self {
+    fn new(
+        dev_rate: u32,
+        dev_ch: usize,
+        stream_tx: Sender<StreamOpen>,
+        interrupt: Arc<AtomicBool>,
+    ) -> Self {
         Self {
             active: None,
             next_path: None,
@@ -244,6 +271,7 @@ impl Ctl {
             dvr: None,
             pending_seek: None,
             last_seek: None,
+            interrupt,
             eq: Equalizer::new(dev_rate, dev_ch),
         }
     }
@@ -277,7 +305,7 @@ impl Ctl {
         let landed = ts.seek_secs(target);
         // a bad reopen is non-fatal — keep the current decoder rather than dropping
         // playback (never leaves the stream permanently stopped).
-        if let Ok(dec) = reopen_timeshift(ts, dev_rate, dev_ch) {
+        if let Ok(dec) = reopen_timeshift(ts, dev_rate, dev_ch, self.interrupt.clone()) {
             self.active = Some(dec);
             self.cancel_crossfade();
             self.stretch.reset();
@@ -370,6 +398,7 @@ fn controller(
     cmd_rx: Receiver<AudioCommand>,
     evt_tx: Sender<AudioEvent>,
     shared: Arc<Shared>,
+    interrupt: Arc<AtomicBool>,
     ready_tx: Sender<Result<(), String>>,
 ) {
     // Lock-free SPSC sample ring: the controller (producer) fills it, the audio
@@ -395,11 +424,15 @@ fn controller(
 
     // radio streams open on a worker thread and arrive here when ready
     let (stream_tx, stream_rx) = unbounded::<StreamOpen>();
-    let mut ctl = Ctl::new(dev_rate, dev_ch, stream_tx);
+    let mut ctl = Ctl::new(dev_rate, dev_ch, stream_tx, interrupt);
     let mut pump = Pump::new(prod, dev_rate, dev_ch);
 
     loop {
         // ---- drain commands ----
+        // Clear the interrupt first: it exists only to break a source wait so this
+        // drain runs, and the command that raised it is queued before the flag was
+        // set, so it is either already visible below or arrives on the next pass.
+        ctl.interrupt.store(false, Ordering::Relaxed);
         loop {
             match cmd_rx.try_recv() {
                 Ok(cmd) => handle_command(cmd, dev_rate, dev_ch, &evt_tx, &shared, &mut ctl),
@@ -729,9 +762,12 @@ impl<P: Producer<Item = f32>> Pump<P> {
                 });
             }
         }
-        // true end (nothing preloaded) → let the app decide what's next
+        // true end (nothing preloaded) → let the app decide what's next. Never while
+        // an interrupt is pending: the source was cut short on purpose by a command
+        // that is about to replace it, and reporting that as a finished track would
+        // have the app advance its queue behind the command's back.
         let finished = ctl.active.as_ref().map(|s| s.finished).unwrap_or(false);
-        if finished && self.prod.occupied_len() == 0 {
+        if finished && self.prod.occupied_len() == 0 && !ctl.interrupt.load(Ordering::Relaxed) {
             shared.playing.store(false, Ordering::Relaxed);
             let _ = evt_tx.send(AudioEvent::Finished);
             ctl.active = None;
@@ -814,11 +850,12 @@ fn handle_command(
             ctl.cancel_crossfade();
             let tx = ctl.stream_tx.clone();
             let evt = evt_tx.clone();
+            let interrupt = ctl.interrupt.clone();
             let _ = std::thread::Builder::new()
                 .name("lyrfin-radio-open".into())
                 .spawn(move || {
-                    let res =
-                        open_stream(url, dev_rate, dev_ch, evt, dvr).map_err(|e| e.to_string());
+                    let res = open_stream(url, dev_rate, dev_ch, evt, dvr, interrupt)
+                        .map_err(|e| e.to_string());
                     let _ = tx.send((generation, res));
                 });
         }
