@@ -105,16 +105,18 @@ pub struct Query {
 
 impl Query {
     pub fn parse(s: &str) -> Query {
-        let mut groups: Vec<Vec<Term>> = vec![Vec::new()];
+        let mut groups: Vec<Vec<Term>> = Vec::new();
+        let mut current: Vec<Term> = Vec::new();
         for tok in tokenize(s) {
             if tok == "OR" {
-                groups.push(Vec::new());
+                groups.push(std::mem::take(&mut current));
                 continue;
             }
             if let Some(term) = parse_term(&tok) {
-                groups.last_mut().unwrap().push(term);
+                current.push(term);
             }
         }
+        groups.push(current);
         groups.retain(|g| !g.is_empty());
         Query { groups }
     }

@@ -450,7 +450,9 @@ fn controller(
             let (new_prod, new_cons) = HeapRb::<f32>::new(cap).split();
             match rebuild_output(&config, fmt, &shared, &evt_tx, new_cons) {
                 Ok(s) => {
-                    stream = s;
+                    // replacing the handle drops the dead stream — that IS the
+                    // teardown — and keeps the new one alive for the run
+                    drop(std::mem::replace(&mut stream, s));
                     pump.adopt_ring(new_prod);
                     // The dead callback may have left a flush request latched, which
                     // would stop the pump filling the new ring forever.

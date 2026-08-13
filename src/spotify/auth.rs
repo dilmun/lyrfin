@@ -25,22 +25,30 @@ pub const KEYMASTER_CLIENT_ID: &str = "65b708073fc0480ea92a077233ca87bd";
 
 static CLIENT_ID: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
 
+/// The client-id lock, recovering from poisoning rather than propagating it: it
+/// guards a plain string that is always in a valid state, and it is read on the
+/// token-refresh path — panicking there would take out playback over a fault
+/// somewhere else entirely.
+fn client_id_lock() -> std::sync::MutexGuard<'static, String> {
+    CLIENT_ID.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// Set the active client id (from config at startup, or live when the user
 /// enters their own). Empty → keymaster default. Takes effect immediately.
 pub fn set_client_id(id: String) {
     log::info!(target: "lyrfin::spotify", "client_id set: custom={}", !id.is_empty());
-    *CLIENT_ID.lock().unwrap() = id;
+    *client_id_lock() = id;
 }
 
 /// Whether a private (user) Web API client id is configured — vs the shared
 /// keymaster fallback, which Spotify can reject for the Web API token endpoint.
 pub fn has_custom_client_id() -> bool {
-    !CLIENT_ID.lock().unwrap().is_empty()
+    !client_id_lock().is_empty()
 }
 
 /// The active client id: the configured private one, else the shared keymaster.
 pub fn client_id() -> String {
-    let id = CLIENT_ID.lock().unwrap();
+    let id = client_id_lock();
     if id.is_empty() {
         KEYMASTER_CLIENT_ID.to_string()
     } else {

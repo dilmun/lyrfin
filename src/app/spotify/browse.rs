@@ -715,9 +715,12 @@ impl AppState {
     /// ([`Self::spotify_refresh_open`]).
     fn spotify_fetch_container(&mut self, item: crate::spotify::api::Item) {
         use crate::spotify::api::Kind;
-        if self.spotify.tokens.is_none() {
+        // Bound once, here: the Web-API arm needs it, and re-reaching for it with
+        // an unwrap leaves a panic twenty lines away from the guard that makes it
+        // safe — one refactor from being a real crash.
+        let Some(token) = self.spotify.tokens.as_ref().map(|t| t.access_token.clone()) else {
             return;
-        }
+        };
         self.workers.spotify_seq += 1;
         let key = format!("s{}", self.workers.spotify_seq);
         self.spotify.key = key.clone();
@@ -732,7 +735,6 @@ impl AppState {
         match item.kind {
             // albums + podcast shows resolve via the Web API (no session needed)
             Kind::Album | Kind::Show => {
-                let token = self.spotify.tokens.as_ref().unwrap().access_token.clone();
                 if let Some(tx) = &self.workers.spotify {
                     let _ = tx.send(crate::spotify::api::SpRequest::Open {
                         uri: item.uri,
