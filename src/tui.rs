@@ -415,6 +415,7 @@ fn event_loop(
         }
         while let Ok(pod) = pod_rx.try_recv() {
             app.on_podcast_result(pod);
+            got = true;
         }
         while let Ok(lyr) = lyr_rx.try_recv() {
             app.on_lyrics_result(lyr);
