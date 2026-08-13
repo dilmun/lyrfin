@@ -90,6 +90,10 @@ libc = "0.2"
 #     dep that the default `use_dbus` backend would require in CI.
 # Windows (SMTC) is intentionally omitted for now: it needs a hidden message-pump
 # window a console TUI doesn't own, so that build pulls no new dependency.
+# NB: souvlaki 0.8.3 (its latest) pulls `cocoa` → `block 0.1.6`, which cargo flags
+# as containing code a future rustc will reject (`cargo report future-incompat`).
+# Nothing to upgrade to yet — the fix has to come from upstream, or from binding
+# MediaPlayer directly via `objc2`. Tracked in docs/ROADMAP.md.
 [target.'cfg(target_os = "macos")'.dependencies]
 souvlaki = { version = "0.8", default-features = false }
 
