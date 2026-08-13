@@ -122,6 +122,12 @@ pub enum AudioEvent {
     DvrWindow { start: f64, live: f64 },
     /// Non-fatal decode/output error to surface in the notification bar.
     Error(String),
+    /// The audio OUTPUT device failed, or came back after failing (headphones
+    /// unplugged, a Bluetooth drop, a device removed). Deliberately distinct from
+    /// [`AudioEvent::Error`], which is about the source being played: this says
+    /// nothing about the current track or station, so the app reports it without
+    /// pausing them or blaming the stream. `ok` marks a recovery.
+    Output { message: String, ok: bool },
 }
 
 /// Backend-agnostic engine contract. Lets us swap rodio/cpal/symphonia or

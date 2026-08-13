@@ -376,6 +376,16 @@ impl AppState {
                 AudioEvent::Advanced => self.soft_advance(),
                 AudioEvent::Spectrum(s) => self.player.spectrum = s,
                 AudioEvent::IcyTitle(t) => self.on_icy_title(&t),
+                // The OUTPUT device, not the source: report it without touching
+                // playback state — the track/station is unaffected, and blaming it
+                // would be a lie the user then acts on.
+                AudioEvent::Output { message, ok } => {
+                    if ok {
+                        self.notify(message);
+                    } else {
+                        self.notify_error(message);
+                    }
+                }
                 AudioEvent::Error(e) => {
                     if self.spov.sp_stream {
                         // the episode's stream couldn't open/decode — stop the spinner

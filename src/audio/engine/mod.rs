@@ -67,6 +67,11 @@ struct Shared {
     /// From cpal's playback-vs-callback timestamp; subtracted from the reported
     /// position so lyrics/seek align with what's *heard*, not what's queued.
     out_latency_us: AtomicU64,
+    /// The output stream reported an error (device unplugged / disconnected).
+    /// Raised by cpal's error callback, cleared by the controller when it rebuilds
+    /// the stream — without which the engine stays silent for the rest of the run,
+    /// and a `flush` raised before the callback died would never be consumed.
+    stream_error: AtomicBool,
 }
 
 pub struct CpalEngine {
@@ -103,6 +108,7 @@ impl CpalEngine {
             samples_played: AtomicU64::new(0),
             flush: AtomicBool::new(false),
             out_latency_us: AtomicU64::new(0),
+            stream_error: AtomicBool::new(false),
         });
 
         // Build the stream on the controller thread and confirm success before
@@ -409,7 +415,7 @@ fn controller(
     let (prod, cons) = HeapRb::<f32>::new(cap).split();
 
     // Build the persistent output stream once.
-    let stream = match build_stream(&device, &config, fmt, &shared, cons) {
+    let mut stream = match build_stream(&device, &config, fmt, &shared, &evt_tx, cons) {
         Ok(s) => s,
         Err(e) => {
             let _ = ready_tx.send(Err(e.to_string()));
@@ -427,7 +433,49 @@ fn controller(
     let mut ctl = Ctl::new(dev_rate, dev_ch, stream_tx, interrupt);
     let mut pump = Pump::new(prod, dev_rate, dev_ch);
 
+    // Bounded rebuild schedule after a device error; `None` = nothing pending.
+    let mut retry_at: Option<std::time::Instant> = None;
+    let mut retries = 0u32;
+
     loop {
+        // ---- recover a lost output device ----
+        if shared.stream_error.swap(false, Ordering::AcqRel) {
+            // A disconnect is usually followed by the OS switching default device,
+            // so give it a moment before asking which one that is.
+            retry_at = Some(std::time::Instant::now() + DEVICE_RETRY_DELAY);
+            retries = 0;
+        }
+        if retry_at.is_some_and(|at| std::time::Instant::now() >= at) {
+            retry_at = None;
+            let (new_prod, new_cons) = HeapRb::<f32>::new(cap).split();
+            match rebuild_output(&config, fmt, &shared, &evt_tx, new_cons) {
+                Ok(s) => {
+                    stream = s;
+                    pump.adopt_ring(new_prod);
+                    // The dead callback may have left a flush request latched, which
+                    // would stop the pump filling the new ring forever.
+                    shared.flush.store(false, Ordering::Release);
+                    let _ = evt_tx.send(AudioEvent::Output {
+                        message: "Audio output reconnected".into(),
+                        ok: true,
+                    });
+                }
+                Err(e) => {
+                    retries += 1;
+                    if retries <= DEVICE_RETRY_MAX {
+                        retry_at = Some(std::time::Instant::now() + DEVICE_RETRY_DELAY * retries);
+                    } else {
+                        let _ = evt_tx.send(AudioEvent::Output {
+                            message: format!(
+                                "Audio output unavailable ({e}) — restart lyrfin once the device is back"
+                            ),
+                            ok: false,
+                        });
+                    }
+                }
+            }
+        }
+
         // ---- drain commands ----
         // Clear the interrupt first: it exists only to break a source wait so this
         // drain runs, and the command that raised it is queued before the flag was
@@ -453,6 +501,35 @@ fn controller(
             std::thread::sleep(Duration::from_millis(5));
         }
     }
+}
+
+/// How long to wait before (re)trying a lost output device, scaled by attempt.
+const DEVICE_RETRY_DELAY: Duration = Duration::from_millis(500);
+/// How many times to retry before telling the user a restart is needed.
+const DEVICE_RETRY_MAX: u32 = 5;
+
+/// Rebuild the output stream on the CURRENT default device after a device error.
+///
+/// Deliberately reuses the original config: the sample rate and channel count are
+/// baked into every resampler in the pipeline, so a device that wants a different
+/// format can't be adopted mid-run — reporting that honestly beats resampling to
+/// the wrong rate.
+fn rebuild_output<C>(
+    config: &cpal::StreamConfig,
+    fmt: SampleFormat,
+    shared: &Arc<Shared>,
+    evt_tx: &Sender<AudioEvent>,
+    cons: C,
+) -> anyhow::Result<cpal::Stream>
+where
+    C: Consumer<Item = f32> + Send + 'static,
+{
+    let device = cpal::default_host()
+        .default_output_device()
+        .ok_or_else(|| anyhow::anyhow!("no output device"))?;
+    let stream = build_stream(&device, config, fmt, shared, evt_tx, cons)?;
+    stream.play()?;
+    Ok(stream)
 }
 
 /// Mono-mix interleaved `s` (device channel count `dev_ch`) and append to `mono`
@@ -503,6 +580,14 @@ impl<P: Producer<Item = f32>> Pump<P> {
             dev_ch,
             dev_rate_ch: (dev_rate as usize * dev_ch).max(1),
         }
+    }
+
+    /// Take over a fresh ring after the output stream was rebuilt (the old
+    /// producer's consumer went away with the dead stream).
+    fn adopt_ring(&mut self, prod: P) {
+        self.prod = prod;
+        self.mono.clear();
+        self.last_progress = -1.0;
     }
 
     /// One pump iteration. While a flush is pending (a seek/load/stop asked the

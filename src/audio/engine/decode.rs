@@ -396,12 +396,22 @@ pub(super) fn build_stream<C>(
     config: &cpal::StreamConfig,
     fmt: SampleFormat,
     shared: &Arc<Shared>,
+    evt_tx: &Sender<AudioEvent>,
     cons: C,
 ) -> anyhow::Result<cpal::Stream>
 where
     C: Consumer<Item = f32> + Send + 'static,
 {
-    let err_fn = |e| eprintln!("lyrfin audio stream error: {e}");
+    // A device error (headphones unplugged, Bluetooth dropped, device removed)
+    // must never be printed: stderr is the terminal the TUI is drawing on, so an
+    // eprintln here lands on top of the interface. Report it as an event and raise
+    // the flag the controller rebuilds the stream from.
+    let err_shared = shared.clone();
+    let err_evt = evt_tx.clone();
+    let err_fn = move |e| {
+        err_shared.stream_error.store(true, Ordering::Release);
+        let _ = err_evt.send(AudioEvent::Error(format!("audio output: {e}")));
+    };
     macro_rules! build {
         ($t:ty, $conv:expr) => {{
             let shared = shared.clone();
@@ -501,6 +511,7 @@ mod tests {
             samples_played: AtomicU64::new(0),
             flush: AtomicBool::new(false),
             out_latency_us: AtomicU64::new(0),
+            stream_error: AtomicBool::new(false),
         })
     }
 
