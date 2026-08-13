@@ -462,6 +462,7 @@ fn event_loop(
         }
         app.pump_audio(); // sets dirty itself on audio events
         app.pump_spotify(); // drain Spotify auth/resume events
+        app.radio_tick_reconnect(); // re-tune a station whose stream dropped
         if last.elapsed() >= period {
             app.set_frame_dt(last.elapsed()); // real cadence drives the position clocks
             app.update(Action::Tick);

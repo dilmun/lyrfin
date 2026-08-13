@@ -100,6 +100,10 @@ impl AppState {
         if self.rnow.now_station.is_some() {
             self.rnow.radio_paused = true;
             self.rnow.dvr = None; // the engine drops the timeshift buffer on Load
+            // local audio wins — drop any pending re-tune
+            self.rnow.retry_at = None;
+            self.rnow.retry_n = 0;
+            self.rnow.stream_started = None;
         }
         let path = track.path.clone();
         let duration = track.duration();
@@ -288,6 +292,7 @@ impl AppState {
             }
         } else {
             self.rnow.radio_paused = true;
+            self.radio_reset_reconnect(); // the user paused — don't re-tune behind them
             self.engine.send(AudioCommand::Pause);
         }
     }

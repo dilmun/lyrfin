@@ -14,7 +14,31 @@ pub struct RadioNow {
     /// `None` when the stream isn't timeshifted (DVR off / not yet reported), which
     /// keeps such a stream forward-only.
     pub dvr: Option<DvrState>,
+    /// When to re-tune a stream that dropped (`None` = nothing scheduled). A live
+    /// stream ends on any network hiccup — the engine reports it exactly like a
+    /// finished track — and without this the station simply stopped, leaving the
+    /// user to notice and press play again. Drained by
+    /// [`AppState::radio_tick_reconnect`].
+    pub retry_at: Option<std::time::Instant>,
+    /// Reconnects already spent on this station, bounding the retries so a station
+    /// that has genuinely gone off the air stops instead of retrying forever. Reset
+    /// on a fresh tune-in and once a stream plays long enough to prove it's healthy.
+    pub retry_n: u8,
+    /// Whether the current stream has played long enough to count as established
+    /// (see [`RADIO_STABLE`]), which refills the retry budget — so a long listen
+    /// interrupted by an occasional blip keeps recovering, while a station that
+    /// drops immediately every time gives up quickly.
+    pub stream_started: Option<std::time::Instant>,
 }
+
+/// Reconnect attempts before a dropped station is left paused for the user.
+const RADIO_RETRY_MAX: u8 = 3;
+/// Delay before the first reconnect; later attempts scale by attempt number, so a
+/// station that is down backs off instead of hammering the host.
+const RADIO_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
+/// How long a stream must play before its drop counts as a fresh incident (and
+/// refills the retry budget) rather than part of the same failure.
+const RADIO_STABLE: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Within this many seconds of the live edge, a DVR stream is treated as "at
 /// live": the play-head pins to the edge and the marker reads LIVE. Shared by the
@@ -546,6 +570,7 @@ impl AppState {
     pub(crate) fn play_station(&mut self, st: crate::radio::Station) {
         let (url, name) = (st.url.clone(), st.name.clone());
         self.record_station_play(&st); // history: bump count + last-played, persist
+        self.radio_reset_reconnect(); // a deliberate tune-in gets a fresh budget
         self.rnow.now_station = Some(st);
         self.rnow.now_station_title = None; // ICY title arrives once the stream is up
         self.rnow.radio_paused = false;
@@ -563,7 +588,79 @@ impl AppState {
             .then(|| std::time::Duration::from_secs(self.config.radio_dvr_minutes as u64 * 60));
         self.engine.send(AudioCommand::LoadStream { url, dvr });
         self.engine.send(AudioCommand::Play);
+        self.rnow.stream_started = Some(std::time::Instant::now());
         self.notify(format!("Tuning in: {name}"));
+    }
+
+    /// Clear the reconnect schedule + budget (a fresh tune-in, or the user taking
+    /// over with pause/stop).
+    pub(crate) fn radio_reset_reconnect(&mut self) {
+        self.rnow.retry_at = None;
+        self.rnow.retry_n = 0;
+        self.rnow.stream_started = None;
+    }
+
+    /// A live stream ended or failed. A radio stream has no natural end, so this is
+    /// always a drop — a network hiccup, or the host going away. Re-tune the same
+    /// station after a short back-off instead of leaving it silently stopped, and
+    /// give up (paused, retryable with space) once the budget is spent.
+    ///
+    /// A stream that played for a while before dropping gets a fresh budget: that's
+    /// a new incident, not the same one repeating.
+    pub(crate) fn radio_stream_dropped(&mut self, reason: &str) {
+        if self.rnow.now_station.is_none() || self.rnow.radio_paused {
+            return; // nothing tuned, or the user stopped it themselves
+        }
+        let established = self
+            .rnow
+            .stream_started
+            .is_some_and(|t| t.elapsed() >= RADIO_STABLE);
+        if established {
+            self.rnow.retry_n = 0;
+        }
+        if self.rnow.retry_n >= RADIO_RETRY_MAX {
+            self.rnow.radio_paused = true;
+            self.radio_reset_reconnect();
+            self.notify_error(format!(
+                "{reason} — gave up after {RADIO_RETRY_MAX} attempts. Press space to retry."
+            ));
+            return;
+        }
+        self.rnow.retry_n += 1;
+        self.rnow.retry_at =
+            Some(std::time::Instant::now() + RADIO_RETRY_DELAY * self.rnow.retry_n as u32);
+        self.notify(format!("{reason} — reconnecting…"));
+    }
+
+    /// Re-tune a dropped station once its back-off elapses. Driven every loop, so
+    /// it fires while the app sits idle.
+    pub(crate) fn radio_tick_reconnect(&mut self) {
+        let Some(at) = self.rnow.retry_at else {
+            return;
+        };
+        if std::time::Instant::now() < at {
+            return;
+        }
+        self.rnow.retry_at = None;
+        // the user paused / switched source / stopped since it was armed
+        let Some(st) = self.rnow.now_station.clone() else {
+            return;
+        };
+        if self.rnow.radio_paused {
+            return;
+        }
+        // Re-issue the stream WITHOUT going through `play_station`: that resets the
+        // retry budget (and re-records a play), which would let a dead station loop
+        // forever. Only the engine side is repeated here.
+        let dvr = (self.config.radio_dvr && self.config.radio_dvr_minutes > 0)
+            .then(|| std::time::Duration::from_secs(self.config.radio_dvr_minutes as u64 * 60));
+        self.rnow.dvr = None;
+        self.rnow.now_station_title = None;
+        self.engine
+            .send(AudioCommand::LoadStream { url: st.url, dvr });
+        self.engine.send(AudioCommand::Play);
+        self.rnow.stream_started = Some(std::time::Instant::now());
+        self.dirty = true;
     }
 
     /// Record a tune-in: bump the station's play count + last-played in the history
@@ -1040,4 +1137,64 @@ fn derive_genres(
     out.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.name.cmp(&b.name)));
     out.truncate(500);
     out
+}
+
+#[cfg(test)]
+mod reconnect_tests {
+    use crate::app::AppState;
+    use crate::config::Config;
+
+    fn app_with_station() -> AppState {
+        let mut a = AppState::new(Config::default());
+        a.rnow.now_station = Some(crate::radio::Station {
+            name: "Test FM".into(),
+            url: "http://example.invalid/stream".into(),
+            ..Default::default()
+        });
+        a.rnow.radio_paused = false;
+        a
+    }
+
+    /// A live stream has no natural end: the engine reporting one means it dropped,
+    /// and the station should come back on its own rather than going quiet.
+    #[test]
+    fn a_dropped_stream_schedules_a_reconnect() {
+        let mut a = app_with_station();
+        a.radio_stream_dropped("Stream dropped");
+        assert!(a.rnow.retry_at.is_some(), "a re-tune is scheduled");
+        assert_eq!(a.rnow.retry_n, 1);
+        assert!(!a.rnow.radio_paused, "still tuned in, not stopped");
+    }
+
+    /// …but a station that is genuinely off the air must stop, not loop forever.
+    #[test]
+    fn repeated_drops_give_up_and_leave_it_retryable() {
+        let mut a = app_with_station();
+        for _ in 0..=super::RADIO_RETRY_MAX {
+            a.radio_stream_dropped("Stream dropped");
+            a.rnow.retry_at = None; // pretend each scheduled attempt fired and failed
+        }
+        assert!(a.rnow.radio_paused, "gives up rather than retrying forever");
+        assert_eq!(a.rnow.retry_at, None);
+    }
+
+    /// The user's own pause must win: a re-tune armed just before it would
+    /// otherwise start playing again behind their back.
+    #[test]
+    fn a_user_pause_cancels_a_pending_reconnect() {
+        let mut a = app_with_station();
+        a.radio_stream_dropped("Stream dropped");
+        a.rnow.radio_paused = true;
+        a.radio_reset_reconnect();
+        a.radio_tick_reconnect();
+        assert_eq!(a.rnow.retry_at, None);
+    }
+
+    /// A drop while nothing is tuned (or while paused) is not this path's business.
+    #[test]
+    fn nothing_is_scheduled_when_no_station_is_playing() {
+        let mut a = AppState::new(Config::default());
+        a.radio_stream_dropped("Stream dropped");
+        assert_eq!(a.rnow.retry_at, None);
+    }
 }

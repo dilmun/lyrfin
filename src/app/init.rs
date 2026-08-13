@@ -73,6 +73,9 @@ impl AppState {
                 now_station_title: None,
                 radio_paused: false,
                 dvr: None,
+                retry_at: None,
+                retry_n: 0,
+                stream_started: None,
             },
             spotify: {
                 let mut s = Spotify::default();
