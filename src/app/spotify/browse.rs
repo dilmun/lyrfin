@@ -613,7 +613,7 @@ impl AppState {
                     .cloned()
                     .collect();
                 let idx = queue.iter().position(|t| t.uri == item.uri).unwrap_or(0);
-                self.spov.sp_fail_streak = 0; // a fresh user-initiated attempt
+                self.spov.pacing.fail_streak = 0; // a fresh user-initiated attempt
                 self.spotify_play(queue, idx);
             }
             // albums/playlists/artists/shows/categories → drill in (tracks, or a

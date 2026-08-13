@@ -648,11 +648,11 @@ fn audio_key_throttle_retries_in_place_instead_of_backing_off() {
 
     a.spotify_playback_blocked();
     assert!(
-        a.spov.sp_keyretry_at.is_some(),
+        a.spov.pacing.keyretry_at.is_some(),
         "a quick retry is scheduled"
     );
-    assert_eq!(a.spov.sp_keyretry_n, 1, "one retry spent");
-    assert_eq!(a.spov.sp_cooldown_until, 0, "no back-off armed");
+    assert_eq!(a.spov.pacing.keyretry_n, 1, "one retry spent");
+    assert_eq!(a.spov.pacing.cooldown_until, 0, "no back-off armed");
     assert!(a.spov.now_spotify.is_some(), "the track stays on screen");
     assert!(!a.spov.spotify_paused, "not marked failed");
     assert!(
@@ -664,7 +664,7 @@ fn audio_key_throttle_retries_in_place_instead_of_backing_off() {
     // must fold into the one pending retry, not spend the whole budget at once.
     a.spotify_playback_blocked();
     assert_eq!(
-        a.spov.sp_keyretry_n, 1,
+        a.spov.pacing.keyretry_n, 1,
         "burst echoes fold into the pending retry"
     );
 }
@@ -686,13 +686,13 @@ fn audio_key_denial_escalates_once_the_retry_budget_is_spent() {
     a.spov.sp_started = false;
     a.spov.sp_stream = false;
     a.spov.sp_queue.clear(); // no queue → reconnect skipped, so the cooldown escalates
-    a.spov.sp_keyretry_n = 5; // budget already spent
+    a.spov.pacing.keyretry_n = 5; // budget already spent
     let (tx, _rx) = crossbeam_channel::unbounded::<SessionCommand>();
     a.spov.session_cmd = Some(tx);
 
     a.spotify_playback_blocked();
     assert!(
-        a.spov.sp_cooldown_until > 0,
+        a.spov.pacing.cooldown_until > 0,
         "backs off after the retries are spent"
     );
     assert!(a.spov.spotify_paused, "the failed track is paused/stopped");
@@ -733,7 +733,7 @@ fn rapid_skips_debounce_into_a_single_load() {
     a.spotify_track(1);
     a.spotify_track(1);
     assert_eq!(
-        a.spov.sp_skip_target,
+        a.spov.pacing.skip_target,
         Some(3),
         "target accumulates across presses"
     );
@@ -752,13 +752,16 @@ fn rapid_skips_debounce_into_a_single_load() {
 
     // the debounce elapses → exactly one Load fires, for the final track D (driven
     // through the real pump, the way the run loop calls it every frame)
-    a.spov.sp_skip_at = Some(std::time::Instant::now()); // due now
+    a.spov.pacing.skip_at = Some(std::time::Instant::now()); // due now
     a.pump_spotify();
     assert_eq!(
         a.spov.sp_idx, 3,
         "the landed-on track becomes the playing index"
     );
-    assert_eq!(a.spov.sp_skip_target, None, "the pending skip is consumed");
+    assert_eq!(
+        a.spov.pacing.skip_target, None,
+        "the pending skip is consumed"
+    );
     let loads = std::iter::from_fn(|| rx.try_recv().ok())
         .filter(|c| matches!(c, SessionCommand::Load { .. }))
         .count();
@@ -1313,10 +1316,10 @@ fn spotify_midtrack_stall_rebuffers_in_place() {
         "a mid-track stall does not advance the queue"
     );
     assert!(
-        a.spov.sp_stall_at.is_some(),
+        a.spov.pacing.stall_at.is_some(),
         "an in-place re-buffer is scheduled"
     );
-    assert_eq!(a.spov.sp_stall_n, 1, "one re-buffer counted");
+    assert_eq!(a.spov.pacing.stall_n, 1, "one re-buffer counted");
     assert!(!a.spov.sp_started, "shown as buffering while it re-fetches");
     assert!(
         rx.try_recv().is_err(),
@@ -1324,7 +1327,7 @@ fn spotify_midtrack_stall_rebuffers_in_place() {
     );
 
     // once the delay elapses, the tick re-loads the SAME track at the stall position
-    a.spov.sp_stall_at = Some(std::time::Instant::now() - std::time::Duration::from_millis(1));
+    a.spov.pacing.stall_at = Some(std::time::Instant::now() - std::time::Duration::from_millis(1));
     a.pump_spotify();
     match rx.try_recv().expect("a Load is issued after the delay") {
         SessionCommand::Load { uri, position_ms } => {
@@ -1346,7 +1349,7 @@ fn spotify_genuine_end_advances_not_rebuffers() {
 
     assert_eq!(a.spov.sp_idx, 1, "a genuine end advances to the next track");
     assert!(
-        a.spov.sp_stall_at.is_none(),
+        a.spov.pacing.stall_at.is_none(),
         "no re-buffer scheduled at a real end"
     );
 }
@@ -1362,9 +1365,9 @@ fn spotify_repeated_stall_at_one_spot_eventually_skips() {
         a.spov.sp_pos = 50.0; // same spot: no real progress between stalls
         send_end_of_track(&mut a);
         assert_eq!(a.spov.sp_idx, 0, "still re-buffering the same track");
-        assert_eq!(a.spov.sp_stall_n, expect_n, "the stall budget depletes");
+        assert_eq!(a.spov.pacing.stall_n, expect_n, "the stall budget depletes");
         // simulate the re-buffer briefly resuming then re-stalling at the same spot
-        a.spov.sp_stall_at = None; // the tick consumed the scheduled reload
+        a.spov.pacing.stall_at = None; // the tick consumed the scheduled reload
         a.spov.sp_started = true; // librespot resumed …
     }
     // budget spent → the next stall skips past the bad segment
@@ -1384,16 +1387,16 @@ fn spotify_separated_stalls_keep_retrying() {
 
     a.spov.sp_pos = 50.0; // first hiccup at 0:50
     send_end_of_track(&mut a);
-    assert_eq!(a.spov.sp_stall_n, 1);
+    assert_eq!(a.spov.pacing.stall_n, 1);
     assert_eq!(a.spov.sp_idx, 0);
 
     // recovered, played well past it, then a distinct hiccup at 2:30
-    a.spov.sp_stall_at = None;
+    a.spov.pacing.stall_at = None;
     a.spov.sp_started = true;
     a.spov.sp_pos = 150.0;
     send_end_of_track(&mut a);
     assert_eq!(
-        a.spov.sp_stall_n, 1,
+        a.spov.pacing.stall_n, 1,
         "forward progress since the last stall refills the budget"
     );
     assert_eq!(a.spov.sp_idx, 0, "a track making progress is never skipped");
@@ -1674,7 +1677,7 @@ fn transient_key_blip_auto_resumes_but_a_confirmed_block_stops() {
         a.spov.sp_started = false;
         a.spov.sp_stream = false;
         a.spov.sp_queue.clear(); // empty → the reconnect path short-circuits, so the
-        a.spov.sp_keyretry_n = 5; // decision reduces to the block verdict (no live respawn)
+        a.spov.pacing.keyretry_n = 5; // decision reduces to the block verdict (no live respawn)
     };
     // the sticky probe flag as a real librespot audio-key error would raise it
     crate::spotify::logprobe::AUDIO_KEY_BLOCKED.store(true, Ordering::Relaxed);
@@ -1682,8 +1685,8 @@ fn transient_key_blip_auto_resumes_but_a_confirmed_block_stops() {
     // --- transient: a track already played, so a later denial is a blip to recover.
     let mut a = demo();
     setup(&mut a);
-    a.spov.sp_played_ok = true;
-    a.spov.sp_key_denials = 9; // even many prior denials can't confirm once one played
+    a.spov.pacing.played_ok = true;
+    a.spov.pacing.key_denials = 9; // even many prior denials can't confirm once one played
     let (tx, _rx) = crossbeam_channel::unbounded::<SessionCommand>();
     a.spov.session_cmd = Some(tx);
     assert!(
@@ -1692,15 +1695,15 @@ fn transient_key_blip_auto_resumes_but_a_confirmed_block_stops() {
     );
     a.spotify_playback_blocked();
     assert!(
-        a.spov.sp_resume_at.is_some(),
+        a.spov.pacing.resume_at.is_some(),
         "a transient failure arms an auto-resume so it recovers without a restart"
     );
 
     // --- genuine block: nothing ever played and several tracks are denied.
     let mut b = demo();
     setup(&mut b);
-    b.spov.sp_played_ok = false;
-    b.spov.sp_key_denials = 5; // well past the confirm threshold
+    b.spov.pacing.played_ok = false;
+    b.spov.pacing.key_denials = 5; // well past the confirm threshold
     let (tx, _rx) = crossbeam_channel::unbounded::<SessionCommand>();
     b.spov.session_cmd = Some(tx);
     assert!(
@@ -1709,10 +1712,10 @@ fn transient_key_blip_auto_resumes_but_a_confirmed_block_stops() {
     );
     b.spotify_playback_blocked();
     assert!(
-        b.spov.sp_resume_at.is_none(),
+        b.spov.pacing.resume_at.is_none(),
         "a confirmed account-level block must NOT loop on auto-resume"
     );
-    assert!(b.spov.sp_cooldown_until > 0, "it still backs off");
+    assert!(b.spov.pacing.cooldown_until > 0, "it still backs off");
 
     // leave the process-global flag clean for other tests
     crate::spotify::logprobe::AUDIO_KEY_BLOCKED.store(false, Ordering::Relaxed);

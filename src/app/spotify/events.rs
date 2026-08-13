@@ -65,8 +65,8 @@ impl AppState {
                     // If this is the fresh session spawned by a reconnect-and-retry,
                     // it's now up: a failure from here on is real (the track is
                     // genuinely unavailable), not an echo from the dead session.
-                    if self.spov.sp_recovery == SpRecovery::Reconnecting {
-                        self.spov.sp_recovery = SpRecovery::Reconnected;
+                    if self.spov.pacing.recovery == SpRecovery::Reconnecting {
+                        self.spov.pacing.recovery = SpRecovery::Reconnected;
                     }
                 }
                 // Spotify refused to exchange the session's stored credentials, so
@@ -266,7 +266,7 @@ impl AppState {
         // blank the UI); just pause it, free the engine, and report below.
         // A reconnect-and-retry whose fresh session couldn't even connect
         // ends here — clear the recovery state so it isn't left mid-flight.
-        self.spov.sp_recovery = SpRecovery::Normal;
+        self.spov.pacing.recovery = SpRecovery::Normal;
         self.spov.session_cmd = None;
         self.spov.session_rx = None;
         self.spov.spotify_paused = true;
@@ -301,15 +301,15 @@ impl AppState {
         // blocked at the account level, so any earlier "blocked" verdict was
         // a transient blip: clear the block evidence (and the sticky probe
         // flag) so recovery, the header, and the failure hint all reset.
-        self.spov.sp_played_ok = true;
-        self.spov.sp_key_denials = 0;
-        self.spov.sp_resume_at = None; // playing → cancel any pending auto-resume
+        self.spov.pacing.played_ok = true;
+        self.spov.pacing.key_denials = 0;
+        self.spov.pacing.resume_at = None; // playing → cancel any pending auto-resume
         crate::spotify::logprobe::AUDIO_KEY_BLOCKED
             .store(false, std::sync::atomic::Ordering::Relaxed);
         self.spotify_clear_cooldown(); // a track actually played → reset back-off
-        self.spov.sp_keyretry_at = None; // played → drop any pending key-retry
-        self.spov.sp_keyretry_n = 0;
-        self.spov.sp_recovery = SpRecovery::Normal; // recovered / healthy again
+        self.spov.pacing.keyretry_at = None; // played → drop any pending key-retry
+        self.spov.pacing.keyretry_n = 0;
+        self.spov.pacing.recovery = SpRecovery::Normal; // recovered / healthy again
         self.spov.sp_pos = position_ms as f64 / 1000.0;
         // the current track is underway → prefetch the next so its
         // transition is gapless (max lead time, no fetch on EndOfTrack).

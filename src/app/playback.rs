@@ -229,7 +229,7 @@ impl AppState {
     pub(crate) fn toggle_spotify_play(&mut self) {
         // the user is taking manual control → cancel any pending auto-resume so a
         // deliberate pause isn't undone (and a manual resume owns the recovery)
-        self.spov.sp_resume_at = None;
+        self.spov.pacing.resume_at = None;
         // an externally-streamed episode plays through lyrfin's own engine, not
         // librespot — pause/resume is a plain engine toggle (the ring is kept,
         // so it resumes in place).

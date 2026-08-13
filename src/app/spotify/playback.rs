@@ -125,7 +125,7 @@ impl AppState {
         self.spov.sp_seek_streak = 0;
         self.spov.spotify_paused = false;
         self.spov.sp_started = false; // set true when librespot reports Playing
-        self.spov.sp_resume_at = None; // an explicit play supersedes a pending auto-resume
+        self.spov.pacing.resume_at = None; // an explicit play supersedes a pending auto-resume
         self.spotify_reset_retries(); // fresh track → fresh throttle/stall-retry budget
         self.spotify_clear_pending_skip(); // this load supersedes any debounced skip
         self.spov.now_spotify = Some(track.clone());
@@ -434,10 +434,10 @@ impl AppState {
         }
         // Accumulate from the pending target if one is mid-debounce, so repeated
         // presses keep advancing from where the last landed (not the playing track).
-        let base = self.spov.sp_skip_target.unwrap_or(self.spov.sp_idx);
+        let base = self.spov.pacing.skip_target.unwrap_or(self.spov.sp_idx);
         let target = (base as i32 + delta).rem_euclid(n as i32) as usize;
-        self.spov.sp_skip_target = Some(target);
-        self.spov.sp_skip_at = Some(std::time::Instant::now() + SP_SKIP_DEBOUNCE);
+        self.spov.pacing.skip_target = Some(target);
+        self.spov.pacing.skip_at = Some(std::time::Instant::now() + SP_SKIP_DEBOUNCE);
         // Instant feedback while the load waits: preview the landing row + its name.
         self.spotify.queue_sel = target;
         if let Some(t) = self.spov.sp_queue.get(target) {
@@ -451,30 +451,30 @@ impl AppState {
     /// burst means only this one track requests an audio key, so rapid skipping can't
     /// trip Spotify's key-rate throttle in the first place.
     pub(super) fn spotify_tick_skip(&mut self) {
-        let Some(at) = self.spov.sp_skip_at else {
+        let Some(at) = self.spov.pacing.skip_at else {
             return;
         };
         if std::time::Instant::now() < at {
             return;
         }
-        self.spov.sp_skip_at = None;
-        let Some(target) = self.spov.sp_skip_target.take() else {
+        self.spov.pacing.skip_at = None;
+        let Some(target) = self.spov.pacing.skip_target.take() else {
             return;
         };
         if self.spov.sp_queue.is_empty() {
             return;
         }
         let q = self.spov.sp_queue.clone();
-        self.spov.sp_fail_streak = 0; // user-initiated skip → fresh failure budget
-        self.spov.sp_recovery = SpRecovery::Normal;
+        self.spov.pacing.fail_streak = 0; // user-initiated skip → fresh failure budget
+        self.spov.pacing.recovery = SpRecovery::Normal;
         self.spotify_play(q, target);
     }
 
     /// Drop any pending debounced skip (a direct play supersedes it, or the overlay
     /// was torn down). Keeps a stale target from loading after the fact.
     fn spotify_clear_pending_skip(&mut self) {
-        self.spov.sp_skip_target = None;
-        self.spov.sp_skip_at = None;
+        self.spov.pacing.skip_target = None;
+        self.spov.pacing.skip_at = None;
     }
 
     /// Recover from a dropped librespot connection by replaying the current track on
@@ -506,7 +506,7 @@ impl AppState {
         // armed (repeated genuine failures), respect it rather than reconnect-storming
         // — `sp_fail_streak` is deliberately left intact so persistent failure still
         // trips the cooldown within a couple of tracks.
-        if self.spov.sp_recovery != SpRecovery::Normal
+        if self.spov.pacing.recovery != SpRecovery::Normal
             || self.spov.sp_stream
             || self.spov.now_spotify.is_none()
             || self.spov.sp_queue.is_empty()
@@ -514,7 +514,7 @@ impl AppState {
         {
             return false;
         }
-        self.spov.sp_recovery = SpRecovery::Reconnecting;
+        self.spov.pacing.recovery = SpRecovery::Reconnecting;
         // Drop the dead session handle so `spotify_play` → `spotify_ensure_session`
         // respawns a live one.
         self.spov.session_cmd = None;
@@ -539,13 +539,13 @@ impl AppState {
         // `Unavailable`/end-without-start echo, so a reconnect here would double-fire.
         // Likewise a pending mid-play stall re-buffer (which cleared `sp_started`, so
         // a duplicate `EndOfTrack` echo now lands here) owns its own recovery.
-        if self.spov.sp_keyretry_at.is_some() || self.spov.sp_stall_at.is_some() {
+        if self.spov.pacing.keyretry_at.is_some() || self.spov.pacing.stall_at.is_some() {
             return;
         }
         // A reconnect is in flight — this is an echo failure from the dead session,
         // not the fresh one. Ignore it; the fresh session's `Connected`/`Playing`
         // (or its own failure once up) drives the next decision.
-        if self.spov.sp_recovery == SpRecovery::Reconnecting {
+        if self.spov.pacing.recovery == SpRecovery::Reconnecting {
             return;
         }
         // The likeliest cause is a dropped connection: reconnect + replay this track.
@@ -554,7 +554,7 @@ impl AppState {
         }
         // The fresh session also failed (or it's a non-recoverable case): skip once,
         // then back off rather than racing the whole queue at Spotify.
-        if self.spov.sp_fail_streak >= 1 {
+        if self.spov.pacing.fail_streak >= 1 {
             self.spotify_trip_cooldown();
             let secs = self.spotify_cooldown_remaining();
             self.spotify_playback_failed(format!(
@@ -563,7 +563,7 @@ impl AppState {
             ));
             return;
         }
-        self.spov.sp_fail_streak += 1;
+        self.spov.pacing.fail_streak += 1;
         self.spotify_advance();
     }
 
@@ -591,7 +591,7 @@ impl AppState {
         }
         // Echo from the dead session while a reconnect is in flight — ignore (see
         // [`Self::spotify_load_failed`]).
-        if self.spov.sp_recovery == SpRecovery::Reconnecting {
+        if self.spov.pacing.recovery == SpRecovery::Reconnecting {
             return;
         }
         // Transient audio-key throttle → quick same-session retry (the common case).
@@ -603,7 +603,7 @@ impl AppState {
         // won't confirm a block, but several across tracks with nothing ever playing
         // will. This must persist across the reconnect below, so it lives outside the
         // per-track retry budgets `spotify_reset_retries` clears.
-        self.spov.sp_key_denials = self.spov.sp_key_denials.saturating_add(1);
+        self.spov.pacing.key_denials = self.spov.pacing.key_denials.saturating_add(1);
         // A denied key is also the classic symptom of a dropped connection — reconnect
         // + replay this track once (a fresh session clears a transient block) before
         // treating it as a genuine DRM/throttle block.
@@ -625,14 +625,14 @@ impl AppState {
     /// one pending retry). Returns false when the bounded budget is spent or there's
     /// no live session to retry on, so the caller escalates.
     fn spotify_arm_key_retry(&mut self) -> bool {
-        if self.spov.sp_keyretry_at.is_some() {
+        if self.spov.pacing.keyretry_at.is_some() {
             return true; // one retry per throttle; fold in the burst's echoes
         }
-        if self.spov.sp_keyretry_n >= SP_KEY_RETRY_MAX || self.spov.session_cmd.is_none() {
+        if self.spov.pacing.keyretry_n >= SP_KEY_RETRY_MAX || self.spov.session_cmd.is_none() {
             return false; // budget spent (likely genuine DRM) / no session → escalate
         }
-        self.spov.sp_keyretry_n += 1;
-        self.spov.sp_keyretry_at = Some(std::time::Instant::now() + SP_KEY_RETRY_DELAY);
+        self.spov.pacing.keyretry_n += 1;
+        self.spov.pacing.keyretry_at = Some(std::time::Instant::now() + SP_KEY_RETRY_DELAY);
         self.notify("Spotify throttled the track key — retrying…".into());
         true
     }
@@ -642,13 +642,13 @@ impl AppState {
     /// position — by now the audio-key throttle has cleared. A genuine denial simply
     /// fails again and, once the budget is spent, escalates to reconnect/back-off.
     pub(super) fn spotify_tick_keyretry(&mut self) {
-        let Some(at) = self.spov.sp_keyretry_at else {
+        let Some(at) = self.spov.pacing.keyretry_at else {
             return;
         };
         if std::time::Instant::now() < at {
             return;
         }
-        self.spov.sp_keyretry_at = None;
+        self.spov.pacing.keyretry_at = None;
         // Recovered on its own, or the overlay was torn down meanwhile — nothing to do.
         if self.spov.sp_started || self.spov.sp_stream {
             return;
@@ -670,17 +670,17 @@ impl AppState {
     /// paused/stopped, a streamed episode took over, or a manual skip is pending —
     /// which must win).
     pub(super) fn spotify_tick_stall(&mut self) {
-        let Some(at) = self.spov.sp_stall_at else {
+        let Some(at) = self.spov.pacing.stall_at else {
             return;
         };
         if std::time::Instant::now() < at {
             return;
         }
-        self.spov.sp_stall_at = None;
+        self.spov.pacing.stall_at = None;
         if self.spov.sp_started
             || self.spov.sp_stream
             || self.spov.spotify_paused
-            || self.spov.sp_skip_target.is_some()
+            || self.spov.pacing.skip_target.is_some()
         {
             return;
         }
@@ -706,14 +706,14 @@ impl AppState {
             || self.spov.spotify_paused
             || self.spov.now_spotify.is_none()
             || self.spov.sp_seek_target.is_some()
-            || self.spov.sp_skip_target.is_some()
+            || self.spov.pacing.skip_target.is_some()
         {
             return;
         }
         // meaningful forward progress since the last stall → a fresh re-open budget
-        if self.spov.sp_pos > self.spov.sp_stall_pos + SP_STALL_PROGRESS {
-            self.spov.sp_stall_n = 0;
-            self.spov.sp_stall_pos = self.spov.sp_pos;
+        if self.spov.sp_pos > self.spov.pacing.stall_pos + SP_STALL_PROGRESS {
+            self.spov.pacing.stall_n = 0;
+            self.spov.pacing.stall_pos = self.spov.sp_pos;
         }
         // not stalled yet? (engine `Progress` arrived within the window)
         let window = (self.config.fps as u64)
@@ -727,15 +727,15 @@ impl AppState {
         };
         // budget spent → give up: pause in place (space re-loads from here), rather
         // than reconnecting a dead stream on a loop.
-        if self.spov.sp_stall_n >= SP_STALL_RETRY_MAX {
+        if self.spov.pacing.stall_n >= SP_STALL_RETRY_MAX {
             self.spov.spotify_paused = true;
             self.spov.sp_started = false;
-            self.spov.sp_stall_n = 0;
+            self.spov.pacing.stall_n = 0;
             self.notify("Episode stream stalled — paused. Press space to retry.".into());
             return;
         }
-        self.spov.sp_stall_n += 1;
-        self.spov.sp_stall_pos = self.spov.sp_pos;
+        self.spov.pacing.stall_n += 1;
+        self.spov.pacing.stall_pos = self.spov.sp_pos;
         self.last_audio_progress = self.tick; // fresh window for the re-open
         self.notify("Episode stream stalled — reconnecting…".into());
         let pos_ms = (self.spov.sp_pos.max(0.0) * 1000.0) as u32;
@@ -751,13 +751,13 @@ impl AppState {
     /// connection — and re-loads the paused track at its saved position, exactly as
     /// pressing space would. A resume that fails again re-arms with a longer back-off.
     pub(super) fn spotify_tick_cooldown_resume(&mut self) {
-        let Some(at) = self.spov.sp_resume_at else {
+        let Some(at) = self.spov.pacing.resume_at else {
             return;
         };
         if crate::datetime::now_unix() < at {
             return;
         }
-        self.spov.sp_resume_at = None;
+        self.spov.pacing.resume_at = None;
         // Nothing to resume, or the user/stream took over since it was armed (a manual
         // play clears `spotify_paused`, a stream sets `sp_stream`, a fresh play sets
         // `sp_started`). Leave those alone.
@@ -773,7 +773,7 @@ impl AppState {
         // audio-key probe flag (see `crate::spotify::session::spawn`).
         self.spov.session_cmd = None;
         self.spov.session_rx = None;
-        self.spov.sp_recovery = SpRecovery::Normal;
+        self.spov.pacing.recovery = SpRecovery::Normal;
         self.notify("Spotify back-off elapsed — resuming…".into());
         self.spotify_resume();
     }
@@ -782,11 +782,11 @@ impl AppState {
     /// retry and the mid-play stall re-buffer — on a fresh track load or user
     /// action. Keeps each budget scoped to a single track.
     fn spotify_reset_retries(&mut self) {
-        self.spov.sp_keyretry_at = None;
-        self.spov.sp_keyretry_n = 0;
-        self.spov.sp_stall_at = None;
-        self.spov.sp_stall_n = 0;
-        self.spov.sp_stall_pos = 0.0;
+        self.spov.pacing.keyretry_at = None;
+        self.spov.pacing.keyretry_n = 0;
+        self.spov.pacing.stall_at = None;
+        self.spov.pacing.stall_n = 0;
+        self.spov.pacing.stall_pos = 0.0;
     }
 
     /// A track failed to play (unavailable / key-denied). **Keep** the now-playing
@@ -800,7 +800,7 @@ impl AppState {
         if self.spov.now_spotify.is_none() {
             return;
         }
-        self.spov.sp_recovery = SpRecovery::Normal; // this attempt is over
+        self.spov.pacing.recovery = SpRecovery::Normal; // this attempt is over
         self.spov.spotify_paused = true;
         self.spov.sp_started = false;
         if let Some(cmd) = &self.spov.session_cmd {
@@ -875,7 +875,7 @@ impl AppState {
     /// Gates both the "switch accounts" messaging and the refusal to keep
     /// reconnecting, so a momentary blip mid-playback is never mistaken for the block.
     pub(crate) fn spotify_key_block_confirmed(&self) -> bool {
-        if self.spov.sp_played_ok || self.spov.sp_key_denials < SP_KEY_BLOCK_CONFIRM {
+        if self.spov.pacing.played_ok || self.spov.pacing.key_denials < SP_KEY_BLOCK_CONFIRM {
             return false;
         }
         let premium = matches!(
@@ -918,7 +918,8 @@ impl AppState {
     /// Seconds remaining on the Spotify playback back-off (0 = clear to play).
     pub(crate) fn spotify_cooldown_remaining(&self) -> u64 {
         self.spov
-            .sp_cooldown_until
+            .pacing
+            .cooldown_until
             .saturating_sub(crate::datetime::now_unix())
     }
 
@@ -930,10 +931,10 @@ impl AppState {
     /// this only guards genuine transient failures — no need to lock the user out
     /// for half an hour.
     pub(super) fn spotify_trip_cooldown(&mut self) {
-        self.spov.sp_fail_streak = self.spov.sp_fail_streak.saturating_add(1);
-        let n = self.spov.sp_fail_streak.min(5);
+        self.spov.pacing.fail_streak = self.spov.pacing.fail_streak.saturating_add(1);
+        let n = self.spov.pacing.fail_streak.min(5);
         let secs = (20u64 << n.saturating_sub(1)).min(300);
-        self.spov.sp_cooldown_until = crate::datetime::now_unix() + secs;
+        self.spov.pacing.cooldown_until = crate::datetime::now_unix() + secs;
     }
 
     /// If a back-off is active, tell the user how long is left and return true so
@@ -957,15 +958,15 @@ impl AppState {
     /// to get audio back. Naturally bounded: each failed resume re-trips an
     /// escalating back-off (20s → 5 min cap), and any success clears it.
     pub(super) fn spotify_arm_auto_resume(&mut self) {
-        self.spov.sp_resume_at = (self.spov.sp_cooldown_until > 0
+        self.spov.pacing.resume_at = (self.spov.pacing.cooldown_until > 0
             && !self.spotify_key_block_confirmed())
-        .then_some(self.spov.sp_cooldown_until);
+        .then_some(self.spov.pacing.cooldown_until);
     }
 
     /// Clear the failure back-off (a track played, or a fresh login).
     pub(crate) fn spotify_clear_cooldown(&mut self) {
-        self.spov.sp_fail_streak = 0;
-        self.spov.sp_cooldown_until = 0;
+        self.spov.pacing.fail_streak = 0;
+        self.spov.pacing.cooldown_until = 0;
     }
 
     /// librespot reported `EndOfTrack` for a track that WAS playing. That event is
@@ -1007,21 +1008,21 @@ impl AppState {
     /// one bad segment is skipped after [`SP_STALL_RETRY_MAX`] tries rather than
     /// rebuffering forever.
     fn spotify_arm_stall_retry(&mut self) -> bool {
-        if self.spov.sp_stall_at.is_some() {
+        if self.spov.pacing.stall_at.is_some() {
             return true; // one re-buffer in flight; fold in the echoes
         }
         if self.spov.session_cmd.is_none() {
             return false; // no live session to retry on → advance
         }
-        if self.spov.sp_pos > self.spov.sp_stall_pos + SP_STALL_PROGRESS {
-            self.spov.sp_stall_n = 0; // real progress since the last stall → fresh budget
+        if self.spov.sp_pos > self.spov.pacing.stall_pos + SP_STALL_PROGRESS {
+            self.spov.pacing.stall_n = 0; // real progress since the last stall → fresh budget
         }
-        if self.spov.sp_stall_n >= SP_STALL_RETRY_MAX {
+        if self.spov.pacing.stall_n >= SP_STALL_RETRY_MAX {
             return false; // repeated stalls at one spot (segment won't stream) → advance
         }
-        self.spov.sp_stall_n += 1;
-        self.spov.sp_stall_pos = self.spov.sp_pos;
-        self.spov.sp_stall_at = Some(std::time::Instant::now() + SP_STALL_RETRY_DELAY);
+        self.spov.pacing.stall_n += 1;
+        self.spov.pacing.stall_pos = self.spov.sp_pos;
+        self.spov.pacing.stall_at = Some(std::time::Instant::now() + SP_STALL_RETRY_DELAY);
         self.spov.sp_started = false; // buffering again → hide the clock, show "buffering…"
         self.notify("Spotify stalled — rebuffering…".into());
         true
@@ -1035,10 +1036,10 @@ impl AppState {
         }
         // A manual skip is mid-debounce → it's the user's explicit target; let it win
         // over an auto-advance (e.g. the old track ending inside the debounce window).
-        if self.spov.sp_skip_target.is_some() {
+        if self.spov.pacing.skip_target.is_some() {
             return;
         }
-        self.spov.sp_recovery = SpRecovery::Normal; // moving to a track — fresh budget
+        self.spov.pacing.recovery = SpRecovery::Normal; // moving to a track — fresh budget
         if self.spov.sp_repeat == Repeat::One {
             let (q, idx) = (self.spov.sp_queue.clone(), self.spov.sp_idx);
             self.spotify_play(q, idx);
@@ -1259,9 +1260,9 @@ impl AppState {
         self.spov.sp_saved = false;
         // teardown = logout / account switch → the block-status evidence belongs to the
         // old account; reset it (a new account re-earns "played ok" on its first play)
-        self.spov.sp_played_ok = false;
-        self.spov.sp_key_denials = 0;
-        self.spov.sp_resume_at = None; // no queue to auto-resume once torn down
+        self.spov.pacing.played_ok = false;
+        self.spov.pacing.key_denials = 0;
+        self.spov.pacing.resume_at = None; // no queue to auto-resume once torn down
         self.spotify_clear_pending_skip(); // don't let a debounced skip load post-teardown
         self.clear_spotify_artist();
         if let Some(cmd) = &self.spov.session_cmd {

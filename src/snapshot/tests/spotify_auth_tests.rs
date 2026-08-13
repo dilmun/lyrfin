@@ -181,7 +181,7 @@ fn spotify_logout_clears_all_account_state() {
     a.spotify.items = vec![mk("spotify:track:a")];
     a.spotify.query = "rihanna".into();
     a.spotify.in_search = true;
-    a.spov.sp_cooldown_until = crate::datetime::now_unix() + 999;
+    a.spov.pacing.cooldown_until = crate::datetime::now_unix() + 999;
     a.spotify_logout();
     // a logout is a clean slate — nothing from this account survives
     assert!(matches!(a.spotify.conn, ConnState::Disconnected));
@@ -620,7 +620,7 @@ fn playing_with_dead_session() -> AppState {
     }];
     a.spov.sp_idx = 0;
     a.spov.spotify_paused = false;
-    a.spov.sp_recovery = crate::app::spotify::SpRecovery::Normal;
+    a.spov.pacing.recovery = crate::app::spotify::SpRecovery::Normal;
     // a still-connected command channel (lyrfin can't see librespot's dead socket)
     let (scmd, _srx) = crossbeam_channel::unbounded::<crate::spotify::session::SessionCommand>();
     a.spov.session_cmd = Some(scmd);
@@ -642,7 +642,7 @@ fn spotify_dropped_connection_reconnects_instead_of_backing_off() {
     a.pump_spotify_session();
     // it reconnects and replays the track — NOT a back-off + re-authenticate dead end
     assert_eq!(
-        a.spov.sp_recovery,
+        a.spov.pacing.recovery,
         SpRecovery::Reconnecting,
         "a dropped connection kicks off a reconnect-and-retry"
     );
@@ -651,7 +651,7 @@ fn spotify_dropped_connection_reconnects_instead_of_backing_off() {
         "the dead session handle is dropped so the next play respawns a live one"
     );
     assert_eq!(
-        a.spov.sp_cooldown_until, 0,
+        a.spov.pacing.cooldown_until, 0,
         "no punitive back-off is armed — this is a recoverable drop, not repeated failure"
     );
     assert!(
@@ -665,7 +665,7 @@ fn spotify_reconnect_ignores_echo_failures_until_the_fresh_session_is_up() {
     use crate::app::spotify::SpRecovery;
     use crate::spotify::session::SessionEvent;
     let mut a = playing_with_dead_session();
-    a.spov.sp_recovery = SpRecovery::Reconnecting; // a reconnect is already in flight
+    a.spov.pacing.recovery = SpRecovery::Reconnecting; // a reconnect is already in flight
 
     // The dead session emits a burst of echoes for the same load (one timed-out key
     // surfaces as both AudioKeyDenied AND Unavailable). They must be ignored — not
@@ -676,13 +676,13 @@ fn spotify_reconnect_ignores_echo_failures_until_the_fresh_session_is_up() {
     a.spov.session_rx = Some(rx);
     a.pump_spotify_session();
     assert_eq!(
-        a.spov.sp_recovery,
+        a.spov.pacing.recovery,
         SpRecovery::Reconnecting,
         "echo failures during reconnect are ignored (stay Reconnecting)"
     );
     assert_eq!(a.spov.sp_idx, 0, "the track is not skipped by an echo");
     assert_eq!(
-        a.spov.sp_cooldown_until, 0,
+        a.spov.pacing.cooldown_until, 0,
         "an echo does not arm a back-off"
     );
 
@@ -692,7 +692,7 @@ fn spotify_reconnect_ignores_echo_failures_until_the_fresh_session_is_up() {
     a.spov.session_rx = Some(rx);
     a.pump_spotify_session();
     assert_eq!(
-        a.spov.sp_recovery,
+        a.spov.pacing.recovery,
         SpRecovery::Reconnected,
         "once the fresh session connects, later failures are treated as genuine"
     );

@@ -45,6 +45,87 @@ pub enum SpRecovery {
     Reconnected,
 }
 
+/// Everything the Spotify playback attempt currently in flight is timing or
+/// counting: the failure back-off, the per-track retry budgets (audio-key
+/// throttle, mid-play stall), and the debounced skip.
+///
+/// Grouped out of [`SpOverlay`] because it is one subject with one lifetime —
+/// it is reset together whenever a fresh track is loaded or a user action
+/// supersedes the current attempt — and because its dozen counters otherwise
+/// dominated a struct that is meant to describe what is playing.
+#[derive(Default)]
+pub struct SpPacing {
+    /// Consecutive playback failures, driving the back-off below.
+    pub fail_streak: u32,
+    /// Dropped-connection recovery state (see [`SpRecovery`]). Drives the
+    /// reconnect-and-retry-once path in [`AppState::spotify_try_reconnect_retry`].
+    pub recovery: SpRecovery,
+    /// Unix-seconds deadline before which Spotify playback won't be re-attempted,
+    /// after repeated failures (audio-key denial / connect errors). Exponential
+    /// back-off (20s → 5 min cap) so a failing account can't hammer Spotify into a
+    /// rate-limit. 0 = none. See [`AppState::spotify_trip_cooldown`].
+    pub cooldown_until: u64,
+    /// A track has actually played (reached `Playing`) at least once this session.
+    /// Proof the account is **not** audio-key-blocked at the account level — so a
+    /// later key denial is a transient CDN/throttle blip to recover from, never the
+    /// permanent block. Reset only on teardown (logout / account switch). See
+    /// [`AppState::spotify_key_block_confirmed`].
+    pub played_ok: bool,
+    /// Tracks whose audio key stayed denied since the last successful play (reset to 0
+    /// on any `Playing`). Only once this crosses [`SP_KEY_BLOCK_CONFIRM`] *with nothing
+    /// ever having played* does lyrfin treat it as the account-level block; a lone blip
+    /// mid-playback never does.
+    pub key_denials: u16,
+    /// Unix-seconds deadline to **auto-resume** playback after a transient-failure
+    /// back-off (`None` = no resume pending). Set by [`AppState::spotify_playback_failed`]
+    /// so a bad-CDN / throttle / brief-drop stall recovers on its own (a fresh session)
+    /// instead of leaving the queue stopped until the user restarts lyrfin; cleared the
+    /// moment the user pauses/plays, a track plays, or the overlay tears down. Skipped
+    /// for a confirmed account-level block (which won't recover). Drained in
+    /// [`AppState::spotify_tick_cooldown_resume`].
+    pub resume_at: Option<u64>,
+    /// A quick same-session retry of the current track is scheduled for this instant
+    /// (`None` = none). Armed when Spotify **throttles** the per-track audio key —
+    /// the classic "skip fast → `error audio key`" burst, which is transient: the
+    /// same key succeeds a moment later. Retrying in place beats the heavyweight
+    /// reconnect + 20s back-off (a fresh session hits the same account-level
+    /// throttle). Drained in [`AppState::spotify_tick_keyretry`]; only after the
+    /// bounded retries are spent does lyrfin fall through to reconnect/back-off.
+    pub keyretry_at: Option<std::time::Instant>,
+    /// Quick key-retries already spent on the current track (reset when a new track
+    /// is loaded or one actually plays). Bounds the transient-throttle retries so a
+    /// *genuine* DRM denial still escalates promptly.
+    pub keyretry_n: u8,
+    /// An in-place re-buffer of the current track is scheduled for this instant
+    /// (`None` = none). Armed when librespot reports `EndOfTrack` **mid-track** — its
+    /// event is overloaded (a genuine end AND a "couldn't fetch/decode the next
+    /// packet" abort under network congestion), so a premature one re-buffers the
+    /// same track where it stalled rather than skipping. Without this a transient
+    /// stall silently drops the track — and under sustained congestion races the
+    /// whole queue ("buffering and flipping tracks until it settles"). Drained in
+    /// [`AppState::spotify_tick_stall`].
+    pub stall_at: Option<std::time::Instant>,
+    /// Consecutive in-place re-buffers spent at (roughly) the same spot. Reset on a
+    /// fresh load and whenever playback makes real forward progress past the last
+    /// stall (see [`AppState::spotify_arm_stall_retry`]) — so a track riding out
+    /// several *separate* transient hiccups keeps retrying, while a *repeated* stall
+    /// at one point (a corrupt segment) depletes the budget and skips instead of
+    /// looping forever.
+    pub stall_n: u8,
+    /// Track position (seconds) of the last stall, so the budget refills only when
+    /// playback advances meaningfully past it. See [`Self::stall_n`].
+    pub stall_pos: f64,
+    /// Queue index a manual skip (n/p / transport click) landed on while its load is
+    /// **debounced** (`None` = no skip pending). Hammering next only loads the track
+    /// finally landed on, so a burst of skips fires one audio-key request instead of
+    /// one per intermediate track — the burst is what trips Spotify's key throttle
+    /// (see [`Self::keyretry_at`]). Drained in [`AppState::spotify_tick_skip`].
+    pub skip_target: Option<usize>,
+    /// Debounce deadline for a pending manual skip: each press pushes it out, so the
+    /// load fires only once the user stops skipping.
+    pub skip_at: Option<std::time::Instant>,
+}
+
 /// Spotify playback-overlay state, grouped out of [`AppState`] (the local player
 /// is preserved/frozen while this drives the engine). Accessed as `app.spov.*`.
 pub struct SpOverlay {
@@ -55,74 +136,6 @@ pub struct SpOverlay {
     pub sp_queue: Vec<crate::spotify::api::Item>,
     pub sp_idx: usize,
     pub sp_started: bool,
-    pub sp_fail_streak: u32,
-    /// Dropped-connection recovery state (see [`SpRecovery`]). Drives the
-    /// reconnect-and-retry-once path in [`AppState::spotify_try_reconnect_retry`].
-    pub sp_recovery: SpRecovery,
-    /// Unix-seconds deadline before which Spotify playback won't be re-attempted,
-    /// after repeated failures (audio-key denial / connect errors). Exponential
-    /// back-off (20s → 5 min cap) so a failing account can't hammer Spotify into a
-    /// rate-limit. 0 = none. See [`AppState::spotify_trip_cooldown`].
-    pub sp_cooldown_until: u64,
-    /// A track has actually played (reached `Playing`) at least once this session.
-    /// Proof the account is **not** audio-key-blocked at the account level — so a
-    /// later key denial is a transient CDN/throttle blip to recover from, never the
-    /// permanent block. Reset only on teardown (logout / account switch). See
-    /// [`AppState::spotify_key_block_confirmed`].
-    pub sp_played_ok: bool,
-    /// Tracks whose audio key stayed denied since the last successful play (reset to 0
-    /// on any `Playing`). Only once this crosses [`SP_KEY_BLOCK_CONFIRM`] *with nothing
-    /// ever having played* does lyrfin treat it as the account-level block; a lone blip
-    /// mid-playback never does.
-    pub sp_key_denials: u16,
-    /// Unix-seconds deadline to **auto-resume** playback after a transient-failure
-    /// back-off (`None` = no resume pending). Set by [`AppState::spotify_playback_failed`]
-    /// so a bad-CDN / throttle / brief-drop stall recovers on its own (a fresh session)
-    /// instead of leaving the queue stopped until the user restarts lyrfin; cleared the
-    /// moment the user pauses/plays, a track plays, or the overlay tears down. Skipped
-    /// for a confirmed account-level block (which won't recover). Drained in
-    /// [`AppState::spotify_tick_cooldown_resume`].
-    pub sp_resume_at: Option<u64>,
-    /// A quick same-session retry of the current track is scheduled for this instant
-    /// (`None` = none). Armed when Spotify **throttles** the per-track audio key —
-    /// the classic "skip fast → `error audio key`" burst, which is transient: the
-    /// same key succeeds a moment later. Retrying in place beats the heavyweight
-    /// reconnect + 20s back-off (a fresh session hits the same account-level
-    /// throttle). Drained in [`AppState::spotify_tick_keyretry`]; only after the
-    /// bounded retries are spent does lyrfin fall through to reconnect/back-off.
-    pub sp_keyretry_at: Option<std::time::Instant>,
-    /// Quick key-retries already spent on the current track (reset when a new track
-    /// is loaded or one actually plays). Bounds the transient-throttle retries so a
-    /// *genuine* DRM denial still escalates promptly.
-    pub sp_keyretry_n: u8,
-    /// An in-place re-buffer of the current track is scheduled for this instant
-    /// (`None` = none). Armed when librespot reports `EndOfTrack` **mid-track** — its
-    /// event is overloaded (a genuine end AND a "couldn't fetch/decode the next
-    /// packet" abort under network congestion), so a premature one re-buffers the
-    /// same track where it stalled rather than skipping. Without this a transient
-    /// stall silently drops the track — and under sustained congestion races the
-    /// whole queue ("buffering and flipping tracks until it settles"). Drained in
-    /// [`AppState::spotify_tick_stall`].
-    pub sp_stall_at: Option<std::time::Instant>,
-    /// Consecutive in-place re-buffers spent at (roughly) the same spot. Reset on a
-    /// fresh load and whenever playback makes real forward progress past the last
-    /// stall (see [`AppState::spotify_arm_stall_retry`]) — so a track riding out
-    /// several *separate* transient hiccups keeps retrying, while a *repeated* stall
-    /// at one point (a corrupt segment) depletes the budget and skips instead of
-    /// looping forever.
-    pub sp_stall_n: u8,
-    /// Track position (seconds) of the last stall, so the budget refills only when
-    /// playback advances meaningfully past it. See [`sp_stall_n`].
-    pub sp_stall_pos: f64,
-    /// Queue index a manual skip (n/p / transport click) landed on while its load is
-    /// **debounced** (`None` = no skip pending). Hammering next only loads the track
-    /// finally landed on, so a burst of skips fires one audio-key request instead of
-    /// one per intermediate track — the burst is what trips Spotify's key throttle
-    /// (see [`sp_keyretry_at`]). Drained in [`AppState::spotify_tick_skip`].
-    pub sp_skip_target: Option<usize>,
-    /// Debounce deadline for a pending manual skip: each press pushes it out, so the
-    /// load fires only once the user stops skipping.
-    pub sp_skip_at: Option<std::time::Instant>,
     /// Debounce deadline for a pending seek on a STREAMED episode: holding `,`/`.` scrubs
     /// the bar (`sp_pos`) every key-repeat, but each engine seek is a ranged HTTP
     /// re-open, so the actual re-open fires only once scrubbing settles — otherwise a
@@ -167,6 +180,9 @@ pub struct SpOverlay {
     /// Kept so the engine can be re-pointed at librespot (`SetExternalSource`)
     /// after a streamed episode released it (`ClearExternalSource`).
     pub sp_bridge: Option<std::sync::Arc<crate::spotify::session::Bridge>>,
+    /// Failure back-off, retry budgets and skip debounce for the attempt in
+    /// flight — see [`SpPacing`].
+    pub pacing: SpPacing,
 }
 
 /// Rich details for the now-playing track's artist, shown in the artist pane.
